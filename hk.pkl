@@ -2,3 +2,7 @@
 // with this repository's config. Types, tests and formatting are left to CI
 // and `mise run check`. Run them by hand with `hk check`.
 amends "package://github.com/timmo001/workflows/releases/download/20261027.0/hk-base@20261027.0.0#/base.pkl"
+
+// Shared skills are synced copies owned by the skills repository, and the sync
+// pushes them from a clean clone without node_modules. .mise/locks is generated.
+exclude = List(".agents/skills", ".mise")
