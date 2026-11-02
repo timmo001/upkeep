@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "skills": {
+    "changeset-scope": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "changeset-scope/SKILL.md",
+      "computedHash": "792358f213f571ca78ed6b0a6118020398a9bb1288d855c8c127cb344e14f4be"
+    },
+    "code-review": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "code-review/SKILL.md",
+      "computedHash": "6fc74fbcf3fd7f5afcbff958b549755e688ed7a448b2a5dd0b97f3eb186c54c2"
+    },
+    "docs-kit": {
+      "source": "timmo001/groundwork",
+      "ref": "f029af839d326cf2383e3008cf229d52df90680c",
+      "sourceType": "github",
+      "skillPath": "skills/docs-kit/SKILL.md",
+      "computedHash": "5728575a1a8a834725ba9fcc474387abc9085042017459542b5de089f8248585"
+    },
+    "effect": {
+      "source": "kitlangton/skills",
+      "ref": "a1537921969c7cfc4d985befaba7752313da0fce",
+      "sourceType": "github",
+      "skillPath": "skills/effect/SKILL.md",
+      "computedHash": "d88417dca5f22fcc80b03ebd4096dfa6113a50cc6bb574bf53f75248cd321e35"
+    },
+    "effect-service-design": {
+      "source": "dmmulroy/skills",
+      "ref": "8603380821fee6a77c82639f364ce8fe4f5a92be",
+      "sourceType": "github",
+      "skillPath": "effect-service-design/SKILL.md",
+      "computedHash": "307d3af97e0343c761d56c260310c75b7e754aec2e64c3dee8c0946570d310ee"
+    },
+    "task-runners": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "task-runners/SKILL.md",
+      "computedHash": "9152aaa03ed6081d69d0294c9d351053514a700db3afc854af38198007a4130c"
+    },
+    "testing": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "testing/SKILL.md",
+      "computedHash": "ed01eeae5d38ed4992c0118bca55a1502e9c6323b62bb28ed1feac1a038b3d58"
+    },
+    "types-enforce-ts": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "types-enforce-ts/SKILL.md",
+      "computedHash": "182012ad1eab7894f4736a0144bddf659a4e87bd6e992129837d0fcb704c1161"
+    },
+    "writing-style": {
+      "source": "timmo001/skills",
+      "ref": "015ecd3caf78341f86a3320adbbf7adc6933fb0d",
+      "sourceType": "github",
+      "skillPath": "writing-style/SKILL.md",
+      "computedHash": "c3d5fc3c8c8992c3a431583bf380b341625475b1bbd29e44cff61b7ed86e61c3"
+    }
+  }
+}
