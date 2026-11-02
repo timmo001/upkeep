@@ -1,0 +1,9 @@
+# Keeps upkeep's dev processes running in the background, outside the invoking
+# shell or agent. Manage each with its serve:<daemon> mise tasks.
+
+# The CLI in watch mode, rerun on every change. It serves nothing yet, so it
+# has no port; the worker and dashboard get their own daemons with ports.
+[daemons.cli]
+run = 'exec mise run dev'
+ready_delay = 1
+retry = true

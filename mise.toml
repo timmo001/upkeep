@@ -1,4 +1,6 @@
-# Upkeep's pinned tools and tasks. CI runs check, test and build; the hk
+# Upkeep's pinned tools and tasks. Each part is a private Bun workspace
+# package under packages/, with its own lint, typecheck and test scripts; these
+# tasks run them across every package. CI runs check, test and build; the hk
 # pre-push hook runs the shared lint steps.
 min_version = "2025.1.0"
 
@@ -17,32 +19,54 @@ shellcheck = "0.11.0"
 [tasks.install]
 description = "Install dependencies"
 run = "bun install --frozen-lockfile"
-sources = ["package.json", "bun.lock"]
+sources = ["package.json", "packages/*/package.json", "bun.lock"]
 
 [tasks.dev]
-description = "Run upkeep in watch mode"
+description = "Run the upkeep CLI in watch mode in the foreground; agents use serve:cli"
 depends = ["install"]
+dir = "packages/cli"
 run = "bun run dev"
 
+[tasks."serve:cli"]
+description = "Start the CLI in watch mode in the background through pitchfork"
+run = "pitchfork start cli"
+
+[tasks."serve:cli:status"]
+description = "Show the background CLI's status"
+run = "pitchfork status cli"
+
+[tasks."serve:cli:logs"]
+description = "Follow the background CLI's logs"
+run = "pitchfork logs -t cli"
+
+[tasks."serve:cli:restart"]
+description = "Restart the background CLI"
+run = "pitchfork restart cli"
+
+[tasks."serve:cli:stop"]
+description = "Stop the background CLI"
+run = "pitchfork stop cli"
+
 [tasks.build]
-description = "Compile a minified, bytecode-cached upkeep binary"
+description = "Compile a minified, bytecode-cached upkeep binary to dist/upkeep"
 depends = ["install"]
-run = "bun run build"
+dir = "packages/cli"
+run = ["bun run build", "mkdir -p ../../dist", "cp dist/upkeep ../../dist/upkeep"]
 
 [tasks.test]
-description = "Run tests"
+description = "Run every package's tests"
 depends = ["install"]
-run = "bun run test"
+run = "bun run --filter './packages/*' test"
 
 [tasks.lint]
-description = "Lint source with the shared Oxlint rules"
+description = "Lint every package with the shared Oxlint rules"
 depends = ["install"]
-run = "bun run lint"
+run = "bun run --filter './packages/*' lint"
 
 [tasks.typecheck]
-description = "Type-check the source"
+description = "Type-check every package"
 depends = ["install"]
-run = "bun run typecheck"
+run = "bun run --filter './packages/*' typecheck"
 
 [tasks.format]
 description = "Format source and configuration"

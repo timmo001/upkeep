@@ -18,12 +18,18 @@ Decision, and work that depends on one waits for it.
 
 - It's public. Nothing personal goes in: no home paths, machine or host names,
   private repo details or private config.
-- Use mise-pinned tools and Bun. Keep `bun.lock` in sync with `package.json`,
-  and pin dependencies to exact versions (`bun add -E`).
+- Use mise-pinned tools and Bun. Keep `bun.lock` in sync with the workspace's
+  `package.json` files, and pin dependencies to exact versions (`bun add -E`).
 - Run project tasks through mise. Use `mise run format` and `mise run check`
   for validation.
-- Keep source under `src/`, with the CLI tree in `src/index.ts` so help and
-  completions come from one place.
+- Each part is a private Bun workspace package under `packages/<name>/`, named
+  `@upkeep/<name>`. Keep every package portable: its own `package.json` with
+  the dependencies and lint, typecheck and test scripts it needs, its own
+  `tsconfig.json` and `oxlint.config.ts`, and source in its own `src/`. Packages
+  use each other through `workspace:*` dependencies and public exports, never
+  relative imports across packages. Nothing is published.
+- The CLI is `packages/cli`, with the command tree in its `src/index.ts` so help
+  and completions come from one place.
 - Use lowercase filenames for config and scripts, with kebab-case for
   multiword names. Effect modules are named after their service, such as
   `src/jobs/Runner.ts`.
@@ -33,22 +39,32 @@ Decision, and work that depends on one waits for it.
   generated files, data files and one-line configs.
 - Use the shared `@timmo001/oxlint-rules/configs/recommended-effect` preset
   and its supported Oxlint peers, with type checking on. Fix a type error
-  rather than turning a check off; `src/types/` holds declarations for
-  packages that ship none.
+  rather than turning a check off; each package's `src/types/` holds
+  declarations for dependencies that ship none.
 - Track public work in issues with sub-issues and blocked-by relationships set;
   plans, research and decisions are attached to the issue. Ideas and feature
   requests go to Discussions where a repo has them on. Private work can stay in
   whatever tool fits until it lands on a public repo.
 
+## Background Dev Servers
+
+- Start dev processes with the `serve:*` tasks, never in the foreground.
+  `mise run serve:cli` runs the CLI in watch mode through Pitchfork; manage it
+  with `serve:cli:status`, `serve:cli:logs`, `serve:cli:restart` and
+  `serve:cli:stop`. Don't run `mise run dev` from an agent: it never exits.
+- For a one-off run, use `mise run build` and run `./dist/upkeep`.
+- Servers get a daemon with a port, reached at
+  `https://<daemon>.upkeep.localhost` through the Pitchfork proxy. Never add
+  the proxy's own port, such as `:8443`: run `pitchfork proxy doctor`, then
+  `pitchfork proxy setup`, to restore the 443 redirect instead.
+
 ## Development
 
-- `mise run dev` runs in watch mode and never exits. Don't run it in the
-  foreground from an agent; use `mise run build` and run `./dist/upkeep`
-  instead.
 - CI runs `mise run check`, `test` and `build` through the shared Bun CLI
   workflow, then smoke-tests the binary, plus the shared lint workflows. The
-  hk pre-push hook runs the same lint steps; run them by hand with
-  `hk check --all`.
+  hk pre-push hook runs the shared Markdown, YAML, Actions and shell lints;
+  run them by hand with `hk check --all`. Oxlint runs per package through
+  `mise run lint`.
 
 ## Rollout
 
