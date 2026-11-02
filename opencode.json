@@ -23,7 +23,12 @@
     },
     {
       "action": "edit",
-      "resource": "*",
+      "resource": "~/repos/**",
+      "effect": "ask"
+    },
+    {
+      "action": "edit",
+      "resource": "~/.config/dotfiles*/**",
       "effect": "ask"
     },
     {
@@ -34,16 +39,6 @@
     {
       "action": "edit",
       "resource": "~/repos/groundwork/**",
-      "effect": "allow"
-    },
-    {
-      "action": "edit",
-      "resource": "~/.cache/agent-scratch/**",
-      "effect": "allow"
-    },
-    {
-      "action": "edit",
-      "resource": "/tmp/opencode/**",
       "effect": "allow"
     },
     {
@@ -58,7 +53,12 @@
     },
     {
       "action": "gh.write *",
-      "resource": "gh_*delete* *",
+      "resource": "gh_*delete* timmo001/upkeep*",
+      "effect": "ask"
+    },
+    {
+      "action": "gh.write *",
+      "resource": "gh_*delete* timmo001/groundwork*",
       "effect": "ask"
     }
   ]
