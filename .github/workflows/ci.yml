@@ -1,0 +1,38 @@
+---
+# Checks every push and pull request: check, test and build through the shared
+# Bun CLI workflow, then the shared lint workflows.
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: timmo001/workflows/.github/workflows/build-bun-cli.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+    with:
+      smoke-test: |-
+        ./dist/upkeep --help
+        ./dist/upkeep --version
+
+  actionlint:
+    uses: timmo001/workflows/.github/workflows/lint-actionlint.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+
+  markdownlint:
+    uses: timmo001/workflows/.github/workflows/lint-markdownlint.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+
+  yamllint:
+    uses: timmo001/workflows/.github/workflows/lint-yamllint.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+
+  jsonlint:
+    uses: timmo001/workflows/.github/workflows/lint-jsonlint.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0

@@ -1,0 +1,13 @@
+---
+# Merges Renovate's pull requests once they pass, through the shared workflow.
+name: Renovate automerge
+
+on:
+  pull_request_target: {}
+
+jobs:
+  automerge:
+    uses: timmo001/workflows/.github/workflows/renovate-automerge.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+    permissions:
+      pull-requests: write
+      contents: write
