@@ -1,0 +1,17 @@
+---
+extends: default
+
+ignore: |
+  node_modules/
+  dist/
+  .agents/skills/
+
+rules:
+  document-start:
+    present: true
+    level: error
+  line-length: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1

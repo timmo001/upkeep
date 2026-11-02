@@ -1,0 +1,4 @@
+// Pre-push checks: the shared base from timmo001/workflows, which runs Oxlint
+// with this repository's config. Types, tests and formatting are left to CI
+// and `mise run check`. Run them by hand with `hk check`.
+amends "package://github.com/timmo001/workflows/releases/download/20261027.0/hk-base@20261027.0.0#/base.pkl"

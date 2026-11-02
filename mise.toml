@@ -1,0 +1,59 @@
+# Upkeep's pinned tools and tasks. CI runs check, test and build; the hk
+# pre-push hook runs the shared lint steps.
+min_version = "2025.1.0"
+
+[tools]
+node = "26.13.0"
+bun = "1.4.4"
+# The linters the shared hk pre-push hook runs, matching CI.
+uv = "0.13.6"
+# yamllint's PyYAML has no wheels for newer Pythons, and mise won't build it from source.
+python = "3.15.2"
+"pipx:yamllint" = "1.38.0"
+"npm:markdownlint-cli2" = "0.24.0"
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+
+[tasks.install]
+description = "Install dependencies"
+run = "bun install --frozen-lockfile"
+sources = ["package.json", "bun.lock"]
+
+[tasks.dev]
+description = "Run upkeep in watch mode"
+depends = ["install"]
+run = "bun run dev"
+
+[tasks.build]
+description = "Compile a minified, bytecode-cached upkeep binary"
+depends = ["install"]
+run = "bun run build"
+
+[tasks.test]
+description = "Run tests"
+depends = ["install"]
+run = "bun run test"
+
+[tasks.lint]
+description = "Lint source with the shared Oxlint rules"
+depends = ["install"]
+run = "bun run lint"
+
+[tasks.typecheck]
+description = "Type-check the source"
+depends = ["install"]
+run = "bun run typecheck"
+
+[tasks.format]
+description = "Format source and configuration"
+depends = ["install"]
+run = "bun run format"
+
+[tasks."format:check"]
+description = "Check formatting without writing"
+depends = ["install"]
+run = "bun run format:check"
+
+[tasks.check]
+description = "Lint, type-check and verify formatting"
+depends = ["lint", "typecheck", "format:check"]
