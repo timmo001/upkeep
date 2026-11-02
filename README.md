@@ -10,7 +10,3 @@ pull requests, issues, notifications and releases.
 It's at the planning stage, with nothing to run yet. The plan and its progress
 live in [#1](https://github.com/timmo001/upkeep/issues/1), with the working
 document attached to it.
-
-## License
-
-[Apache 2.0](LICENSE)
