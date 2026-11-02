@@ -27,10 +27,28 @@ Decision, and work that depends on one waits for it.
 - Use lowercase filenames for config and scripts, with kebab-case for
   multiword names. Effect modules are named after their service, such as
   `src/jobs/Runner.ts`.
+- Open each hand-written source file with a short header comment saying what
+  it is and, where it isn't obvious, why it's there: a `/** */` block before
+  the imports in TypeScript, the file's own comment syntax elsewhere. Skip
+  generated files, data files and one-line configs.
 - Use the shared `@timmo001/oxlint-rules/configs/recommended-effect` preset
-  and its supported Oxlint peers.
+  and its supported Oxlint peers, with type checking on. Fix a type error
+  rather than turning a check off; `src/types/` holds declarations for
+  packages that ship none.
 - Track public work in issues with sub-issues and blocked-by relationships set;
-  plans, research and decisions are attached to the issue.
+  plans, research and decisions are attached to the issue. Ideas and feature
+  requests go to Discussions where a repo has them on. Private work can stay in
+  whatever tool fits until it lands on a public repo.
+
+## Development
+
+- `mise run dev` runs in watch mode and never exits. Don't run it in the
+  foreground from an agent; use `mise run build` and run `./dist/upkeep`
+  instead.
+- CI runs `mise run check`, `test` and `build` through the shared Bun CLI
+  workflow, then smoke-tests the binary, plus the shared lint workflows. The
+  hk pre-push hook runs the same lint steps; run them by hand with
+  `hk check --all`.
 
 ## Rollout
 
