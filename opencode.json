@@ -13,36 +13,6 @@
     },
     {
       "action": "external_directory",
-      "resource": "~/.config/dot/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
-      "resource": "~/.config/groundwork/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
-      "resource": "~/.config/opencode/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
-      "resource": "~/.agents/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
-      "resource": "~/.local/share/dot/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
-      "resource": "~/.local/share/opencode/repos/**",
-      "effect": "allow"
-    },
-    {
-      "action": "external_directory",
       "resource": "~/.cache/agent-scratch/**",
       "effect": "allow"
     },
@@ -53,7 +23,7 @@
     },
     {
       "action": "edit",
-      "resource": "~/repos/**",
+      "resource": "*",
       "effect": "ask"
     },
     {
@@ -62,78 +32,33 @@
       "effect": "allow"
     },
     {
-      "action": "gh.write *",
-      "resource": "gh_issue_* timmo001/*",
+      "action": "edit",
+      "resource": "~/repos/groundwork/**",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": "~/.cache/agent-scratch/**",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": "/tmp/opencode/**",
       "effect": "allow"
     },
     {
       "action": "gh.write *",
-      "resource": "gh_pr_* timmo001/*",
+      "resource": "gh_* timmo001/upkeep*",
       "effect": "allow"
     },
     {
       "action": "gh.write *",
-      "resource": "gh_comment_edit timmo001/*",
+      "resource": "gh_* timmo001/groundwork*",
       "effect": "allow"
     },
     {
       "action": "gh.write *",
-      "resource": "gh_review_thread_* timmo001/*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_discussion_comment timmo001/*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_label_create timmo001/*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_run_* timmo001/*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_workflow_dispatch timmo001/*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_upload_attachment*",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_api POST *",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_api PATCH *",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_api PUT *",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_graphql mutation *",
-      "effect": "allow"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_issue_artifact_delete *",
-      "effect": "ask"
-    },
-    {
-      "action": "gh.write *",
-      "resource": "gh_graphql mutation *delete*",
+      "resource": "gh_*delete* *",
       "effect": "ask"
     }
   ]
