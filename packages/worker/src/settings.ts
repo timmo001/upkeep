@@ -66,8 +66,9 @@ export const Settings = Schema.Struct({
       opencode: Schema.optionalKey(Schema.String),
       /**
        * How many heals a day, across every worker, the decision model is
-       * asked about, 10 by default, so a shared free tier keeps room for
-       * whatever else uses it. Past that, heals are left for the digest.
+       * asked about. Unlimited by default, or 300 for the `opencode`
+       * provider; set it for a cloud model on a shared or metered plan.
+       * Past it, heals are left for the digest.
        */
       decisionsPerDay: Schema.optionalKey(
         Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

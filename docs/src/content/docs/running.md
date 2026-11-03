@@ -194,9 +194,9 @@ with `UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers
 AI with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` and
 `"provider": "cloudflare"`, or an LLM through OpenCode with
 `"provider": "opencode"` and a `provider/model` model, for a worker without a
-local model. `decisionsPerDay` caps how many heals a day the model chooses
-(10 by default), so a shared free tier keeps some room; past it, heals wait
-for the digest. The first agent is the default; with more than one, the model
+local model. `decisionsPerDay` caps how many heals a day the model chooses:
+unlimited by default, 300 for `opencode`. Set one for a cloud model on a
+shared or metered plan; past it, heals wait for the digest. The first agent is the default; with more than one, the model
 picks by what each is `for`:
 
 ```json

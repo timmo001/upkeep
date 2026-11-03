@@ -441,7 +441,10 @@ export const heal = Effect.fnUntraced(function* () {
     {
       onNone: () => Effect.succeed(fallback(run)),
       onSome: Effect.fnUntraced(function* (model) {
-        const limit = settings.decisionsPerDay ?? 10;
+        const limit =
+          settings.decisionsPerDay ??
+          (model.provider === "opencode" ? 300 : Infinity);
+
         const now = yield* Clock.currentTimeMillis;
 
         const used = (yield* reporter.heals(
