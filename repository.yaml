@@ -1,0 +1,6 @@
+# Marks this repository as a Home Assistant app repository, so the Supervisor
+# finds the app in home-assistant/app.
+---
+name: Upkeep
+url: https://github.com/timmo001/upkeep
+maintainer: timmo001
