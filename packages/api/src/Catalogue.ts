@@ -48,4 +48,20 @@ export const digest: Job = {
   onRelease: false,
 };
 
-export const jobs: ReadonlyArray<Job> = [releases, labels, bump, heal, digest];
+export const notifications: Job = {
+  id: "notifications",
+  name: "Notifications",
+  description:
+    "Dismiss the GitHub notifications of dependency updates that have merged",
+  schedule: "*/15 * * * *",
+  onRelease: false,
+};
+
+export const jobs: ReadonlyArray<Job> = [
+  releases,
+  labels,
+  bump,
+  heal,
+  digest,
+  notifications,
+];
