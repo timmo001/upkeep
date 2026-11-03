@@ -246,11 +246,16 @@ const takeOver = Effect.fnUntraced(function* (
     mise,
   });
 
-  yield* ran.length === 0
-    ? RunLog.warn(
-        `${repo}: has no check or build task, so nothing ran before the push`,
-      )
-    : RunLog.info(`${repo}: ${ran.join(", ")} passed`);
+  // Its checks already failed, so without a check here a push is a guess
+  if (ran.length === 0) {
+    yield* RunLog.warn(
+      `${repo}: left #${pr.number}, it has no check or build task to try the update here`,
+    );
+
+    return;
+  }
+
+  yield* RunLog.info(`${repo}: ${ran.join(", ")} passed`);
 
   const message = `${pr.title} (#${pr.number})`;
 

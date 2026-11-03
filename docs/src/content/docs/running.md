@@ -315,7 +315,9 @@ the default branch, which it rebases.
 
 Each update is squashed onto a clean clone of the default branch, its
 dependencies installed, and checked as a bump is (with the same
-per-repository checks). It's pushed as the pull request's title, and the
+per-repository checks). A repository with no check or build task to run is
+left alone, since its checks already failed there and nothing here could
+show the update works. Otherwise it's pushed as the pull request's title, and the
 pull request is closed with a comment linking the commit. The job then waits
 for the commit's CI. A repository that fails at any step is logged and the
 others carry on; the run fails at the end, naming them, and a heal for each
