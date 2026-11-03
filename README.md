@@ -1,5 +1,7 @@
 # Upkeep
 
+![Upkeep: keeps my repositories and their consumers up to date](.github/social-preview.png)
+
 Keeps my repositories and their consumers up to date, and shows what needs
 doing. A worker runs the jobs: rolling each first-party release out to its
 consumers, updating dependencies and applying labels, with changes checked
