@@ -24,14 +24,10 @@
         "wrangler": "4.156.0",
       },
     },
-    "packages/cli": {
-      "name": "@upkeep/cli",
+    "packages/api": {
+      "name": "@upkeep/api",
       "version": "0.0.0",
-      "bin": {
-        "upkeep": "./dist/upkeep",
-      },
       "dependencies": {
-        "@effect/platform-bun": "4.1.2",
         "effect": "4.1.2",
       },
       "devDependencies": {
@@ -44,10 +40,35 @@
         "typescript": "7.0.2",
       },
     },
-    "packages/xyz": {
-      "name": "@upkeep/xyz",
+    "packages/cli": {
+      "name": "@upkeep/cli",
+      "version": "0.0.0",
+      "bin": {
+        "upkeep": "./dist/upkeep",
+      },
+      "dependencies": {
+        "@effect/platform-bun": "4.1.2",
+        "@upkeep/api": "workspace:*",
+        "@upkeep/server": "workspace:*",
+        "effect": "4.1.2",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "0.64.1",
+        "@oxlint/plugins": "1.90.0",
+        "@timmo001/oxlint-rules": "0.6.3",
+        "@types/bun": "1.4.4",
+        "oxlint": "1.90.0",
+        "oxlint-tsgolint": "7.0.2005",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/server": {
+      "name": "@upkeep/server",
       "version": "0.0.0",
       "dependencies": {
+        "@effect/platform-bun": "4.1.2",
+        "@effect/sql-sqlite-bun": "4.1.2",
+        "@upkeep/api": "workspace:*",
         "effect": "4.1.2",
       },
       "devDependencies": {
@@ -190,6 +211,8 @@
     "@effect/platform-bun": ["@effect/platform-bun@4.1.2", "", { "dependencies": { "@effect/platform-node-shared": "4.1.2" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-waEAa84CITqjctgw9VdhlL9PyXRHICG3KAWTFRDPUE2XL/pfMPhO7V9oFdfx22dbAhhUzV+MHs0d9hnmy/DQ7w=="],
 
     "@effect/platform-node-shared": ["@effect/platform-node-shared@4.1.2", "", { "dependencies": { "@types/ws": "^8.18.2", "ws": "^8.22.1" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-wSwl9A/G1hcVvF8nLI+YfB3EyOIDvWS6+lsTZBkmgDnPBL7m8YWZF+1HD+mdEsb52SUGfukip46Q3gRwSdk3QA=="],
+
+    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.1.2", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-Cwe0fSqklOg8pjoY+i0rszSciI3WiKfauQc+k+okpcfTGqON45YZ3a9XmP4uUbk7dhim3qiPP92IjBjL6jDZgw=="],
 
     "@effect/tsgo": ["@effect/tsgo@0.64.1", "", { "optionalDependencies": { "@effect/tsgo-darwin-arm64": "0.64.1", "@effect/tsgo-darwin-x64": "0.64.1", "@effect/tsgo-linux-arm": "0.64.1", "@effect/tsgo-linux-arm64": "0.64.1", "@effect/tsgo-linux-x64": "0.64.1", "@effect/tsgo-win32-arm64": "0.64.1", "@effect/tsgo-win32-x64": "0.64.1" }, "bin": { "effect-tsgo": "dist/effect-tsgo.cjs" } }, "sha512-MtBw+qO1IJdZklc80rBXIMgAZBmNTH1NeEHgJu5LiCFocDR0X56cFYUyKItYY7+D9ROzNIS3bD/sL1Tku6mMpQ=="],
 
@@ -779,9 +802,11 @@
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.4.0", "", {}, "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ=="],
 
+    "@upkeep/api": ["@upkeep/api@workspace:packages/api"],
+
     "@upkeep/cli": ["@upkeep/cli@workspace:packages/cli"],
 
-    "@upkeep/xyz": ["@upkeep/xyz@workspace:packages/xyz"],
+    "@upkeep/server": ["@upkeep/server@workspace:packages/server"],
 
     "@upsetjs/venn.js": ["@upsetjs/venn.js@2.0.0", "", { "optionalDependencies": { "d3-selection": "^3.0.0", "d3-transition": "^3.0.1" } }, "sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw=="],
 
