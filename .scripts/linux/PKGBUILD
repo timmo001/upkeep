@@ -1,0 +1,46 @@
+# Maintainer: Aidan Timson (Timmo) <aidan@timmo.dev>
+# The upkeep binary built from main, for the machines that run workers and the
+# CLI. The server ships as a Home Assistant app instead.
+pkgname=upkeep-git
+pkgver=0.0.0.r1.gabc1234
+pkgrel=1
+pkgdesc="Keep your repositories and their consumers up to date (git version)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/timmo001/upkeep"
+license=('Apache-2.0')
+install=upkeep.install
+makedepends=('git' 'bun')
+depends=('glibc' 'systemd' 'git' 'github-cli')
+provides=('upkeep')
+conflicts=('upkeep' 'upkeep-bin')
+options=('!strip')
+source=("$pkgname::git+https://github.com/timmo001/upkeep.git")
+md5sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  local base_version
+  base_version=$(bun -e 'const pkg = await Bun.file("packages/cli/package.json").json(); process.stdout.write(pkg.version)')
+  printf "%s.r%s.g%s" "$base_version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cd "$pkgname"
+  bun install --frozen-lockfile --filter @upkeep/cli --ignore-scripts
+  cd packages/cli
+  bun run build
+  local shell
+  for shell in zsh bash fish; do
+    ./dist/upkeep --completions "$shell" >"upkeep.$shell"
+  done
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  install -Dm755 packages/cli/dist/upkeep "$pkgdir/usr/bin/upkeep"
+  install -Dm644 .scripts/linux/upkeep-worker.service "$pkgdir/usr/lib/systemd/user/upkeep-worker.service"
+  install -Dm644 packages/cli/upkeep.zsh "$pkgdir/usr/share/zsh/site-functions/_upkeep"
+  install -Dm644 packages/cli/upkeep.bash "$pkgdir/usr/share/bash-completion/completions/upkeep"
+  install -Dm644 packages/cli/upkeep.fish "$pkgdir/usr/share/fish/vendor_completions.d/upkeep.fish"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

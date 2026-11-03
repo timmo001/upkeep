@@ -66,6 +66,12 @@ when its worker has been quiet for 10 minutes, and a worker that's stopped
 fails its run straight away. A worker reads GitHub through `gh`, logged in as
 whoever runs it.
 
+On Arch, the `upkeep-git` package builds the binary from main and installs a
+`upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
+`~/.config/upkeep/worker.env`, along with a `PATH` that finds the tools the
+jobs use, such as `mise`, `opencode2` and `plannotator`, then run
+`systemctl --user enable --now upkeep-worker.service`.
+
 ## Runs
 
 ```bash

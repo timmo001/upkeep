@@ -1,0 +1,62 @@
+post_install() {
+  _upkeep_user_systemctl_installing daemon-reload
+
+  cat <<'EOF'
+upkeep: installed the user service upkeep-worker.service, not enabled.
+
+On a machine that runs jobs, add it with `upkeep workers add <name>`, then put
+the server's URL and the printed token in ~/.config/upkeep/worker.env:
+
+  UPKEEP_SERVER=https://upkeep.example.com
+  UPKEEP_WORKER_TOKEN=...
+
+and run:
+  systemctl --user enable --now upkeep-worker.service
+EOF
+}
+
+post_upgrade() {
+  _upkeep_user_systemctl_installing daemon-reload
+  _upkeep_user_systemctl_installing try-restart upkeep-worker.service
+}
+
+pre_remove() {
+  _upkeep_user_systemctl_installing disable --now upkeep-worker.service
+}
+
+# The user who ran the install through sudo or pkexec, if not root.
+_upkeep_installing_user() {
+  local user="${SUDO_USER:-}"
+
+  if [ -z "$user" ] && [ -n "${PKEXEC_UID:-}" ]; then
+    user="$(id -nu "$PKEXEC_UID" 2>/dev/null)" || user=""
+  fi
+
+  if [ -n "$user" ] && [ "$user" != "root" ]; then
+    printf "%s" "$user"
+  fi
+}
+
+# Runs systemctl --user for the installing user, if they have a running user session.
+_upkeep_user_systemctl_installing() {
+  local user
+  local uid
+  local runtime_dir
+  local bus_path
+
+  user="$(_upkeep_installing_user)"
+  [ -n "$user" ] || return 0
+
+  uid="$(id -u "$user" 2>/dev/null)" || return 0
+  runtime_dir="/run/user/$uid"
+  bus_path="$runtime_dir/bus"
+
+  if [ ! -S "$bus_path" ]; then
+    return 0
+  fi
+
+  runuser -u "$user" -- env \
+    XDG_RUNTIME_DIR="$runtime_dir" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$bus_path" \
+    systemctl --user "$@" >/dev/null 2>&1 || true
+}

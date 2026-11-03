@@ -1,0 +1,18 @@
+[Unit]
+Description=Upkeep worker, taking and running jobs from an Upkeep server
+Documentation=https://upkeep.timmo.dev/running
+After=network-online.target
+Wants=network-online.target
+# Needs UPKEEP_SERVER and UPKEEP_WORKER_TOKEN from `upkeep workers add` on the
+# server.
+ConditionPathExists=%h/.config/upkeep/worker.env
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/upkeep/worker.env
+ExecStart=/usr/bin/upkeep worker
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
