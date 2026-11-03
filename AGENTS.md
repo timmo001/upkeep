@@ -81,7 +81,13 @@ Changes made here are pushed as they land, with no go-ahead needed. Once
 1. Commit the session's own changes through `dot git commit`, leaving other
    sessions' work alone, and push.
 2. Tick the change off on its issue, with a link to the commit.
-3. Report what landed and anything flagged.
+3. Once a release's workflow has updated the Home Assistant apps repository,
+   install the new app version without asking, through the `ha-bridge` Code
+   Mode tools rather than the CLI: `check_updates` on `update.upkeep_update`,
+   `get_update` to confirm the new version is offered, then `call_action` with
+   `update.install`, and `get_updates` to confirm it's installed. Then check
+   `upkeep status` lists what the release added.
+4. Report what landed and anything flagged.
 
 ## Notifications
 
