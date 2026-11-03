@@ -262,8 +262,12 @@ export class Store extends Context.Service<
       worker: string,
       update: Api.HealUpdate,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
-    /** How many heals of a job's runs were queued since `since`. */
-    healsSince(job: string, since: number): Effect.Effect<number, StoreError>;
+    /** How many heals of a job's runs, for one target, were queued since `since`. */
+    healsSince(
+      job: string,
+      target: Domain.Target,
+      since: number,
+    ): Effect.Effect<number, StoreError>;
     /** Every heal queued since `since`, newest first. */
     heals(since: number): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     /**
@@ -590,11 +594,13 @@ export class Store extends Context.Service<
 
     const healsSince = Effect.fn("Store.healsSince")(function* (
       job: string,
+      target: Domain.Target,
       since: number,
     ) {
       const rows = yield* sql<{ count: number }>`
         SELECT count(*) AS count FROM runs
-        WHERE heal_job = ${job} AND queued_at >= ${since}
+        WHERE heal_job = ${job} AND heal_target = ${targetColumn(target)}
+          AND queued_at >= ${since}
       `;
 
       return rows[0]?.count ?? 0;

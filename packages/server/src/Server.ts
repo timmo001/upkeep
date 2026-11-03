@@ -92,7 +92,7 @@ const WorkerAuthorizationLayer = Layer.effect(
 const findJob = (id: string) =>
   Option.fromNullishOr(Catalogue.jobs.find((job) => job.id === id));
 
-/** How many heals one job can have a day before it's parked. */
+/** How many heals a job can have a day for one target. */
 const healsPerDay = Config.Int("UPKEEP_HEALS_PER_DAY").pipe(
   Config.withDefault(3),
 );
@@ -131,8 +131,9 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
 
 /**
  * Queue a heal for each target of a failed or lost run: each failed consumer
- * of a bump, or Upkeep itself. A failed heal never queues another, and a job
- * past its heals for the day is parked instead.
+ * of a bump, or Upkeep itself. A failed heal never queues another. A target
+ * past its heals for the day gets no more: a consumer is skipped, and a job
+ * failing in itself is parked.
  */
 const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
@@ -144,10 +145,7 @@ const heal = Effect.fn("heal")(function* (
   const limit = yield* healsPerDay;
   const now = yield* Clock.currentTimeMillis;
 
-  const used = yield* store.healsSince(
-    run.job,
-    now - Duration.toMillis("1 day"),
-  );
+  const since = now - Duration.toMillis("1 day");
 
   const targets: ReadonlyArray<Domain.Target> =
     consumers.length === 0
@@ -160,22 +158,34 @@ const heal = Effect.fn("heal")(function* (
     triage.report(run, target),
   );
 
-  if (used + targets.length > limit) {
-    const reason = `${run.job} failed again after ${used} heals today, past the limit of ${limit}`;
-
-    yield* store.park(
-      run.job,
-      reason,
-      Option.getOrNull(Option.firstSomeOf(issues)),
-    );
-    yield* Effect.logWarning(`Parked ${run.job}`).pipe(
-      Effect.annotateLogs({ run: run.id, reason }),
-    );
-
-    return;
-  }
-
   for (const [index, target] of targets.entries()) {
+    const used = yield* store.healsSince(run.job, target, since);
+
+    if (used >= limit) {
+      // One consumer failing all day mustn't stop the job for the others, so
+      // only a job failing in itself is parked.
+      if (target.kind === "consumer") {
+        yield* Effect.logWarning(
+          `Skipped a heal of ${run.job} for ${target.repo}: past ${limit} heals today`,
+        ).pipe(Effect.annotateLogs({ run: run.id }));
+
+        continue;
+      }
+
+      const reason = `${run.job} failed again after ${used} heals today, past the limit of ${limit}`;
+
+      yield* store.park(
+        run.job,
+        reason,
+        Option.getOrNull(issues[index] ?? Option.none()),
+      );
+      yield* Effect.logWarning(`Parked ${run.job}`).pipe(
+        Effect.annotateLogs({ run: run.id, reason }),
+      );
+
+      continue;
+    }
+
     yield* queue({
       job: Catalogue.heal.id,
       trigger: "heal",

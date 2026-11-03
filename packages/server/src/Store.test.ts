@@ -171,8 +171,21 @@ test("a heal's record fills in as its worker reports", () =>
         session: null,
         issue: null,
       });
-      expect(yield* store.healsSince("bump", 0)).toBe(1);
-      expect(yield* store.healsSince("labels", 0)).toBe(0);
+      expect(
+        yield* store.healsSince(
+          "bump",
+          { kind: "consumer", repo: "timmo001/a" },
+          0,
+        ),
+      ).toBe(1);
+      expect(
+        yield* store.healsSince(
+          "bump",
+          { kind: "consumer", repo: "timmo001/b" },
+          0,
+        ),
+      ).toBe(0);
+      expect(yield* store.healsSince("labels", { kind: "upkeep" }, 0)).toBe(0);
     }),
   ));
 
