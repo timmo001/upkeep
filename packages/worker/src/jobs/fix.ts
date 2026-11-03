@@ -91,9 +91,9 @@ const prompt = (
           "",
         ]),
     `Find the cause and fix it in this checkout of ${repo}.`,
-    ...(run.job === "renovate"
+    ...(run.job === "stalled-updates"
       ? [
-          "The run was taking over the Renovate pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit.",
+          "The run was taking over the dependency update pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit.",
         ]
       : []),
     ...reach,

@@ -20,7 +20,7 @@ behind a reverse proxy for HTTPS.
 | --------------------------- | ---------------------------------------------------------------------- |
 | `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                        |
 | `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands |
-| `UPKEEP_HEALS_PER_DAY`      | How many heals one job can have a day before it's parked, 3 by default |
+| `UPKEEP_HEALS_PER_DAY`      | How many heals a job can have a day for each target, 3 by default      |
 | `UPKEEP_KEEP_DAYS`          | How many days finished runs and their logs are kept, 30 by default     |
 | `UPKEEP_KEEP_RUNS`          | How many of each job's latest finished runs are kept however old, 20   |
 | `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional               |
@@ -151,18 +151,20 @@ running runs are never pruned.
 ## Heals
 
 When a run fails or is lost, the server queues a `heal` run for it. A failed
-`bump` gets one heal per consumer that failed, each with that consumer as its
-target; any other failure gets one heal with Upkeep itself as the target. A
-failed heal never queues another.
+`bump` or `stalled-updates` run gets one heal per repository that failed,
+each with that repository as its target; any other failure gets one heal with
+Upkeep itself as the target. A failed heal never queues another.
 
 Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
 OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
 
-A job that would go past `UPKEEP_HEALS_PER_DAY` heals in a day is parked
-instead. The server stops queueing a parked job on its schedule or on
-releases, though it can still be run by hand, and `upkeep status --json`
-shows why it's parked. `upkeep unpark <job>` lets it be queued again.
+A job gets `UPKEEP_HEALS_PER_DAY` heals a day for each target. A repository
+past that gets no more heals that day, while the job carries on for the
+others. A job failing in itself past that is parked instead. The server stops
+queueing a parked job on its schedule or on releases, though it can still be
+run by hand, and `upkeep status --json` shows why it's parked.
+`upkeep unpark <job>` lets it be queued again.
 
 A heal reads the failed run's error and the end of its log, and a decision
 model chooses what to do:
@@ -228,15 +230,15 @@ by default.
 
 ## Jobs
 
-| Job             | Runs             | Does                                                                                                                                                                                                                                                                       |
-| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `releases`      | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                         |
-| `labels`        | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.          |
-| `bump`          | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. |
-| `heal`          | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
-| `digest`        | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
-| `notifications` | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                      |
-| `renovate`      | Hourly           | Takes over Renovate pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Renovate](#renovate).                                                                                                 |
+| Job               | Runs             | Does                                                                                                                                                                                                                                                                       |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releases`        | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                         |
+| `labels`          | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.          |
+| `bump`            | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. |
+| `heal`            | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
+| `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
+| `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                      |
+| `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                    |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
@@ -273,15 +275,16 @@ XDG config directory:
 }
 ```
 
-### Renovate
+### Stalled updates
 
-Each hour the `renovate` job finds the open Renovate pull requests in the
-signed-in account's repositories and takes over those whose checks all
-finished and some failed. Drafts, forks, archived repositories, pull requests
-into other branches, abandoned updates and Renovate's onboarding are left
-alone, as are pull
-requests whose checks pass or are still running, since Renovate merges those
-itself.
+Each hour the `stalled-updates` job finds the open Renovate and Dependabot
+pull requests in the signed-in account's repositories and takes over those
+whose checks all finished and some failed. It reads no updater config, only
+each pull request's diff, so it works with any config. Drafts, forks,
+archived repositories, pull requests into other branches, abandoned updates
+and onboarding are left alone, as are pull requests whose checks pass or are
+still running, which the updater merges itself, and those that conflict with
+the default branch, which it rebases.
 
 Each update is squashed onto a clean clone of the default branch, its
 dependencies installed, and checked as a bump is (with the same
@@ -291,6 +294,7 @@ for the commit's CI. A repository that fails at any step is logged and the
 others carry on; the run fails at the end, naming them, and a heal for each
 one hands the update to an agent to apply and fix forward.
 
-Clones are kept in `upkeep/renovate` in the XDG cache directory. Set
-`UPKEEP_RENOVATE_DRY_RUN=true` to stop before each commit and log what would
-be pushed.
+Clones are kept in `upkeep/stalled-updates` in the XDG cache directory. Set
+`UPKEEP_STALLED_UPDATES_DRY_RUN=true` to stop before each commit and log what
+would be pushed. A dry run logs the repositories that failed rather than
+failing, so it queues no heals.

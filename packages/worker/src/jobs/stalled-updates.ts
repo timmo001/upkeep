@@ -1,8 +1,10 @@
 /**
- * The renovate job: take over Renovate pull requests that stalled because
- * their checks failed. Each one is squashed onto a clean checkout of the
- * default branch, checked, pushed straight to it and closed with a link to
- * the commit, then CI is watched. A repository that fails is logged and the
+ * The stalled-updates job: take over dependency update pull requests, from
+ * Renovate or Dependabot, that stalled because their checks failed. Each one
+ * is squashed onto a clean checkout of the default branch, checked, pushed
+ * straight to it and closed with a link to the commit, then CI is watched.
+ * It reads no updater config, only the pull request's diff, so it works
+ * whatever the repository's config. A repository that fails is logged and the
  * rest carry on; the run fails at the end, naming them, so a heal can fix
  * each one forward.
  */
@@ -23,6 +25,9 @@ import {
   watch,
 } from "./bump";
 
+/** The updaters whose pull requests are taken over, by search author. */
+const updaters = ["app/renovate", "app/dependabot"];
+
 const User = Schema.Struct({ login: Schema.String });
 
 const Found = Schema.Struct({
@@ -36,6 +41,8 @@ const PullRequest = Schema.Struct({
   title: Schema.String,
   html_url: Schema.String,
   draft: Schema.Boolean,
+  mergeable: Schema.NullOr(Schema.Boolean),
+  user: Schema.Struct({ login: Schema.String }),
   head: Schema.Struct({
     ref: Schema.String,
     sha: Schema.String,
@@ -53,6 +60,9 @@ const PullRequest = Schema.Struct({
 });
 
 export type PullRequest = typeof PullRequest.Type;
+
+/** The updater's name for logs and comments, such as `renovate`. */
+const updaterOf = (pr: PullRequest) => pr.user.login.replace(/\[bot\]$/, "");
 
 const passed = new Set(["success", "skipped", "neutral"]);
 
@@ -75,16 +85,15 @@ export const checksOf = (
 };
 
 /**
- * Why a pull request is left to Renovate, or `undefined` when Upkeep should
- * take it over: an open update from Renovate's own branch into the default
- * branch, whose checks have all finished and some failed.
+ * Why a pull request is left to its updater, or `undefined` when Upkeep
+ * should take it over: an open update into the default branch, whose checks
+ * have all finished and some failed.
  */
 export const leftBecause = (pr: PullRequest, checks: Checks) => {
-  if (pr.head.ref === "renovate/configure") return "Renovate's onboarding";
+  if (pr.title === "Configure Renovate" || pr.head.ref.endsWith("/configure"))
+    return "the updater's onboarding";
 
-  if (!pr.head.ref.startsWith("renovate/")) return "not a Renovate branch";
-
-  if (pr.title.endsWith(" - abandoned")) return "abandoned by Renovate";
+  if (pr.title.endsWith(" - abandoned")) return "abandoned by its updater";
 
   if (pr.head.repo?.full_name !== pr.base.repo.full_name) return "from a fork";
 
@@ -96,6 +105,9 @@ export const leftBecause = (pr: PullRequest, checks: Checks) => {
   if (pr.base.repo.fork) return "a fork";
 
   if (pr.draft) return "a draft";
+
+  if (pr.mergeable === false)
+    return `it conflicts with ${pr.base.ref}, so its updater rebases it`;
 
   switch (checks) {
     case "failed":
@@ -109,28 +121,31 @@ export const leftBecause = (pr: PullRequest, checks: Checks) => {
   }
 };
 
-/** Every open Renovate pull request in the signed-in account's repositories. */
+/** Every open update pull request in the signed-in account's repositories. */
 const open = Effect.fnUntraced(function* () {
   const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
-
-  const { items } = yield* Api.json(
-    {
-      endpoint: "search/issues",
-      method: "GET",
-      query: {
-        q: `is:pr is:open archived:false author:app/renovate user:${login}`,
-        per_page: 100,
-      },
-    },
-    Found,
-  );
-
   const prefix = "https://api.github.com/repos/";
 
-  return items.map((item) => ({
-    repo: item.repository_url.slice(prefix.length),
-    number: item.number,
-  }));
+  const found = yield* Effect.forEach(updaters, (author) =>
+    Api.json(
+      {
+        endpoint: "search/issues",
+        method: "GET",
+        query: {
+          q: `is:pr is:open archived:false author:${author} user:${login}`,
+          per_page: 100,
+        },
+      },
+      Found,
+    ),
+  );
+
+  return found.flatMap(({ items }) =>
+    items.map((item) => ({
+      repo: item.repository_url.slice(prefix.length),
+      number: item.number,
+    })),
+  );
 });
 
 interface TakeoverContext {
@@ -168,12 +183,34 @@ const takeOver = Effect.fnUntraced(function* (
   const options = { cwd: directory, trusted: context.root };
 
   yield* RunLog.info(
-    `${repo}: taking over "${pr.title}" ${pr.html_url}, whose checks failed`,
+    `${repo}: taking over "${pr.title}" ${pr.html_url} from ${updaterOf(pr)}, whose checks failed`,
   );
 
   yield* checkout(repo, branch, directory, context.root);
   yield* run("git", ["fetch", "--quiet", "origin", pr.head.sha], options);
-  yield* run("git", ["merge", "--squash", "--quiet", pr.head.sha], options);
+
+  // GitHub can report a pull request as mergeable before it has checked, so a
+  // conflict found here is still left for the updater to rebase.
+  const merged = yield* run(
+    "git",
+    ["merge", "--squash", "--quiet", pr.head.sha],
+    options,
+  ).pipe(
+    Effect.as(true),
+    Effect.catch(() =>
+      run("git", ["reset", "--quiet", "--hard"], options).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+
+  if (!merged) {
+    yield* RunLog.info(
+      `${repo}: left #${pr.number}, it conflicts with ${branch}, so its updater rebases it`,
+    );
+
+    return;
+  }
 
   const staged = yield* run(
     "git",
@@ -246,15 +283,16 @@ const takeOver = Effect.fnUntraced(function* (
 });
 
 /**
- * Take over every stalled Renovate pull request: one repository's in turn,
- * four repositories at a time.
+ * Take over every stalled update pull request: one repository's in turn,
+ * four repositories at a time. A dry run only logs what failed, so no heal
+ * pushes for real after it.
  */
-export const renovate = Effect.fnUntraced(function* () {
+export const stalledUpdates = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
   const path = yield* Path.Path;
-  const root = path.join(path.dirname(yield* cacheRoot), "renovate");
+  const root = path.join(path.dirname(yield* cacheRoot), "stalled-updates");
 
-  const dryRun = yield* Config.Boolean("UPKEEP_RENOVATE_DRY_RUN").pipe(
+  const dryRun = yield* Config.Boolean("UPKEEP_STALLED_UPDATES_DRY_RUN").pipe(
     Config.withDefault(false),
   );
 
@@ -290,7 +328,7 @@ export const renovate = Effect.fnUntraced(function* () {
   );
 
   yield* RunLog.info(
-    `${found.length} open Renovate pull requests: ${dryRun ? "would take over" : "taking over"} ${taking}, leaving ${left}`,
+    `${found.length} open update pull requests: ${dryRun ? "would take over" : "taking over"} ${taking}, leaving ${left}`,
   );
 
   const failed: Array<string> = [];
@@ -310,9 +348,18 @@ export const renovate = Effect.fnUntraced(function* () {
     { concurrency: 4, discard: true },
   );
 
-  if (failed.length > 0)
-    return yield* new ConsumersFailed({
-      action: "take over Renovate updates in",
-      repos: failed.toSorted(),
-    });
+  if (failed.length === 0) return;
+
+  if (dryRun) {
+    yield* RunLog.warn(
+      `Dry run: would have failed in ${failed.toSorted().join(", ")}`,
+    );
+
+    return;
+  }
+
+  return yield* new ConsumersFailed({
+    action: "take over stalled updates in",
+    repos: failed.toSorted(),
+  });
 });
