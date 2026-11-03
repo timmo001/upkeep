@@ -29,9 +29,9 @@ const Runs = Tool.make("runs", {
   description:
     "List runs on the server in $UPKEEP_SERVER, newest first, optionally of one job or in one state",
   parameters: Schema.Struct({
-    job: Schema.optional(Domain.JobId),
-    state: Schema.optional(Domain.RunState),
-    limit: Schema.optional(Schema.Int),
+    job: Schema.optionalKey(Domain.JobId),
+    state: Schema.optionalKey(Domain.RunState),
+    limit: Schema.optionalKey(Schema.Int),
   }),
   success: Schema.Struct({ runs: Schema.Array(Domain.Run) }),
   failure: UpkeepError,
@@ -42,7 +42,7 @@ const Log = Tool.make("log", {
   description: `A run's log, from after line \`after\` when it's given, up to ${Api.maxLogLines} lines at a time`,
   parameters: Schema.Struct({
     run: Schema.String,
-    after: Schema.optional(Schema.Int),
+    after: Schema.optionalKey(Schema.Int),
   }),
   success: Schema.Struct({
     run: Domain.Run,
@@ -57,7 +57,7 @@ const Run = Tool.make("run", {
     "Queue a run of a job on the server. A run of the same job and release that's still waiting is returned instead of a second one.",
   parameters: Schema.Struct({
     job: Domain.JobId,
-    release: Schema.optional(Domain.Release),
+    release: Schema.optionalKey(Domain.Release),
   }),
   success: Domain.Run,
   failure: UpkeepError,
@@ -67,7 +67,8 @@ const Run = Tool.make("run", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const Tools = Toolkit.make(Status, Runs, Log, Run);
+/** Every operation an agent can call, shared by MCP and Code Mode. */
+export const Tools = Toolkit.make(Status, Runs, Log, Run);
 
 /** Call the server as the admin in the environment, failing with a readable error. */
 const onServer = <A, E extends { readonly message: string }>(
@@ -78,61 +79,62 @@ const onServer = <A, E extends { readonly message: string }>(
     Effect.mapError((error) => new UpkeepError({ message: error.message })),
   );
 
-const handlers = Effect.gen(function* () {
-  const jobs = yield* Jobs;
+/** The handlers behind `Tools`. */
+export const toolsLayer = Tools.toLayer(
+  Effect.gen(function* () {
+    const jobs = yield* Jobs;
 
-  return {
-    status: () => Effect.map(jobs.list(), (list) => ({ jobs: list })),
-    runs: (query: {
-      readonly job?: string | undefined;
-      readonly state?: Domain.RunState | undefined;
-      readonly limit?: number | undefined;
-    }) =>
-      onServer(
-        Client.use((client) =>
-          client.runs.list({ query }).pipe(Effect.map((runs) => ({ runs }))),
+    return {
+      status: () => Effect.map(jobs.list(), (list) => ({ jobs: list })),
+      runs: (query: {
+        readonly job?: string | undefined;
+        readonly state?: Domain.RunState | undefined;
+        readonly limit?: number | undefined;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.runs.list({ query }).pipe(Effect.map((runs) => ({ runs }))),
+          ),
         ),
-      ),
-    log: (input: {
-      readonly run: string;
-      readonly after?: number | undefined;
-    }) =>
-      onServer(
-        Effect.gen(function* () {
-          const client = yield* Client;
-          const params = { id: input.run };
+      log: (input: {
+        readonly run: string;
+        readonly after?: number | undefined;
+      }) =>
+        onServer(
+          Effect.gen(function* () {
+            const client = yield* Client;
+            const params = { id: input.run };
 
-          return {
-            run: yield* client.runs.get({ params }),
-            lines: yield* client.runs.log({
-              params,
-              query: { after: input.after },
-            }),
-          };
-        }),
-      ),
-    run: (input: {
-      readonly job: string;
-      readonly release?: Domain.Release | undefined;
-    }) =>
-      onServer(
-        Client.use((client) =>
-          client.jobs.run({
-            params: { id: input.job },
-            payload:
-              input.release === undefined ? {} : { release: input.release },
+            return {
+              run: yield* client.runs.get({ params }),
+              lines: yield* client.runs.log({
+                params,
+                query: { after: input.after },
+              }),
+            };
           }),
         ),
-      ),
-  };
-});
+      run: (input: {
+        readonly job: string;
+        readonly release?: Domain.Release | undefined;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.jobs.run({
+              params: { id: input.job },
+              payload:
+                input.release === undefined ? {} : { release: input.release },
+            }),
+          ),
+        ),
+    };
+  }),
+);
 
 /** Serve the operations over MCP on stdio until the client disconnects. */
-export const serveMcp = Effect.fn("serveMcp")(function* () {
-  const implementation = yield* handlers;
-
-  return yield* McpServer.toolkit(Tools).pipe(
-    Layer.provide(Tools.toLayer(Effect.succeed(implementation))),
+export const serveMcp = () =>
+  McpServer.toolkit(Tools).pipe(
+    Layer.provide(toolsLayer),
     Layer.provide(
       McpServer.layerStdio({
         name: "upkeep",
@@ -142,5 +144,5 @@ export const serveMcp = Effect.fn("serveMcp")(function* () {
     ),
     Layer.provide(BunStdio.layer),
     Layer.launch,
+    Effect.withSpan("serveMcp"),
   );
-});

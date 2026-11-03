@@ -11,6 +11,6 @@ Prefer the `upkeep` Code Mode namespace, then the MCP server (`upkeep mcp`); fal
 - `upkeep runs --json` lists runs, newest first; filter with `--job` and `--state failed`.
 - `upkeep log <run> --json` prints a run's log as JSON lines. A failed run's `error` holds why it failed.
 - `upkeep run <job>` queues a run (write). `upkeep run <job> --local` runs it on this machine and reports nothing, which is the safe way to try a job.
-- `upkeep agent tools --json` prints every operation with how an agent may use it.
+- `upkeep agent tools --json` prints every operation with its input schema and how an agent may use it; `upkeep agent call <tool>` runs one with JSON input on stdin.
 
 Token commands (`upkeep admins`, `upkeep workers`) hand out secrets: leave them to the person.

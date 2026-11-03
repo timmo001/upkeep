@@ -6,10 +6,11 @@ import { ghLayer, handlers, Worker } from "@upkeep/worker";
 import { Config, Console, Effect, Layer, Option, Schema } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import packageJson from "../package.json" with { type: "json" };
+import { call, manifest } from "./agent";
 import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
 import { serveMcp } from "./mcp";
-import { operations } from "./operations";
+import { toolNames } from "./operations";
 
 const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON for scripts and agents instead of text"),
@@ -43,24 +44,27 @@ const agentTools = Command.make(
   "tools",
   { json },
   Effect.fn("agentTools")(function* () {
-    const manifest = {
-      tool: "upkeep",
-      operations: operations.map((operation) => ({
-        name: operation.name,
-        description: operation.description,
-        access: operation.access,
-        command: ["upkeep", operation.name],
-        json: true,
-      })),
-    };
-
-    yield* Console.log(JSON.stringify(manifest, null, 2));
+    yield* Console.log(JSON.stringify(manifest(), null, 2));
   }),
 ).pipe(Command.withDescription("Print the Code Mode manifest as JSON"));
 
+const agentCall = Command.make(
+  "call",
+  {
+    tool: Argument.Literals("tool", toolNames).pipe(
+      Argument.withDescription("The tool to run, from upkeep agent tools"),
+    ),
+  },
+  ({ tool }) => call(tool),
+).pipe(
+  Command.withDescription(
+    "Run a Code Mode tool with its input as JSON on stdin and print its result",
+  ),
+);
+
 const agent = Command.make("agent").pipe(
   Command.withDescription("Agent surfaces"),
-  Command.withSubcommands([agentTools]),
+  Command.withSubcommands([agentTools, agentCall]),
 );
 
 const mcp = Command.make("mcp", {}, () => serveMcp()).pipe(

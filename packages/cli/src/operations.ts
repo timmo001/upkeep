@@ -1,39 +1,25 @@
 /**
- * Every operation the CLI offers, described once with how an agent may use
- * it. The Code Mode manifest and the MCP server both read this list, following
- * Groundwork's behavior conventions: https://groundwork.timmo.dev/behavior
+ * How an agent may use each operation, following Groundwork's behavior
+ * conventions: https://groundwork.timmo.dev/behavior. The operations
+ * themselves are the MCP tools in `mcp.ts`; Code Mode and MCP both read this.
  */
-import { Schema } from "effect";
+import { Record, Schema } from "effect";
+import type { Tools } from "./mcp";
 
 export const Access = Schema.Literals(["read", "write", "ask", "power"]);
 
 export type Access = typeof Access.Type;
 
-export interface Operation {
-  readonly name: string;
-  readonly description: string;
-  readonly access: Access;
-}
+export type ToolName = keyof typeof Tools.tools;
 
-export const operations: readonly Operation[] = [
-  {
-    name: "status",
-    description: "List the jobs upkeep runs",
-    access: "read",
-  },
-  {
-    name: "runs",
-    description: "List runs on the server, newest first",
-    access: "read",
-  },
-  {
-    name: "log",
-    description: "Print a run's log",
-    access: "read",
-  },
-  {
-    name: "run",
-    description: "Queue a run of a job on the server",
-    access: "write",
-  },
-];
+export const access = {
+  status: "read",
+  runs: "read",
+  log: "read",
+  run: "write",
+} satisfies { readonly [Name in ToolName]: Access };
+
+/** An operation's access class. */
+export const accessOf = (name: ToolName): Access => access[name];
+
+export const toolNames = Record.keys(access);
