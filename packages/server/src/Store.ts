@@ -279,6 +279,19 @@ export class Store extends Context.Service<
       ReadonlyArray<Domain.LogLine>,
       Api.RunNotFound | StoreError
     >;
+    /** A run's last `limit` log lines, oldest first. */
+    logTail(
+      id: string,
+      limit: number,
+    ): Effect.Effect<
+      ReadonlyArray<Domain.LogLine>,
+      Api.RunNotFound | StoreError
+    >;
+    /** Check a run is running on this worker. */
+    claimed(
+      id: string,
+      worker: string,
+    ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
     /** Fail every running run with no heartbeat since `before`. */
     failLost(
       before: number,
@@ -646,6 +659,21 @@ export class Store extends Context.Service<
       `.pipe(Effect.flatMap(decodeLog), Effect.mapError(storeError));
     });
 
+    const logTail = Effect.fn("Store.logTail")(function* (
+      id: string,
+      limit: number,
+    ) {
+      yield* run(id);
+
+      return yield* sql`
+        SELECT * FROM (
+          SELECT seq, at, level, message FROM log_lines
+          WHERE run_id = ${id}
+          ORDER BY seq DESC LIMIT ${limit}
+        ) ORDER BY seq
+      `.pipe(Effect.flatMap(decodeLog), Effect.mapError(storeError));
+    });
+
     const failLost = Effect.fn("Store.failLost")(function* (before: number) {
       return yield* selectRuns(sql`
           UPDATE runs
@@ -756,6 +784,8 @@ export class Store extends Context.Service<
       parked,
       cancel,
       log,
+      logTail,
+      claimed,
       failLost,
       recordReleases,
       addToken,

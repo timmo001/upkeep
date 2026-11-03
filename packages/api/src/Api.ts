@@ -14,6 +14,7 @@ import {
   OpenApi,
 } from "effect/http-api";
 import {
+  Heal,
   HealDecision,
   JobId,
   JobStatus,
@@ -170,6 +171,9 @@ export const maxRuns = 200;
 /** The most log lines one request carries, either way. */
 export const maxLogLines = 1000;
 
+/** How many of a failed run's last log lines a heal reads. */
+export const healLogLines = 200;
+
 /** The most releases one report carries. */
 export const maxReleases = 1000;
 
@@ -287,6 +291,25 @@ export class WorkGroup extends HttpApiGroup.make("work")
       params: { id: Schema.String },
       payload: HealUpdate,
       success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /** A heal's record, and the run it's healing with the end of its log. */
+    HttpApiEndpoint.get("healing", "/runs/:id/healing", {
+      params: { id: Schema.String },
+      success: Schema.Struct({
+        heal: Heal,
+        run: Run,
+        log: Schema.Array(LogLine),
+      }),
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /**
+     * Queue the failed job again for a heal, for the same release. Nothing is
+     * queued while the job is parked.
+     */
+    HttpApiEndpoint.post("retry", "/runs/:id/retry", {
+      params: { id: Schema.String },
+      success: Schema.Struct({ run: Schema.NullOr(Run) }),
       error: [RunNotFound, RunNotClaimed],
     }),
     /** Park a job, so nothing queues it until it's unparked. */

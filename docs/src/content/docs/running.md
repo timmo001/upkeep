@@ -84,6 +84,39 @@ instead. The server stops queueing a parked job on its schedule or on
 releases, though it can still be run by hand, and `upkeep status --json`
 shows why it's parked. `upkeep unpark <job>` lets it be queued again.
 
+A heal reads the failed run's error and the end of its log, and a decision
+model chooses what to do:
+
+- `retry` queues the failed job again, for the same release.
+- `fix` picks an agent from the worker's list to fix it. Agent fixes aren't
+  wired up yet, so for now it's left for a person.
+- `park` parks the job, with the model's reason.
+- `ask` leaves it for a person.
+
+The decision model and agents go in the worker's config file. The model is
+any TypeSafe System One API at `url`, with `UPKEEP_DECISION_API_KEY` when it
+needs one, or Clef on Cloudflare Workers AI with `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` and `"provider": "cloudflare"`. The first agent is the
+default; with more than one, the model picks by what each is `for`:
+
+```json
+{
+  "heal": {
+    "decisions": {
+      "provider": "typesafe",
+      "url": "http://localhost:11434",
+      "model": "jev-latest"
+    },
+    "agents": [
+      { "model": "provider/model", "variant": "high", "for": "Most fixes" }
+    ]
+  }
+}
+```
+
+Without a decision model, a lost run is retried and anything else is left
+for a person.
+
 ## Jobs
 
 | Job        | Runs             | Does                                                                                                                                                                                                                                                                       |

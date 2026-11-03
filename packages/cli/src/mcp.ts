@@ -79,8 +79,20 @@ const Cancel = Tool.make("cancel", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
+const Unpark = Tool.make("unpark", {
+  description:
+    "Let a parked job be queued again by its schedule, releases and heals",
+  parameters: Schema.Struct({ job: Domain.JobId }),
+  success: Schema.Struct({ job: Domain.JobId }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
-export const Tools = Toolkit.make(Status, Runs, Log, Run, Cancel);
+export const Tools = Toolkit.make(Status, Runs, Log, Run, Cancel, Unpark);
 
 /** Call the server as the admin in the environment, failing with a readable error. */
 const onServer = <A, E extends { readonly message: string }>(
@@ -143,6 +155,14 @@ export const toolsLayer = Tools.toLayer(
         onServer(
           Client.use((client) =>
             client.runs.cancel({ params: { id: input.run } }),
+          ),
+        ),
+      unpark: (input: { readonly job: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.jobs
+              .unpark({ params: { id: input.job } })
+              .pipe(Effect.as({ job: input.job })),
           ),
         ),
     };

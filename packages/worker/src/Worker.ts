@@ -116,7 +116,7 @@ const execute = Effect.fnUntraced(function* (
 
   yield* handler(run.release).pipe(
     Effect.raceFirst(heartbeats),
-    Effect.provide([RunLog.remote(run.id), Reporter.remote]),
+    Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id)]),
     Effect.onExit((exit) =>
       client.work.finish({ params, payload: outcome(exit) }).pipe(
         Effect.andThen(

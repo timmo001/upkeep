@@ -12,11 +12,47 @@ const BumpRepo = Schema.Struct({
   checks: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+/**
+ * Where heal decisions are made: any TypeSafe System One API at `url`, with
+ * `$UPKEEP_DECISION_API_KEY` when it needs one, or Clef on Cloudflare
+ * Workers AI with `$CLOUDFLARE_ACCOUNT_ID` and `$CLOUDFLARE_API_TOKEN`.
+ */
+const DecisionModel = Schema.Union([
+  Schema.Struct({
+    provider: Schema.Literal("typesafe"),
+    url: Schema.String,
+    model: Schema.String,
+  }),
+  Schema.Struct({
+    provider: Schema.Literal("cloudflare"),
+    model: Schema.String,
+  }),
+]);
+
+export type DecisionModel = typeof DecisionModel.Type;
+
+/** An OpenCode model and variant a heal can hand a fix to, and when to. */
+const Agent = Schema.Struct({
+  model: Schema.String,
+  variant: Schema.optionalKey(Schema.String),
+  /** What it's for, which the decision model reads to pick one. */
+  for: Schema.String,
+});
+
+export type Agent = typeof Agent.Type;
+
 export const Settings = Schema.Struct({
   bump: Schema.optionalKey(
     Schema.Struct({
       /** By repository, as `owner/name`. */
       repos: Schema.optionalKey(Schema.Record(Schema.String, BumpRepo)),
+    }),
+  ),
+  heal: Schema.optionalKey(
+    Schema.Struct({
+      decisions: Schema.optionalKey(DecisionModel),
+      /** The agents a fix can go to; the first is the default. */
+      agents: Schema.optionalKey(Schema.Array(Agent)),
     }),
   ),
 });

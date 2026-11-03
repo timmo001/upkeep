@@ -167,6 +167,16 @@ const heal = Effect.fn("heal")(function* (
   }
 });
 
+/** A heal run's record and the run it's healing. Other runs aren't found. */
+const healedRun = Effect.fnUntraced(function* (id: string) {
+  const store = yield* Store;
+  const healing = yield* store.run(id);
+
+  if (healing.heal === null) return yield* new Api.RunNotFound({ id });
+
+  return { heal: healing.heal, run: yield* store.run(healing.heal.of) };
+});
+
 const JobsHandlers = HttpApiBuilder.group(
   Api.Api,
   "jobs",
@@ -322,6 +332,44 @@ const WorkHandlers = HttpApiBuilder.group(
         yield* store
           .updateHeal(params.id, worker.name, payload)
           .pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
+      healing: Effect.fn(function* ({ params }) {
+        const worker = yield* Api.CurrentWorker;
+
+        return yield* Effect.gen(function* () {
+          yield* store.claimed(params.id, worker.name);
+
+          const { heal, run } = yield* healedRun(params.id);
+
+          return {
+            heal,
+            run,
+            log: yield* store.logTail(run.id, Api.healLogLines),
+          };
+        }).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchTag("StoreError", Effect.die),
+        );
+      }),
+      retry: Effect.fn(function* ({ params }) {
+        const worker = yield* Api.CurrentWorker;
+
+        return yield* Effect.gen(function* () {
+          yield* store.claimed(params.id, worker.name);
+
+          const { run } = yield* healedRun(params.id);
+
+          const queued = yield* queue({
+            job: run.job,
+            trigger: "heal",
+            release: run.release,
+          });
+
+          return { run: Option.getOrNull(queued) };
+        }).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchTag("StoreError", Effect.die),
+        );
       }),
       park: Effect.fn(function* ({ params, payload }) {
         if (Option.isNone(findJob(params.job))) {
