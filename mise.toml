@@ -143,6 +143,10 @@ description = "Check formatting without writing"
 depends = ["install"]
 run = "bun run format:check"
 
+[tasks.renovate-presets]
+description = "Regenerate the Renovate built-in presets the deps job reads"
+run = "bun scripts/renovate-presets.ts"
+
 [tasks.check]
 description = "Lint, type-check, verify formatting and check the docs"
 depends = ["lint", "typecheck", "format:check", "docs:check"]

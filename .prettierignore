@@ -5,6 +5,8 @@ bun.lock
 LICENSE
 .agents/skills/
 skills-lock.json
+# Generated from Renovate's source by mise run renovate-presets.
+packages/worker/src/deps/renovate-presets.json
 # Agent instructions are written by hand; a reformat only adds diff noise.
 AGENTS.md
 .astro/
