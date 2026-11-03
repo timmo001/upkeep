@@ -7,6 +7,7 @@ import {
   mdiCheckCircleOutline,
   mdiCloseCircleOutline,
   mdiLogout,
+  mdiMinusCircleOutline,
   mdiOpenInNew,
   mdiPlayCircleOutline,
   mdiProgressClock,
@@ -174,6 +175,7 @@ const states: Record<
   queued: { path: mdiProgressClock, tone: "neutral" },
   running: { path: mdiPlayCircleOutline, tone: "info" },
   succeeded: { path: mdiCheckCircleOutline, tone: "success" },
+  skipped: { path: mdiMinusCircleOutline, tone: "neutral" },
   failed: { path: mdiCloseCircleOutline, tone: "danger" },
   cancelled: { path: mdiCancel, tone: "warning" },
 };

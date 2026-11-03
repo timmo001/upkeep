@@ -24,11 +24,17 @@ import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 import * as Status from "./Status";
 
-/** What a job does when it runs, given the release it's for, if any. */
+/** What a handler ends with when its run found nothing to do. */
+export const skipped = "skipped";
+
+/**
+ * What a job does when it runs, given the release it's for, if any. It ends
+ * with `skipped` when it found nothing to do.
+ */
 export type Handler = (
   release: Domain.Release | null,
 ) => Effect.Effect<
-  void,
+  void | typeof skipped,
   unknown,
   | RunLog
   | Reporter
@@ -73,7 +79,12 @@ export class ConsumersFailed extends Schema.TaggedError<ConsumersFailed>()(
 
 /** How a run ended, for the server. The cause of a failure is its error. */
 const outcome = (exit: Exit.Exit<unknown, unknown>) => {
-  if (Exit.isSuccess(exit)) return { outcome: "succeeded" as const };
+  if (Exit.isSuccess(exit)) {
+    return {
+      outcome:
+        exit.value === skipped ? ("skipped" as const) : ("succeeded" as const),
+    };
+  }
 
   const failed = Cause.findErrorOption(exit.cause).pipe(
     Option.filter(Schema.is(ConsumersFailed)),

@@ -49,8 +49,13 @@ export class UpkeepRuns extends LitElement {
   }
 
   override render() {
-    return view(this.#runs.value, (list) =>
-      list.length === 0
+    return view(this.#runs.value, (all) => {
+      // Every job's runs leave out the ones that found nothing to do, which
+      // a job's own page still lists
+      const list =
+        this.job === "" ? all.filter((run) => run.state !== "skipped") : all;
+
+      return list.length === 0
         ? empty(mdiHistory, "No runs yet.")
         : html`<div class="table">
             <table>
@@ -106,8 +111,8 @@ export class UpkeepRuns extends LitElement {
                 )}
               </tbody>
             </table>
-          </div>`,
-    );
+          </div>`;
+    });
   }
 }
 

@@ -58,11 +58,14 @@ export type Trigger = typeof Trigger.Type;
 /**
  * Where a run is: waiting for a worker, on one, or done. A run cancelled
  * while it was running is `cancelled`; one cancelled while queued is dropped.
+ * A run that found nothing to do, such as a bump of a release with no
+ * consumers, is `skipped`.
  */
 export const RunState = Schema.Literals([
   "queued",
   "running",
   "succeeded",
+  "skipped",
   "failed",
   "cancelled",
 ]);
@@ -70,7 +73,7 @@ export const RunState = Schema.Literals([
 export type RunState = typeof RunState.Type;
 
 /** How a run can end. */
-export const Outcome = Schema.Literals(["succeeded", "failed"]);
+export const Outcome = Schema.Literals(["succeeded", "skipped", "failed"]);
 
 export type Outcome = typeof Outcome.Type;
 

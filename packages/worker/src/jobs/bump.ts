@@ -24,7 +24,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
-import { ConsumersFailed } from "../Worker";
+import { ConsumersFailed, skipped } from "../Worker";
 
 /** What a release changes in a consumer. */
 export type Edit = Data.TaggedEnum<{
@@ -674,6 +674,15 @@ export const bump = Effect.fnUntraced(function* (
   );
 
   const consumers = yield* discover(release, sha);
+
+  if (consumers.size === 0) {
+    yield* RunLog.info(
+      `Nothing uses ${release.repo}, so there's nothing to bump`,
+    );
+
+    return skipped;
+  }
+
   const failed: Array<string> = [];
 
   const counts: Record<Outcome, number> = {

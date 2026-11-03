@@ -276,7 +276,9 @@ checked with `mise run check` and `mise run build` where the repository has
 those tasks. A pin only changes workflows, so it goes straight to the push
 and CI checks it. After the push the job waits for the commit's CI runs, and
 a failed run fails that consumer. One consumer failing doesn't stop the
-others; the run fails at the end, naming them.
+others; the run fails at the end, naming them. A release nothing uses ends
+`skipped`, and the dashboard leaves skipped runs out of the list of every
+job's runs.
 
 A package is only bumped once its version is on npm, waiting up to 20
 minutes for the publish. Clones are kept in `upkeep/bump` in the XDG cache
