@@ -72,6 +72,7 @@
         "@timmo001/groundwork-tokens": "0.9.33",
         "@timmo001/groundwork-ui": "0.9.33",
         "@upkeep/api": "workspace:*",
+        "cronstrue": "3.38.0",
         "effect": "4.1.2",
         "lit": "3.3.3",
       },
@@ -1253,6 +1254,8 @@
     "cors": ["cors@2.8.6", "", { "dependencies": { "object-assign": "^4", "vary": "^1" } }, "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw=="],
 
     "cose-base": ["cose-base@1.0.3", "", { "dependencies": { "layout-base": "^1.0.0" } }, "sha512-s9whTXInMSgAp/NVXVNuVxVKzGH2qck3aQlVHxDCdAEPgtMKwc4Wq6/QKhgdEdgbLSi9rBTAcPoRa6JpiG4ksg=="],
+
+    "cronstrue": ["cronstrue@3.38.0", "", { "bin": { "cronstrue": "bin/cli.js" } }, "sha512-i10xR7fS4AH9LKwmt3gYdt/5lSsB2qFGSNfC8aeyYybxo48DCMz+nUrSVI4kUj8yo+SgTbMJqp/BWEem9avlcA=="],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
 

@@ -4,6 +4,7 @@
  */
 import { mdiPlay, mdiPlayPause } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
+import cronstrue from "cronstrue";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
@@ -13,11 +14,17 @@ import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
 import "./upkeep-runs.ts";
 
-/** What starts a job besides its run button. */
+/** What starts a job besides its run button, with a schedule in words. */
 const starts = (job: Domain.JobStatus) =>
   [
-    job.schedule === null ? null : html`<code>${job.schedule}</code>`,
-    job.onRelease ? "on release" : null,
+    job.schedule === null
+      ? null
+      : html`<span title=${job.schedule}
+          >${cronstrue.toString(job.schedule, {
+            use24HourTimeFormat: true,
+          })}</span
+        >`,
+    job.onRelease ? "On release" : null,
   ].filter((start) => start !== null);
 
 export const jobActions = (job: Domain.JobStatus) => html`
