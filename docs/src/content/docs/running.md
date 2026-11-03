@@ -78,6 +78,15 @@ upkeep workers list
 upkeep workers remove desktop
 ```
 
+The CLI also reads both from `~/.config/upkeep/admin.env` (under
+`$XDG_CONFIG_HOME`) when they aren't in the environment, so its MCP server and
+the OpenCode plugin find the server however they were started:
+
+```bash
+UPKEEP_SERVER=https://upkeep.example.com
+UPKEEP_ADMIN_TOKEN=...
+```
+
 ### First setup with 1Password
 
 [`.scripts/setup-1password.sh`](https://github.com/timmo001/upkeep/blob/main/.scripts/setup-1password.sh)

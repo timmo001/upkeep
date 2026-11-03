@@ -22,7 +22,7 @@ import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
 import { serveMcp } from "./mcp";
 import { toolNames } from "./operations";
-import { layerOptions } from "./options";
+import { layerAdminEnv, layerOptions } from "./options";
 
 const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON for scripts and agents instead of text"),
@@ -511,7 +511,7 @@ upkeep.pipe(
       Jobs.catalogue,
       ghLayer(),
       FetchHttpClient.layer,
-      layerOptions,
+      layerOptions.pipe(Layer.provide(layerAdminEnv)),
     ).pipe(Layer.provideMerge(BunServices.layer)),
   ),
   BunRuntime.runMain({

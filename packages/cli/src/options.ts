@@ -1,6 +1,6 @@
 /**
- * Settings from a JSON file, such as the Home Assistant app's
- * `/data/options.json`, read behind the environment.
+ * Settings read behind the environment: the admin's `admin.env`, and a JSON
+ * file such as the Home Assistant app's `/data/options.json`.
  */
 import {
   Config,
@@ -14,6 +14,32 @@ import {
 
 const Options = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Unknown),
+);
+
+const configRoot = Config.String("XDG_CONFIG_HOME").pipe(
+  Config.orElse(() =>
+    Config.String("HOME").pipe(Config.map((home) => `${home}/.config`)),
+  ),
+);
+
+/**
+ * Settings from `~/.config/upkeep/admin.env`, read behind the environment,
+ * so the CLI, its MCP server and the OpenCode plugin reach the server however
+ * they were started.
+ */
+export const layerAdminEnv = ConfigProvider.layerAdd(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* Config.option(configRoot);
+
+    if (Option.isNone(root)) return ConfigProvider.fromUnknown({});
+
+    const path = `${root.value}/upkeep/admin.env`;
+
+    if (!(yield* fs.exists(path))) return ConfigProvider.fromUnknown({});
+
+    return yield* ConfigProvider.fromDotEnv({ path });
+  }),
 );
 
 /**

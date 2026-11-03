@@ -26,7 +26,8 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `unpark`  | Write  | Lets a parked job be queued again                       |
 
 `runs`, `log`, `run`, `cancel` and `unpark` talk to the server in `UPKEEP_SERVER` as the admin in
-`UPKEEP_ADMIN_TOKEN`. Managing tokens stays a CLI command for people, since it
+`UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
+Managing tokens stays a CLI command for people, since it
 hands out secrets.
 
 ## OpenCode plugin
