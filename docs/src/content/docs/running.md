@@ -21,6 +21,8 @@ behind a reverse proxy for HTTPS.
 | `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                        |
 | `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands |
 | `UPKEEP_HEALS_PER_DAY`      | How many heals one job can have a day before it's parked, 3 by default |
+| `UPKEEP_KEEP_DAYS`          | How many days finished runs and their logs are kept, 30 by default     |
+| `UPKEEP_KEEP_RUNS`          | How many of each job's latest finished runs are kept however old, 20   |
 | `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional               |
 | `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                        |
 | `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                 |
@@ -70,6 +72,10 @@ printing its log and reporting nothing to the server.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.
+
+Once an hour the server deletes finished runs older than `UPKEEP_KEEP_DAYS`
+and their logs, keeping the latest `UPKEEP_KEEP_RUNS` of each job. Queued and
+running runs are never pruned.
 
 ## Heals
 

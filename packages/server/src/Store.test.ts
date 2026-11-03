@@ -192,6 +192,50 @@ test("a parked job stays parked until it's unparked", () =>
     }),
   ));
 
+test("pruning keeps each job's latest runs and anything unfinished", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const finished: Array<string> = [];
+
+      for (let index = 0; index < 3; index++) {
+        yield* store.queueRun({
+          job: "releases",
+          trigger: "manual",
+          release: null,
+        });
+
+        const id = Option.getOrThrow(
+          yield* store.claim(["releases"], "desktop"),
+        ).id;
+
+        yield* store.appendLog(id, "desktop", [
+          { at: 0, level: "info", message: "ran" },
+        ]);
+        yield* store.finish(id, "desktop", "succeeded", null);
+        finished.push(id);
+      }
+
+      const waiting = yield* store.queueRun({
+        job: "releases",
+        trigger: "manual",
+        release: null,
+      });
+
+      expect(yield* store.prune(Number.MAX_SAFE_INTEGER, 1)).toBe(2);
+      expect((yield* store.run(waiting.id)).state).toBe("queued");
+      expect((yield* store.log(finished[2] ?? "", 0, 10)).length).toBe(1);
+
+      for (const id of finished.slice(0, 2)) {
+        expect((yield* store.run(id).pipe(Effect.flip))._tag).toBe(
+          "RunNotFound",
+        );
+      }
+
+      expect(yield* store.prune(0, 0)).toBe(0);
+    }),
+  ));
+
 test("a repository's first release is only recorded", () =>
   run(
     Effect.gen(function* () {

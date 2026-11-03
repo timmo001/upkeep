@@ -311,6 +311,11 @@ export class Store extends Context.Service<
       id: string,
       worker: string,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /**
+     * Delete finished runs queued before `before` and their logs, keeping the
+     * latest `keep` of each job. Returns how many runs went.
+     */
+    prune(before: number, keep: number): Effect.Effect<number, StoreError>;
     /** Fail every running run with no heartbeat since `before`. */
     failLost(
       before: number,
@@ -715,6 +720,31 @@ export class Store extends Context.Service<
         `);
     }, Effect.mapError(storeError));
 
+    const prune = Effect.fn("Store.prune")(
+      function* (before: number, keep: number) {
+        const doomed = sql`
+          SELECT id FROM (
+            SELECT id, queued_at, ROW_NUMBER() OVER (
+              PARTITION BY job ORDER BY queued_at DESC, id DESC
+            ) AS rank
+            FROM runs
+            WHERE state IN ('succeeded', 'failed', 'cancelled')
+          )
+          WHERE rank > ${keep} AND queued_at < ${before}
+        `;
+
+        yield* sql`DELETE FROM log_lines WHERE run_id IN (${doomed})`;
+
+        const deleted = yield* sql<{ readonly id: string }>`
+          DELETE FROM runs WHERE id IN (${doomed}) RETURNING id
+        `;
+
+        return deleted.length;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
     const recordReleases = Effect.fn("Store.recordReleases")(
       function* (releases: ReadonlyArray<Domain.Release>) {
         const now = yield* Clock.currentTimeMillis;
@@ -818,6 +848,7 @@ export class Store extends Context.Service<
       log,
       logTail,
       claimed,
+      prune,
       failLost,
       recordReleases,
       addToken,

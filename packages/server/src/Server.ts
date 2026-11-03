@@ -1,7 +1,8 @@
 /**
  * The Upkeep server: the HTTP API workers and the CLI talk to, the scheduler
  * that queues jobs on their cron, the sweep that fails runs whose worker went
- * quiet, and the one that unparks jobs once their triage issue is resolved.
+ * quiet, the one that unparks jobs once their triage issue is resolved, and
+ * the one that prunes old runs.
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
@@ -570,14 +571,47 @@ export const lostRuns = Layer.effectDiscard(
   }),
 );
 
+/** How long finished runs are kept, and how many of each job's survive that. */
+const retention = Config.all({
+  days: Config.Int("UPKEEP_KEEP_DAYS").pipe(Config.withDefault(30)),
+  runs: Config.Int("UPKEEP_KEEP_RUNS").pipe(Config.withDefault(20)),
+});
+
+/**
+ * Delete finished runs and their logs past the retention window, once an
+ * hour, keeping the latest runs of each job however old they are.
+ */
+export const pruneRuns = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const keep = yield* retention;
+
+    yield* Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+
+      const pruned = yield* store.prune(
+        now - Duration.toMillis(Duration.days(keep.days)),
+        keep.runs,
+      );
+
+      if (pruned > 0) yield* Effect.logInfo(`Pruned ${pruned} old runs`);
+    }).pipe(
+      Effect.catchCause(Effect.logError),
+      Effect.repeat(Schedule.spaced(Duration.hours(1))),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 export interface ServeOptions {
   readonly hostname: string;
   readonly port: number;
 }
 
 /**
- * Serve the API over plain HTTP, with the scheduler and the lost-run and
- * unpark sweeps. For HTTPS, put it behind a reverse proxy, which handles TLS.
+ * Serve the API over plain HTTP, with the scheduler and the lost-run, unpark
+ * and prune sweeps. For HTTPS, put it behind a reverse proxy, which handles
+ * TLS.
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
@@ -585,6 +619,7 @@ export const layer = (options: ServeOptions) =>
     scheduler,
     lostRuns,
     unparkResolved,
+    pruneRuns,
   ).pipe(
     Layer.provide([Tokens.layer, Triage.layer]),
     Layer.provideMerge(Store.layer),
