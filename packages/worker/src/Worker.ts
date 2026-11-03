@@ -7,13 +7,18 @@
 import type { Gh } from "@timmo001/effect-gh";
 import { Client, Domain } from "@upkeep/api";
 import { Cause, Duration, Effect, Exit, Option, Record, Schema } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 
 /** What a job does when it runs, given the release it's for, if any. */
 export type Handler = (
   release: Domain.Release | null,
-) => Effect.Effect<void, unknown, RunLog | Reporter | Gh>;
+) => Effect.Effect<
+  void,
+  unknown,
+  RunLog | Reporter | Gh | ChildProcessSpawner.ChildProcessSpawner
+>;
 
 /** The jobs a worker can run, by job ID. */
 export type Handlers = Readonly<Record<Domain.JobId, Handler>>;

@@ -63,6 +63,10 @@ printing its log and reporting nothing to the server.
 
 ## Jobs
 
-| Job        | Runs             | Does                                                                                                                                                               |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `releases` | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded. |
+| Job        | Runs             | Does                                                                                                                                                                                                                                                              |
+| ---------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releases` | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                |
+| `labels`   | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log. |
+
+The `labels` job reads the conventions from a groundwork checkout, set by
+`UPKEEP_GROUNDWORK` on the worker.

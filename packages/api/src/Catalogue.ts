@@ -13,4 +13,13 @@ export const releases: Job = {
   onRelease: false,
 };
 
-export const jobs: ReadonlyArray<Job> = [releases];
+export const labels: Job = {
+  id: "labels",
+  name: "Labels",
+  description:
+    "Bring each repository's labels in line with the groundwork conventions",
+  schedule: "0 4 * * *",
+  onRelease: false,
+};
+
+export const jobs: ReadonlyArray<Job> = [releases, labels];

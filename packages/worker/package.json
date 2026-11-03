@@ -13,7 +13,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@timmo001/effect-gh": "0.9.2",
+    "@timmo001/effect-gh": "0.10.0",
     "@upkeep/api": "workspace:*",
     "effect": "4.1.2"
   },
