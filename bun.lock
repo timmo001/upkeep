@@ -50,6 +50,7 @@
         "@effect/platform-bun": "4.1.2",
         "@upkeep/api": "workspace:*",
         "@upkeep/server": "workspace:*",
+        "@upkeep/worker": "workspace:*",
         "effect": "4.1.2",
       },
       "devDependencies": {
@@ -68,6 +69,23 @@
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@effect/sql-sqlite-bun": "4.1.2",
+        "@upkeep/api": "workspace:*",
+        "effect": "4.1.2",
+      },
+      "devDependencies": {
+        "@effect/tsgo": "0.64.1",
+        "@oxlint/plugins": "1.90.0",
+        "@timmo001/oxlint-rules": "0.6.3",
+        "@types/bun": "1.4.4",
+        "oxlint": "1.90.0",
+        "oxlint-tsgolint": "7.0.2005",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/worker": {
+      "name": "@upkeep/worker",
+      "version": "0.0.0",
+      "dependencies": {
         "@upkeep/api": "workspace:*",
         "effect": "4.1.2",
       },
@@ -807,6 +825,8 @@
     "@upkeep/cli": ["@upkeep/cli@workspace:packages/cli"],
 
     "@upkeep/server": ["@upkeep/server@workspace:packages/server"],
+
+    "@upkeep/worker": ["@upkeep/worker@workspace:packages/worker"],
 
     "@upsetjs/venn.js": ["@upsetjs/venn.js@2.0.0", "", { "optionalDependencies": { "d3-selection": "^3.0.0", "d3-transition": "^3.0.1" } }, "sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw=="],
 
