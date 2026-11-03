@@ -297,7 +297,7 @@ const discover = Effect.fnUntraced(function* (
   return consumers;
 });
 
-const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
+export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.orElse(() =>
     Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
   ),
@@ -368,7 +368,7 @@ const tool = (
  * Install where a changed manifest has a lockfile, in its own directory or
  * the repository's root. Returns the lockfiles to commit.
  */
-const install = Effect.fnUntraced(function* (
+export const install = Effect.fnUntraced(function* (
   directory: string,
   manifests: ReadonlyArray<string>,
   options: { readonly trusted: string; readonly mise: boolean },
@@ -404,7 +404,7 @@ const install = Effect.fnUntraced(function* (
  * The checks before a push: the commands set for the repository, or else
  * its mise `check` and `build` tasks where it has them. Returns what ran.
  */
-const check = Effect.fnUntraced(function* (
+export const check = Effect.fnUntraced(function* (
   configured: ReadonlyArray<string> | undefined,
   options: {
     readonly cwd: string;
@@ -447,7 +447,7 @@ const passed = new Set(["success", "skipped", "neutral"]);
  * Wait for the CI runs on a pushed commit to finish, failing when one does.
  * Returns how many ran; none have started after two minutes means none.
  */
-const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
+export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
   for (let poll = 0; poll < 60; poll++) {
     yield* Effect.sleep("30 seconds");
 
@@ -477,6 +477,55 @@ const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
 
   return yield* new CiTimedOut({ sha });
 });
+
+/**
+ * Commit what's staged and push it to the default branch. When the branch
+ * moved while the job ran, the commit is replayed on it once. Returns the
+ * pushed commit.
+ */
+export const commitAndPush = Effect.fnUntraced(function* (
+  message: string,
+  branch: string,
+  options: { readonly cwd: string; readonly trusted: string },
+) {
+  const push = run(
+    "git",
+    ["push", "--quiet", "origin", `HEAD:${branch}`],
+    options,
+  );
+
+  yield* run("git", ["commit", "--quiet", "-m", message], options);
+
+  yield* push.pipe(
+    Effect.catch(() =>
+      run(
+        "git",
+        ["pull", "--rebase", "--quiet", "origin", branch],
+        options,
+      ).pipe(Effect.andThen(push)),
+    ),
+  );
+
+  return (yield* run("git", ["rev-parse", "HEAD"], options)).trim();
+});
+
+/** Whether a repository pins its tools with mise. */
+export const usesMise = Effect.fnUntraced(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  return (
+    (yield* fs.exists(path.join(directory, "mise.toml"))) ||
+    (yield* fs.exists(path.join(directory, ".mise.toml")))
+  );
+});
+
+/** The first error in a cause, as one message. */
+export const reason = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.squash(cause);
+
+  return Predicate.isError(error) ? error.message : String(error);
+};
 
 type Outcome = "updated" | "current" | "skipped";
 
@@ -553,9 +602,7 @@ const bumpRepository = Effect.fnUntraced(function* (
     return "current" satisfies Outcome;
   }
 
-  const mise =
-    (yield* fs.exists(path.join(directory, "mise.toml"))) ||
-    (yield* fs.exists(path.join(directory, ".mise.toml")));
+  const mise = yield* usesMise(directory);
 
   for (const lockfile of yield* install(directory, manifests, {
     trusted: context.root,
@@ -589,27 +636,9 @@ const bumpRepository = Effect.fnUntraced(function* (
     return "updated" satisfies Outcome;
   }
 
-  const push = run(
-    "git",
-    ["push", "--quiet", "origin", `HEAD:${branch}`],
-    options,
-  );
-
   yield* run("git", ["add", "--", ...files], options);
-  yield* run("git", ["commit", "--quiet", "-m", message], options);
 
-  // The branch moved while this ran: replay the commit on it once
-  yield* push.pipe(
-    Effect.catch(() =>
-      run(
-        "git",
-        ["pull", "--rebase", "--quiet", "origin", branch],
-        options,
-      ).pipe(Effect.andThen(push)),
-    ),
-  );
-
-  const sha = (yield* run("git", ["rev-parse", "HEAD"], options)).trim();
+  const sha = yield* commitAndPush(message, branch, options);
 
   yield* RunLog.info(
     `${repo}: pushed ${sha.slice(0, 7)} "${message}", watching CI`,
@@ -625,13 +654,6 @@ const bumpRepository = Effect.fnUntraced(function* (
 
   return "updated" satisfies Outcome;
 });
-
-/** The first error in a cause, as one message. */
-const reason = (cause: Cause.Cause<unknown>) => {
-  const error = Cause.squash(cause);
-
-  return Predicate.isError(error) ? error.message : String(error);
-};
 
 /** Bump every consumer of a release, four at a time. */
 export const bump = Effect.fnUntraced(function* (
