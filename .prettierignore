@@ -4,3 +4,9 @@ dist/
 bun.lock
 LICENSE
 .agents/skills/
+skills-lock.json
+# Agent instructions are written by hand; a reformat only adds diff noise.
+AGENTS.md
+.astro/
+.blume/
+.wrangler/
