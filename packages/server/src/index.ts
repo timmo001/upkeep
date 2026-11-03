@@ -4,3 +4,5 @@ export * as Server from "./Server";
 export { Store, StoreError } from "./Store";
 
 export { Tokens } from "./Tokens";
+
+export { version } from "./Version";

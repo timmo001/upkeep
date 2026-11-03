@@ -4,9 +4,9 @@
  */
 import { BunStdio } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
+import { version } from "@upkeep/server";
 import { Effect, Layer, Schema } from "effect";
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
-import packageJson from "../package.json" with { type: "json" };
 import { adminClientFromEnv } from "./clients";
 import { Job, Jobs, JobsError } from "./jobs/Jobs";
 
@@ -176,7 +176,7 @@ export const serveMcp = () =>
     Layer.provide(
       McpServer.layerStdio({
         name: "upkeep",
-        version: packageJson.version,
+        version,
         protocols: [McpProtocol.v2026_07_28, McpProtocol.v2025_11_25],
       }),
     ),

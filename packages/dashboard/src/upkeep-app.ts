@@ -1,12 +1,13 @@
 /**
- * `upkeep-app`: the dashboard's frame, a header with sign out, and the page
- * the route picks.
+ * `upkeep-app`: the dashboard's frame, a header with the server's version
+ * and sign out, and the page the route picks.
  */
 import { mdiLogout } from "@mdi/js";
+import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { AtomController, registry } from "./AtomController.ts";
 import { icon, shared } from "./ui.ts";
-import { homeHref, Route, route, token } from "./upkeep.ts";
+import { homeHref, Route, route, serverVersion, token } from "./upkeep.ts";
 import "./upkeep-job.ts";
 import "./upkeep-overview.ts";
 import "./upkeep-run.ts";
@@ -64,10 +65,19 @@ export class UpkeepApp extends LitElement {
 
   readonly #route = new AtomController(this, () => route);
 
+  readonly #version = new AtomController(this, () => serverVersion);
+
   override render() {
     return html`
       <header>
         <a href=${homeHref}>Upkeep</a>
+        ${
+          AsyncResult.isSuccess(this.#version.value)
+            ? html`<span class="muted"
+                >${this.#version.value.value.version}</span
+              >`
+            : null
+        }
         ${
           this.#token.value === ""
             ? null

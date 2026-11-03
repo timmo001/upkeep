@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts --compile --minify --bytecode --format=esm --keep-names --no-compile-autoload-dotenv --no-compile-autoload-bunfig --outfile dist/upkeep",
+    "build": "bun build src/index.ts --compile --minify --bytecode --format=esm --keep-names --no-compile-autoload-dotenv --no-compile-autoload-bunfig --env=UPKEEP_BUILD_* --outfile dist/upkeep",
     "test": "bun test --pass-with-no-tests",
     "lint": "oxlint .",
     "typecheck": "tsc"

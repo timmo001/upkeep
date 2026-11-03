@@ -27,6 +27,7 @@ import { HttpApiBuilder } from "effect/http-api";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
+import { version } from "./Version";
 
 /** How long a running run can go without a heartbeat before it's lost. */
 export const lostAfter = Duration.minutes(10);
@@ -532,9 +533,9 @@ const TokensHandlers = HttpApiBuilder.group(
 
 const SystemHandlers = HttpApiBuilder.group(Api.Api, "system", (handlers) =>
   Effect.succeed(
-    handlers.handle("health", () =>
-      HttpMiddleware.withLoggerDisabled(Effect.void),
-    ),
+    handlers
+      .handle("health", () => HttpMiddleware.withLoggerDisabled(Effect.void))
+      .handle("version", () => Effect.succeed({ version })),
   ),
 );
 

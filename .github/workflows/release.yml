@@ -91,6 +91,8 @@ jobs:
           context: .
           platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            UPKEEP_BUILD_VERSION=${{ github.event.release.tag_name }}
           outputs: type=image,name=ghcr.io/${{ github.repository }}-app,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest

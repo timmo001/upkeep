@@ -73,6 +73,9 @@ export const jobs = UpkeepApi.query("jobs", "list", {
   reactivityKeys: runsKey,
 });
 
+/** The server's version, shown in the header. */
+export const serverVersion = UpkeepApi.query("system", "version", {});
+
 /** The latest runs, of every job or one. */
 export const runs = Atom.family((job: string) =>
   UpkeepApi.query("runs", "list", {

@@ -1,7 +1,7 @@
 /** The Upkeep CLI: every command lives in this tree so help and completions come from one place. */
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
-import { Server } from "@upkeep/server";
+import { Server, version } from "@upkeep/server";
 import { ghLayer, handlers, Worker } from "@upkeep/worker";
 import {
   Cause,
@@ -16,7 +16,6 @@ import {
 } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
-import packageJson from "../package.json" with { type: "json" };
 import { call, manifest } from "./agent";
 import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
@@ -505,7 +504,7 @@ process.once("SIGTERM", () => {
 });
 
 upkeep.pipe(
-  Command.run({ version: packageJson.version }),
+  Command.run({ version }),
   Effect.provide(
     Layer.mergeAll(
       Jobs.catalogue,

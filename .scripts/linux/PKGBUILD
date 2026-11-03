@@ -28,7 +28,7 @@ build() {
   cd "$pkgname"
   bun install --frozen-lockfile --filter @upkeep/cli --ignore-scripts
   cd packages/cli
-  bun run build
+  UPKEEP_BUILD_VERSION="$pkgver" bun run build
   local shell
   for shell in zsh bash fish; do
     ./dist/upkeep --completions "$shell" >"upkeep.$shell"

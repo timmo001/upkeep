@@ -398,6 +398,10 @@ export class SystemGroup extends HttpApiGroup.make("system").add(
   HttpApiEndpoint.get("health", "/api/health", {
     success: HttpApiSchema.NoContent,
   }),
+  /** The server's version, which the dashboard shows. */
+  HttpApiEndpoint.get("version", "/api/version", {
+    success: Schema.Struct({ version: Schema.String }),
+  }),
 ) {}
 
 /** The Upkeep server's HTTP API. */
