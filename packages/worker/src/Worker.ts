@@ -1,11 +1,12 @@
 /**
  * The worker: it takes runs of the jobs it knows from the server, runs each
- * one while sending heartbeats and its log, and reports how it ended. Nothing
- * a run or the server does stops the loop, so a worker keeps going through a
- * failed job or a server restart.
+ * one while sending heartbeats and its log, and reports how it ended. Jobs
+ * run in lanes, one run per lane at a time, so a long heal doesn't hold up
+ * the schedule. Nothing a run or the server does stops a lane, so a worker
+ * keeps going through a failed job or a server restart.
  */
 import type { Gh } from "@timmo001/effect-gh";
-import { Client, Domain } from "@upkeep/api";
+import { Catalogue, Client, Domain } from "@upkeep/api";
 import {
   Cause,
   Clock,
@@ -177,43 +178,54 @@ export const work = Effect.fn("Worker.work")(function* (
     ),
   );
 
-  const next = client.work.claim({ payload: { jobs } }).pipe(
-    Effect.tap(() => status.update({ reachable: true })),
-    Effect.flatMap(({ run }) =>
-      Option.match(Option.fromNullishOr(run), {
-        onNone: () =>
-          attention.pipe(Effect.andThen(Effect.sleep(pollInterval))),
-        onSome: (claimed) =>
-          status.update({ running: claimed.job }).pipe(
-            Effect.andThen(
-              execute(
-                Option.getOrElse(
-                  Record.get(handlers, claimed.job),
-                  (): Handler => () =>
-                    Effect.fail(`This worker can't run ${claimed.job}`),
+  const lane = (laneJobs: ReadonlyArray<string>) => {
+    const next = client.work.claim({ payload: { jobs: laneJobs } }).pipe(
+      Effect.tap(() => status.update({ reachable: true })),
+      Effect.flatMap(({ run }) =>
+        Option.match(Option.fromNullishOr(run), {
+          onNone: () =>
+            attention.pipe(Effect.andThen(Effect.sleep(pollInterval))),
+          onSome: (claimed) =>
+            status.started(claimed.job).pipe(
+              Effect.andThen(
+                execute(
+                  Option.getOrElse(
+                    Record.get(handlers, claimed.job),
+                    (): Handler => () =>
+                      Effect.fail(`This worker can't run ${claimed.job}`),
+                  ),
+                  claimed,
+                  heartbeatInterval,
                 ),
-                claimed,
-                heartbeatInterval,
               ),
+              Effect.flatMap((failed) => status.finished(claimed.job, failed)),
             ),
-            Effect.flatMap((failed) =>
-              status.update({
-                running: null,
-                last: { job: claimed.job, failed },
-              }),
-            ),
-          ),
-      }),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Couldn't ask the server for work", cause).pipe(
-        Effect.andThen(status.update({ reachable: false })),
-        Effect.andThen(Effect.sleep(pollInterval)),
+        }),
       ),
-    ),
-  );
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Couldn't ask the server for work", cause).pipe(
+          Effect.andThen(status.update({ reachable: false })),
+          Effect.andThen(Effect.sleep(pollInterval)),
+        ),
+      ),
+    );
 
-  return yield* Effect.forever(next);
+    return Effect.forever(next);
+  };
+
+  // A job only waits behind the jobs in its own lane; one the catalogue
+  // doesn't know takes turns with the jobs that push to repositories.
+  const laneOf = (job: string) =>
+    Catalogue.jobs.find((known) => known.id === job)?.lane ?? "repos";
+
+  const lanes = Domain.Lane.literals
+    .map((name) => jobs.filter((job) => laneOf(job) === name))
+    .filter((jobsInLane) => jobsInLane.length > 0);
+
+  return yield* Effect.all(lanes.map(lane), {
+    concurrency: "unbounded",
+    discard: true,
+  });
 });
 
 /** Run a job on this machine, printing its log, without the server. */

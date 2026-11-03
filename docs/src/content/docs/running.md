@@ -119,6 +119,11 @@ when its worker has been quiet for 10 minutes, and a worker that's stopped
 fails its run straight away. A worker reads GitHub through `gh`, logged in as
 whoever runs it.
 
+A worker runs jobs in three lanes at once, one run per lane, so a long job
+doesn't hold up the others: heals in one, the quick API-only jobs
+(`releases`, `labels`, `notifications` and `digest`) in another, and the jobs
+that clone and push to repositories in the third, where they take turns.
+
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
 `~/.config/upkeep/worker.env`, along with a `PATH` that finds the tools the

@@ -12,6 +12,16 @@ export const JobId = Schema.String.check(
 
 export type JobId = typeof JobId.Type;
 
+/**
+ * Which of a worker's lanes runs a job. Each lane runs one run at a time, so
+ * a job only waits behind the jobs in its own lane: `heal` for heals, which
+ * can run a fix agent for a long while, `quick` for jobs that only call APIs,
+ * and `repos` for jobs that clone and push to repositories, which take turns.
+ */
+export const Lane = Schema.Literals(["heal", "quick", "repos"]);
+
+export type Lane = typeof Lane.Type;
+
 /** A job the server knows, and what starts it besides a run button. */
 export const Job = Schema.Struct({
   id: JobId,
@@ -21,6 +31,7 @@ export const Job = Schema.Struct({
   schedule: Schema.NullOr(Schema.String),
   /** Whether a new release of one of the repositories starts it. */
   onRelease: Schema.Boolean,
+  lane: Lane,
 });
 
 export interface Job extends Schema.Schema.Type<typeof Job> {}

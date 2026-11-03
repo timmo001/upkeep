@@ -254,6 +254,7 @@ const JobsHandlers = HttpApiBuilder.group(
           description: job.description,
           schedule: job.schedule,
           onRelease: job.onRelease,
+          lane: job.lane,
           lastRun: latest.get(job.id) ?? null,
           parked: parked.get(job.id) ?? null,
         }));

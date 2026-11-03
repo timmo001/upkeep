@@ -4,11 +4,11 @@
  * doing rather than only that its process is up. The file holds `health`,
  * `summary` and `updated`, the shape dot reads from a service's status file.
  */
-import { Clock, Config, Effect, FileSystem, Path } from "effect";
+import { Clock, Config, Effect, FileSystem, Path, Semaphore } from "effect";
 
 export interface State {
-  /** The job running now, if any. */
-  readonly running: string | null;
+  /** The jobs running now, one per lane. */
+  readonly running: ReadonlyArray<string>;
   /** How the last run ended, such as `bump succeeded`. */
   readonly last: { readonly job: string; readonly failed: boolean } | null;
   /** Whether the server answered the last time the worker asked. */
@@ -19,7 +19,7 @@ export interface State {
 }
 
 export const initial: State = {
-  running: null,
+  running: [],
   last: null,
   reachable: true,
   parked: [],
@@ -30,9 +30,9 @@ export const initial: State = {
 export const report = (state: State) => {
   const parts = [
     state.reachable
-      ? state.running === null
+      ? state.running.length === 0
         ? "Waiting for runs"
-        : `Running ${state.running}`
+        : `Running ${state.running.join(", ")}`
       : "Can't reach the server",
     ...(state.last === null
       ? []
@@ -82,6 +82,8 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const target = yield* file;
   let state = initial;
+  // Lanes update the status concurrently, so writes take turns on the file
+  const writing = yield* Semaphore.make(1);
 
   const write = Effect.gen(function* () {
     const updated = yield* Clock.currentTimeMillis;
@@ -94,20 +96,36 @@ export const make = Effect.gen(function* () {
     );
     yield* fs.rename(temporary, target);
   }).pipe(
+    (effect) => writing.withPermit(effect),
     Effect.catchCause((cause) =>
       Effect.logWarning("Couldn't write the worker status", cause),
     ),
   );
 
+  const update = (change: (current: State) => Partial<State>) =>
+    Effect.suspend(() => {
+      const next = { ...state, ...change(state) };
+      const same = JSON.stringify(next) === JSON.stringify(state);
+
+      state = next;
+
+      return same ? Effect.void : write;
+    });
+
   return {
-    update: (change: Partial<State>) =>
-      Effect.suspend(() => {
-        const next = { ...state, ...change };
-        const same = JSON.stringify(next) === JSON.stringify(state);
+    update: (change: Partial<State>) => update(() => change),
+    /** Note a run started in one lane. */
+    started: (job: string) =>
+      update((current) => ({ running: [...current.running, job] })),
+    /** Note a run ended in one lane, and how. */
+    finished: (job: string, failed: boolean) =>
+      update((current) => {
+        const index = current.running.indexOf(job);
 
-        state = next;
-
-        return same ? Effect.void : write;
+        return {
+          running: current.running.filter((_, at) => at !== index),
+          last: { job, failed },
+        };
       }),
     write,
   };
