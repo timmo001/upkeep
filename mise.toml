@@ -91,6 +91,27 @@ run = "pitchfork restart cli"
 description = "Stop the background CLI"
 run = "pitchfork stop cli"
 
+[tasks."serve:server"]
+description = "Start the server in watch mode in the background through Pitchfork"
+depends = ["install"]
+run = "pitchfork start server"
+
+[tasks."serve:server:status"]
+description = "Show the background server's status"
+run = "pitchfork status server"
+
+[tasks."serve:server:logs"]
+description = "Follow the background server's logs"
+run = "pitchfork logs -t server"
+
+[tasks."serve:server:restart"]
+description = "Restart the background server"
+run = "pitchfork restart server"
+
+[tasks."serve:server:stop"]
+description = "Stop the background server"
+run = "pitchfork stop server"
+
 [tasks.build]
 description = "Compile a minified, bytecode-cached upkeep binary to dist/upkeep"
 depends = ["install"]

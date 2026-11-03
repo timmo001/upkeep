@@ -55,6 +55,10 @@ Decision, and work that depends on one waits for it.
 - `mise run serve:docs` runs the docs site at
   `https://docs.upkeep.localhost`, with the same `status`, `logs`, `restart`
   and `stop` tasks. Don't run `mise run docs:dev` from an agent.
+- `mise run serve:server` runs the server in watch mode at
+  `https://server.upkeep.localhost`, with a throwaway database in `.dev/` and
+  the local admin token set in `pitchfork.toml`, with the same `status`,
+  `logs`, `restart` and `stop` tasks.
 - For a one-off run, use `mise run build` and run `./dist/upkeep`.
 - Servers get a daemon with a port, reached at
   `https://<daemon>.upkeep.localhost` through the Pitchfork proxy. Never add

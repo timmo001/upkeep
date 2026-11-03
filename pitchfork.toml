@@ -8,6 +8,18 @@ run = 'exec mise run dev'
 ready_delay = 1
 retry = true
 
+# The server in watch mode, at https://server.upkeep.localhost, with its own
+# throwaway database and an admin token for local use only. Point the CLI at it
+# with UPKEEP_SERVER=https://server.upkeep.localhost and the same token as
+# UPKEEP_ADMIN_TOKEN.
+[daemons.server]
+run = 'exec bun run --watch packages/cli/src/index.ts serve --port "$PORT"'
+env = { UPKEEP_SERVER_DB = ".dev/server.db", UPKEEP_SERVER_ADMIN_TOKEN = "upkeep-local-development-admin-token" }
+port = { expect = [7272], bump = 10 }
+ready_cmd = 'curl -fsS "http://127.0.0.1:$PORT/api/health"'
+health_cmd = 'curl -fsS "http://127.0.0.1:$PORT/api/health"'
+retry = true
+
 # The docs site's dev server, at https://docs.upkeep.localhost.
 [daemons.docs]
 run = 'exec mise run docs:dev --host 127.0.0.1 --port "$PORT"'

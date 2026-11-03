@@ -1,17 +1,13 @@
 /**
- * The jobs the worker runs, behind one service so the CLI, its Code Mode
- * manifest and the MCP server read the same list. None are built yet, so the
- * only layer is empty until the first job lands.
+ * The jobs Upkeep runs, behind one service so the CLI, its Code Mode
+ * manifest and the MCP server read the same list.
  */
+import { Catalogue, Domain } from "@upkeep/api";
 import { Context, Effect, Layer, Schema } from "effect";
 
-export const Job = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  description: Schema.String,
-});
+export const Job = Domain.Job;
 
-export interface Job extends Schema.Schema.Type<typeof Job> {}
+export type Job = Domain.Job;
 
 export class JobsError extends Schema.TaggedError<JobsError>()("JobsError", {
   message: Schema.String,
@@ -23,8 +19,9 @@ export class Jobs extends Context.Service<
     readonly list: () => Effect.Effect<readonly Job[], JobsError>;
   }
 >()("@upkeep/cli/Jobs") {
-  static readonly empty = Layer.succeed(
+  /** The jobs in the shared catalogue, which the server schedules. */
+  static readonly catalogue = Layer.succeed(
     Jobs,
-    Jobs.of({ list: () => Effect.succeed([]) }),
+    Jobs.of({ list: () => Effect.succeed(Catalogue.jobs) }),
   );
 }
