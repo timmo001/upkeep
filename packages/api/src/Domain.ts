@@ -34,8 +34,13 @@ export const Release = Schema.Struct({
 
 export interface Release extends Schema.Schema.Type<typeof Release> {}
 
-/** What started a run. */
-export const Trigger = Schema.Literals(["schedule", "release", "manual"]);
+/** What started a run. A heal is queued by the server for a failed run. */
+export const Trigger = Schema.Literals([
+  "schedule",
+  "release",
+  "manual",
+  "heal",
+]);
 
 export type Trigger = typeof Trigger.Type;
 
@@ -58,6 +63,57 @@ export const Outcome = Schema.Literals(["succeeded", "failed"]);
 
 export type Outcome = typeof Outcome.Type;
 
+/** A repository as `owner/name`. */
+export const RepoName = Schema.String.check(
+  Schema.isPattern(/^[\w.-]+\/[\w.-]+$/),
+);
+
+/**
+ * What a heal works on: Upkeep itself, or a consumer whose checks failed
+ * after a bump. The agent's reach is set by it.
+ */
+export const Target = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("upkeep") }),
+  Schema.Struct({ kind: Schema.Literal("consumer"), repo: RepoName }),
+]);
+
+export type Target = typeof Target.Type;
+
+/** What the decision model chose for a failed run. */
+export const HealDecision = Schema.Literals(["retry", "fix", "park", "ask"]);
+
+export type HealDecision = typeof HealDecision.Type;
+
+/**
+ * A heal's record: the failed run, what the decision model chose and why,
+ * the model and variant of the agent, what it did, its commit and its
+ * OpenCode session. The worker fills it in as the heal goes.
+ */
+export const Heal = Schema.Struct({
+  /** The failed or lost run. */
+  of: Schema.String,
+  /** That run's job. */
+  job: JobId,
+  target: Target,
+  decision: Schema.NullOr(HealDecision),
+  reason: Schema.NullOr(Schema.String),
+  model: Schema.NullOr(Schema.String),
+  variant: Schema.NullOr(Schema.String),
+  actions: Schema.Array(Schema.String),
+  commit: Schema.NullOr(Schema.String),
+  session: Schema.NullOr(Schema.String),
+});
+
+export interface Heal extends Schema.Schema.Type<typeof Heal> {}
+
+/** A job the server stopped queueing until it's unparked, and why. */
+export const Parked = Schema.Struct({
+  reason: Schema.String,
+  at: Schema.Finite,
+});
+
+export interface Parked extends Schema.Schema.Type<typeof Parked> {}
+
 export const Run = Schema.Struct({
   id: Schema.String,
   job: JobId,
@@ -72,6 +128,8 @@ export const Run = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.Finite),
   /** Why it failed. */
   error: Schema.NullOr(Schema.String),
+  /** What a heal run is healing and what it did, or null for other jobs. */
+  heal: Schema.NullOr(Heal),
 });
 
 export interface Run extends Schema.Schema.Type<typeof Run> {}
@@ -80,6 +138,8 @@ export interface Run extends Schema.Schema.Type<typeof Run> {}
 export const JobStatus = Schema.Struct({
   ...Job.fields,
   lastRun: Schema.NullOr(Run),
+  /** Set while the job is parked. */
+  parked: Schema.NullOr(Parked),
 });
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}

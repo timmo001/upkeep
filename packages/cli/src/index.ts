@@ -109,6 +109,9 @@ const runLine = (run: Domain.Run) =>
     time(run.queuedAt),
     run.worker ?? "-",
     run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,
+    run.heal === null
+      ? ""
+      : `heals ${run.heal.job} ${run.heal.of} (${run.heal.target.kind === "upkeep" ? "upkeep" : run.heal.target.repo})${run.heal.decision === null ? "" : `: ${run.heal.decision}`}`,
   ]
     .join("  ")
     .trimEnd();
@@ -323,6 +326,27 @@ const cancel = Command.make(
   ),
 );
 
+const unpark = Command.make(
+  "unpark",
+  {
+    job: Argument.String("job").pipe(Argument.withDescription("The job's ID")),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.jobs.unpark({ params: { id: input.job } });
+      yield* Console.log(`Unparked ${input.job}; it's queued as usual again`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Unpark a job the server stopped queueing after too many heals",
+  ),
+);
+
 const tokenCommands = (options: {
   readonly scope: Api.TokenScope;
   readonly command: string;
@@ -436,6 +460,7 @@ const upkeep = Command.make("upkeep").pipe(
     runs,
     log,
     cancel,
+    unpark,
     serve,
     worker,
     admins,

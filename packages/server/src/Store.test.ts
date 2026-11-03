@@ -131,6 +131,66 @@ test("cancelling drops a queued run and stops a running one", () =>
     }),
   ));
 
+test("a heal's record fills in as its worker reports", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: {
+          of: "failed-run",
+          job: "bump",
+          target: { kind: "consumer", repo: "timmo001/a" },
+        },
+      });
+
+      const id = Option.getOrThrow(yield* store.claim(["heal"], "desktop")).id;
+
+      yield* store.updateHeal(id, "desktop", {
+        decision: "retry",
+        reason: "A flaky network call",
+        action: "Queued bump again",
+      });
+      yield* store.updateHeal(id, "desktop", { action: "Watched it pass" });
+
+      const healed = yield* store.run(id);
+
+      expect(healed.heal).toEqual({
+        of: "failed-run",
+        job: "bump",
+        target: { kind: "consumer", repo: "timmo001/a" },
+        decision: "retry",
+        reason: "A flaky network call",
+        model: null,
+        variant: null,
+        actions: ["Queued bump again", "Watched it pass"],
+        commit: null,
+        session: null,
+      });
+      expect(yield* store.healsSince("bump", 0)).toBe(1);
+      expect(yield* store.healsSince("labels", 0)).toBe(0);
+    }),
+  ));
+
+test("a parked job stays parked until it's unparked", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.park("bump", "Failed past its heals");
+
+      expect((yield* store.parked()).get("bump")?.reason).toBe(
+        "Failed past its heals",
+      );
+      expect(yield* store.unpark("bump")).toBe(true);
+      expect(yield* store.unpark("bump")).toBe(false);
+      expect((yield* store.parked()).size).toBe(0);
+    }),
+  ));
+
 test("a repository's first release is only recorded", () =>
   run(
     Effect.gen(function* () {

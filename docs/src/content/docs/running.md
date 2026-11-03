@@ -20,6 +20,7 @@ behind a reverse proxy for HTTPS.
 | --------------------------- | ---------------------------------------------------------------------- |
 | `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                        |
 | `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands |
+| `UPKEEP_HEALS_PER_DAY`      | How many heals one job can have a day before it's parked, 3 by default |
 
 ## Tokens
 
@@ -56,6 +57,8 @@ upkeep run releases --local
 upkeep runs --job releases --state failed
 upkeep log <run> --follow
 upkeep cancel <run>
+upkeep runs --job heal
+upkeep unpark <job>
 ```
 
 `upkeep run` queues a run for a worker; a run of the same job and release
@@ -65,6 +68,22 @@ printing its log and reporting nothing to the server.
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.
 
+## Heals
+
+When a run fails or is lost, the server queues a `heal` run for it. A failed
+`bump` gets one heal per consumer that failed, each with that consumer as its
+target; any other failure gets one heal with Upkeep itself as the target. A
+failed heal never queues another.
+
+Each heal keeps a record of the failed run, what was decided and why, the
+model and variant used, what was done, the commit if there was one and the
+OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
+
+A job that would go past `UPKEEP_HEALS_PER_DAY` heals in a day is parked
+instead. The server stops queueing a parked job on its schedule or on
+releases, though it can still be run by hand, and `upkeep status --json`
+shows why it's parked. `upkeep unpark <job>` lets it be queued again.
+
 ## Jobs
 
 | Job        | Runs             | Does                                                                                                                                                                                                                                                                       |
@@ -72,6 +91,7 @@ printing its log and reporting nothing to the server.
 | `releases` | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                         |
 | `labels`   | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.          |
 | `bump`     | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. |
+| `heal`     | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.

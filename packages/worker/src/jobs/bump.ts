@@ -24,6 +24,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
+import { ConsumersFailed } from "../Worker";
 
 /** What a release changes in a consumer. */
 export type Edit = Data.TaggedEnum<{
@@ -105,14 +106,6 @@ class CiTimedOut extends Schema.TaggedError<CiTimedOut>()("CiTimedOut", {
 }) {
   override get message() {
     return `CI on ${this.sha.slice(0, 7)} was still going after 30 minutes`;
-  }
-}
-
-class BumpFailed extends Schema.TaggedError<BumpFailed>()("BumpFailed", {
-  repos: Schema.Array(Schema.String),
-}) {
-  override get message() {
-    return `Couldn't bump ${this.repos.join(", ")}`;
   }
 }
 
@@ -694,5 +687,8 @@ export const bump = Effect.fnUntraced(function* (
   );
 
   if (failed.length > 0)
-    return yield* new BumpFailed({ repos: failed.toSorted() });
+    return yield* new ConsumersFailed({
+      action: "bump",
+      repos: failed.toSorted(),
+    });
 });

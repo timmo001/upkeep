@@ -47,16 +47,38 @@ export class RunLost extends Schema.TaggedError<RunLost>()("RunLost", {
   }
 }
 
+/**
+ * Some of a job's consumers failed. The server queues a heal for each one,
+ * rather than one for Upkeep itself.
+ */
+export class ConsumersFailed extends Schema.TaggedError<ConsumersFailed>()(
+  "ConsumersFailed",
+  { action: Schema.String, repos: Schema.Array(Schema.String) },
+) {
+  override get message() {
+    return `Couldn't ${this.action} ${this.repos.join(", ")}`;
+  }
+}
+
 /** How a run ended, for the server. The cause of a failure is its error. */
-const outcome = (exit: Exit.Exit<unknown, unknown>) =>
-  Exit.isSuccess(exit)
-    ? { outcome: "succeeded" as const }
-    : {
-        outcome: "failed" as const,
-        error: Cause.hasInterruptsOnly(exit.cause)
-          ? "The worker stopped before the run finished"
-          : Cause.pretty(exit.cause),
-      };
+const outcome = (exit: Exit.Exit<unknown, unknown>) => {
+  if (Exit.isSuccess(exit)) return { outcome: "succeeded" as const };
+
+  const failed = Cause.findErrorOption(exit.cause).pipe(
+    Option.filter(Schema.is(ConsumersFailed)),
+  );
+
+  return {
+    outcome: "failed" as const,
+    error: Cause.hasInterruptsOnly(exit.cause)
+      ? "The worker stopped before the run finished"
+      : Cause.pretty(exit.cause),
+    ...Option.match(failed, {
+      onNone: () => ({}),
+      onSome: (error) => ({ consumers: error.repos }),
+    }),
+  };
+};
 
 /** Run one claimed run to the end and report how it went. */
 const execute = Effect.fnUntraced(function* (

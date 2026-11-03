@@ -79,6 +79,34 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  "0002_heals_parked": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    for (const column of [
+      "heal_of",
+      "heal_job",
+      "heal_target",
+      "heal_decision",
+      "heal_reason",
+      "heal_model",
+      "heal_variant",
+      "heal_actions",
+      "heal_commit",
+      "heal_session",
+    ]) {
+      yield* sql`ALTER TABLE runs ADD COLUMN ${sql(column)} TEXT`;
+    }
+
+    yield* sql`CREATE INDEX runs_heal_job ON runs (heal_job, queued_at)`;
+
+    yield* sql`
+      CREATE TABLE parked (
+        job TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        parked_at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -94,14 +122,43 @@ const RunRow = Schema.Struct({
   startedAt: Schema.NullOr(Schema.Finite),
   finishedAt: Schema.NullOr(Schema.Finite),
   error: Schema.NullOr(Schema.String),
+  healOf: Schema.NullOr(Schema.String),
+  healJob: Schema.NullOr(Schema.String),
+  healTarget: Schema.NullOr(Schema.String),
+  healDecision: Schema.NullOr(Domain.HealDecision),
+  healReason: Schema.NullOr(Schema.String),
+  healModel: Schema.NullOr(Schema.String),
+  healVariant: Schema.NullOr(Schema.String),
+  healActions: Schema.NullOr(
+    Schema.fromJsonString(Schema.Array(Schema.String)),
+  ),
+  healCommit: Schema.NullOr(Schema.String),
+  healSession: Schema.NullOr(Schema.String),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
+
+/** A heal's target as it's kept: `upkeep`, or the consumer's `owner/name`. */
+const targetColumn = (target: Domain.Target) =>
+  target.kind === "upkeep" ? "upkeep" : target.repo;
+
+const targetOf = (column: string): Domain.Target =>
+  column === "upkeep" ? { kind: "upkeep" } : { kind: "consumer", repo: column };
 
 const toRun = ({
   releaseRepo,
   releaseTag,
   releaseUrl,
+  healOf,
+  healJob,
+  healTarget,
+  healDecision,
+  healReason,
+  healModel,
+  healVariant,
+  healActions,
+  healCommit,
+  healSession,
   ...row
 }: typeof RunRow.Type): Domain.Run => ({
   ...row,
@@ -109,6 +166,21 @@ const toRun = ({
     releaseRepo === null || releaseTag === null
       ? null
       : { repo: releaseRepo, tag: releaseTag, url: releaseUrl ?? "" },
+  heal:
+    healOf === null || healJob === null || healTarget === null
+      ? null
+      : {
+          of: healOf,
+          job: healJob,
+          target: targetOf(healTarget),
+          decision: healDecision,
+          reason: healReason,
+          model: healModel,
+          variant: healVariant,
+          actions: healActions ?? [],
+          commit: healCommit,
+          session: healSession,
+        },
 });
 
 const decodeLog = Schema.decodeUnknownEffect(Schema.Array(Domain.LogLine));
@@ -117,11 +189,21 @@ const decodeTokens = Schema.decodeUnknownEffect(Schema.Array(Api.Token));
 
 const decodeReleases = Schema.decodeUnknownEffect(Schema.Array(Domain.Release));
 
+const decodeParked = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Parked.fields })),
+);
+
 /** A run to queue, and what started it. */
 export interface NewRun {
   readonly job: Domain.JobId;
   readonly trigger: Domain.Trigger;
   readonly release: Domain.Release | null;
+  /** For a heal: the failed run, its job and what to heal. */
+  readonly heal?: {
+    readonly of: string;
+    readonly job: Domain.JobId;
+    readonly target: Domain.Target;
+  };
 }
 
 export class Store extends Context.Service<
@@ -154,12 +236,30 @@ export class Store extends Context.Service<
       worker: string,
       lines: ReadonlyArray<Domain.LogEntry>,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** End a run, returning it as it ended. */
     finish(
       id: string,
       worker: string,
       outcome: Domain.Outcome,
       error: string | null,
+    ): Effect.Effect<
+      Domain.Run,
+      Api.RunNotFound | Api.RunNotClaimed | StoreError
+    >;
+    /** Fill in a heal's record from the worker running it. */
+    updateHeal(
+      id: string,
+      worker: string,
+      update: Api.HealUpdate,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** How many heals of a job's runs were queued since `since`. */
+    healsSince(job: string, since: number): Effect.Effect<number, StoreError>;
+    /** Park a job, replacing the reason when it's already parked. */
+    park(job: string, reason: string): Effect.Effect<void, StoreError>;
+    /** Unpark a job, returning whether it was parked. */
+    unpark(job: string): Effect.Effect<boolean, StoreError>;
+    /** The parked jobs, by job ID. */
+    parked(): Effect.Effect<ReadonlyMap<string, Domain.Parked>, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -223,13 +323,15 @@ export class Store extends Context.Service<
     });
 
     const queueRun = Effect.fn("Store.queueRun")(
-      function* ({ job, trigger, release }: NewRun) {
+      function* ({ job, trigger, release, heal }: NewRun) {
         const waiting = yield* selectRuns(sql`
           SELECT * FROM runs
           WHERE job = ${job}
             AND state = 'queued'
             AND coalesce(release_repo, '') = ${release?.repo ?? ""}
             AND coalesce(release_tag, '') = ${release?.tag ?? ""}
+            AND coalesce(heal_of, '') = ${heal?.of ?? ""}
+            AND coalesce(heal_target, '') = ${heal === undefined ? "" : targetColumn(heal.target)}
           LIMIT 1
         `);
 
@@ -245,6 +347,10 @@ export class Store extends Context.Service<
             releaseUrl: release?.url ?? null,
             state: "queued",
             queuedAt: yield* Clock.currentTimeMillis,
+            healOf: heal?.of ?? null,
+            healJob: heal?.job ?? null,
+            healTarget: heal === undefined ? null : targetColumn(heal.target),
+            healActions: heal === undefined ? null : "[]",
           })}
           RETURNING *
         `);
@@ -394,16 +500,100 @@ export class Store extends Context.Service<
       ) {
         yield* claimed(id, worker);
 
-        yield* sql`
+        const [ended] = yield* selectRuns(sql`
           UPDATE runs
           SET state = ${outcome}, finished_at = ${yield* Clock.currentTimeMillis},
             error = ${error}
+          WHERE id = ${id}
+          RETURNING *
+        `).pipe(Effect.mapError(storeError));
+
+        if (ended === undefined) {
+          return yield* Effect.die(
+            new Error("The finished run wasn't returned"),
+          );
+        }
+
+        return ended;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const updateHeal = Effect.fn("Store.updateHeal")(
+      function* (id: string, worker: string, update: Api.HealUpdate) {
+        yield* claimed(id, worker);
+
+        const current = yield* run(id);
+
+        if (current.heal === null) return;
+
+        const actions =
+          update.action === undefined
+            ? current.heal.actions
+            : [...current.heal.actions, update.action];
+
+        yield* sql`
+          UPDATE runs SET ${sql.update({
+            healDecision: update.decision ?? current.heal.decision,
+            healReason: update.reason ?? current.heal.reason,
+            healModel: update.model ?? current.heal.model,
+            healVariant: update.variant ?? current.heal.variant,
+            healActions: JSON.stringify(actions),
+            healCommit: update.commit ?? current.heal.commit,
+            healSession: update.session ?? current.heal.session,
+          })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));
       },
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
+
+    const healsSince = Effect.fn("Store.healsSince")(function* (
+      job: string,
+      since: number,
+    ) {
+      const rows = yield* sql<{ count: number }>`
+        SELECT count(*) AS count FROM runs
+        WHERE heal_job = ${job} AND queued_at >= ${since}
+      `;
+
+      return rows[0]?.count ?? 0;
+    }, Effect.mapError(storeError));
+
+    const park = Effect.fn("Store.park")(function* (
+      job: string,
+      reason: string,
+    ) {
+      yield* sql`
+        INSERT INTO parked ${sql.insert({
+          job,
+          reason,
+          parkedAt: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (job) DO UPDATE
+        SET reason = excluded.reason, parked_at = excluded.parked_at
+      `;
+    }, Effect.mapError(storeError));
+
+    const unpark = Effect.fn("Store.unpark")(function* (job: string) {
+      const rows = yield* sql`
+        DELETE FROM parked WHERE job = ${job} RETURNING job
+      `;
+
+      return rows.length > 0;
+    }, Effect.mapError(storeError));
+
+    const parked = Effect.fn("Store.parked")(function* () {
+      const rows = yield* sql`
+        SELECT job, reason, parked_at AS at FROM parked
+      `.pipe(Effect.flatMap(decodeParked));
+
+      return new Map(
+        rows.map(({ job, ...entry }): [string, Domain.Parked] => [job, entry]),
+      );
+    }, Effect.mapError(storeError));
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -559,6 +749,11 @@ export class Store extends Context.Service<
       heartbeat,
       appendLog,
       finish,
+      updateHeal,
+      healsSince,
+      park,
+      unpark,
+      parked,
       cancel,
       log,
       failLost,

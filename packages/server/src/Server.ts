@@ -7,6 +7,7 @@ import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
 import {
   Clock,
+  Config,
   Duration,
   Effect,
   Layer,
@@ -83,9 +84,27 @@ const WorkerAuthorizationLayer = Layer.effect(
 const findJob = (id: string) =>
   Option.fromNullishOr(Catalogue.jobs.find((job) => job.id === id));
 
+/** How many heals one job can have a day before it's parked. */
+const healsPerDay = Config.Int("UPKEEP_HEALS_PER_DAY").pipe(
+  Config.withDefault(3),
+);
+
 /** Queue a run and log it, so the server's log shows what it started. */
 const queue = Effect.fn("queue")(function* (run: NewRun) {
-  const queued = yield* (yield* Store).queueRun(run);
+  const store = yield* Store;
+
+  // A parked job is only run by hand until it's unparked.
+  if (run.trigger !== "manual") {
+    const parked = yield* store.parked();
+
+    if (parked.has(run.job) || (run.heal && parked.has(run.heal.job))) {
+      yield* Effect.logInfo(`Skipped ${run.job}: parked`);
+
+      return Option.none<Domain.Run>();
+    }
+  }
+
+  const queued = yield* store.queueRun(run);
 
   yield* Effect.logInfo(`Queued ${queued.job}`).pipe(
     Effect.annotateLogs({
@@ -95,10 +114,57 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
         queued.release === null
           ? ""
           : `${queued.release.repo}@${queued.release.tag}`,
+      heals: queued.heal?.of ?? "",
     }),
   );
 
-  return queued;
+  return Option.some(queued);
+});
+
+/**
+ * Queue a heal for each target of a failed or lost run: each failed consumer
+ * of a bump, or Upkeep itself. A failed heal never queues another, and a job
+ * past its heals for the day is parked instead.
+ */
+const heal = Effect.fn("heal")(function* (
+  run: Domain.Run,
+  consumers: ReadonlyArray<string>,
+) {
+  if (run.job === Catalogue.heal.id || run.state !== "failed") return;
+
+  const store = yield* Store;
+  const limit = yield* healsPerDay;
+  const now = yield* Clock.currentTimeMillis;
+
+  const used = yield* store.healsSince(
+    run.job,
+    now - Duration.toMillis("1 day"),
+  );
+
+  const targets: ReadonlyArray<Domain.Target> =
+    consumers.length === 0
+      ? [{ kind: "upkeep" }]
+      : consumers.map((repo) => ({ kind: "consumer", repo }));
+
+  if (used + targets.length > limit) {
+    const reason = `${run.job} failed again after ${used} heals today, past the limit of ${limit}`;
+
+    yield* store.park(run.job, reason);
+    yield* Effect.logWarning(`Parked ${run.job}`).pipe(
+      Effect.annotateLogs({ run: run.id, reason }),
+    );
+
+    return;
+  }
+
+  for (const target of targets) {
+    yield* queue({
+      job: Catalogue.heal.id,
+      trigger: "heal",
+      release: run.release,
+      heal: { of: run.id, job: run.job, target },
+    });
+  }
 });
 
 const JobsHandlers = HttpApiBuilder.group(
@@ -110,6 +176,7 @@ const JobsHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       list: Effect.fn(function* () {
         const latest = yield* store.latestRuns().pipe(Effect.orDie);
+        const parked = yield* store.parked().pipe(Effect.orDie);
 
         return Catalogue.jobs.map((job): Domain.JobStatus => ({
           id: job.id,
@@ -118,6 +185,7 @@ const JobsHandlers = HttpApiBuilder.group(
           schedule: job.schedule,
           onRelease: job.onRelease,
           lastRun: latest.get(job.id) ?? null,
+          parked: parked.get(job.id) ?? null,
         }));
       }),
       run: Effect.fn(function* ({ params, payload }) {
@@ -125,11 +193,29 @@ const JobsHandlers = HttpApiBuilder.group(
           return yield* new Api.JobNotFound({ id: params.id });
         }
 
-        return yield* queue({
+        const queued = yield* queue({
           job: params.id,
           trigger: "manual",
           release: payload.release ?? null,
         }).pipe(Effect.provideService(Store, store), Effect.orDie);
+
+        return yield* Option.match(queued, {
+          onNone: () => Effect.die(new Error("A manual run wasn't queued")),
+          onSome: Effect.succeed,
+        });
+      }),
+      unpark: Effect.fn(function* ({ params }) {
+        if (Option.isNone(findJob(params.id))) {
+          return yield* new Api.JobNotFound({ id: params.id });
+        }
+
+        const admin = yield* Api.CurrentAdmin;
+
+        if (yield* store.unpark(params.id).pipe(Effect.orDie)) {
+          yield* Effect.logInfo(`Unparked ${params.id}`).pipe(
+            Effect.annotateLogs({ admin: admin.name }),
+          );
+        }
       }),
     });
   }),
@@ -212,7 +298,7 @@ const WorkHandlers = HttpApiBuilder.group(
       finish: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
 
-        yield* store
+        const ended = yield* store
           .finish(
             params.id,
             worker.name,
@@ -223,6 +309,31 @@ const WorkHandlers = HttpApiBuilder.group(
 
         yield* Effect.logInfo(`Run ${payload.outcome}`).pipe(
           Effect.annotateLogs({ run: params.id, worker: worker.name }),
+        );
+
+        yield* heal(ended, payload.consumers ?? []).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchCause(Effect.logError),
+        );
+      }),
+      heal: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .updateHeal(params.id, worker.name, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
+      park: Effect.fn(function* ({ params, payload }) {
+        if (Option.isNone(findJob(params.job))) {
+          return yield* new Api.JobNotFound({ id: params.job });
+        }
+
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store.park(params.job, payload.reason).pipe(Effect.orDie);
+
+        yield* Effect.logWarning(`Parked ${params.job}`).pipe(
+          Effect.annotateLogs({ worker: worker.name, reason: payload.reason }),
         );
       }),
       releases: Effect.fn(function* ({ payload }) {
@@ -243,7 +354,7 @@ const WorkHandlers = HttpApiBuilder.group(
           queue,
         ).pipe(Effect.provideService(Store, store), Effect.orDie);
 
-        return { queued };
+        return { queued: queued.flatMap(Option.toArray) };
       }),
     });
   }),
@@ -326,8 +437,11 @@ export const lostRuns = Layer.effectDiscard(
         yield* Effect.logWarning(`Lost ${run.job} on ${run.worker}`).pipe(
           Effect.annotateLogs({ run: run.id }),
         );
+
+        yield* heal(run, []).pipe(Effect.catchCause(Effect.logError));
       }
     }).pipe(
+      Effect.provideService(Store, store),
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.minutes(1))),
       Effect.forkScoped,

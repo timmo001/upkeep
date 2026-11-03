@@ -14,12 +14,14 @@ import {
   OpenApi,
 } from "effect/http-api";
 import {
+  HealDecision,
   JobId,
   JobStatus,
   LogEntry,
   LogLine,
   Outcome,
   Release,
+  RepoName,
   Run,
   RunState,
 } from "./Domain";
@@ -91,6 +93,20 @@ export const Cancelled = Schema.Struct({
 });
 
 export interface Cancelled extends Schema.Schema.Type<typeof Cancelled> {}
+
+/** Changes to a heal's record; each given field replaces what's there. */
+export const HealUpdate = Schema.Struct({
+  decision: Schema.optionalKey(HealDecision),
+  reason: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.String),
+  variant: Schema.optionalKey(Schema.String),
+  /** Added to the heal's actions. */
+  action: Schema.optionalKey(Schema.String),
+  commit: Schema.optionalKey(Schema.String),
+  session: Schema.optionalKey(Schema.String),
+});
+
+export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}
 
 /** What a token can do: an admin runs the server, a worker runs jobs. */
 export const TokenScope = Schema.Literals(["admin", "worker"]);
@@ -172,6 +188,12 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
       success: Run,
       error: JobNotFound,
     }),
+    /** Let a parked job be queued again. */
+    HttpApiEndpoint.delete("unpark", "/:id/park", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: JobNotFound,
+    }),
   )
   .middleware(AdminAuthorization)
   .prefix("/api/jobs")
@@ -251,9 +273,28 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: Schema.Struct({
         outcome: Outcome,
         error: Schema.optionalKey(Schema.String),
+        /**
+         * The consumers that failed, for a bump. Each gets its own heal;
+         * without any, a failure heals Upkeep itself.
+         */
+        consumers: Schema.optionalKey(Schema.Array(RepoName)),
       }),
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
+    }),
+    /** Fill in a heal's record as it goes. `action` adds to its actions. */
+    HttpApiEndpoint.post("heal", "/runs/:id/heal", {
+      params: { id: Schema.String },
+      payload: HealUpdate,
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /** Park a job, so nothing queues it until it's unparked. */
+    HttpApiEndpoint.post("park", "/park/:job", {
+      params: { job: Schema.String },
+      payload: Schema.Struct({ reason: Schema.String }),
+      success: HttpApiSchema.NoContent,
+      error: JobNotFound,
     }),
     /**
      * The latest release of each repository. The server queues every job

@@ -31,4 +31,13 @@ export const bump: Job = {
   onRelease: true,
 };
 
-export const jobs: ReadonlyArray<Job> = [releases, labels, bump];
+export const heal: Job = {
+  id: "heal",
+  name: "Heal",
+  description:
+    "Fix a failed or lost run: retry it, hand it to an agent, park the job or ask",
+  schedule: null,
+  onRelease: false,
+};
+
+export const jobs: ReadonlyArray<Job> = [releases, labels, bump, heal];
