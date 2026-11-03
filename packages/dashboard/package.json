@@ -8,7 +8,7 @@
     "./bundle": "./bundle.ts"
   },
   "scripts": {
-    "build": "rm -rf dist && bun build index.html --outdir dist --minify",
+    "build": "rm -rf dist && bun build index.html --outdir dist --production",
     "test": "bun test --pass-with-no-tests",
     "lint": "oxlint .",
     "typecheck": "tsc"

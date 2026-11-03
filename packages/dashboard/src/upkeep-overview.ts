@@ -4,6 +4,7 @@
  */
 import { mdiPlay, mdiPlayPause } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
+import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { shared, stateBadge, time, view } from "./ui.ts";
@@ -58,6 +59,15 @@ export class UpkeepOverview extends LitElement {
       upkeep-runs {
         margin-top: var(--gw-space-3);
       }
+
+      .runs {
+        display: block;
+        margin-top: var(--gw-space-6);
+      }
+
+      .last {
+        white-space: nowrap;
+      }
     `,
   ];
 
@@ -98,7 +108,7 @@ export class UpkeepOverview extends LitElement {
                       <td>
                         ${starts(job).map((start, index) => html`${index === 0 ? "" : ", "}${start}`)}
                       </td>
-                      <td>
+                      <td class="last">
                         ${
                           job.lastRun === null
                             ? html`<span class="muted">Never</span>`
@@ -115,8 +125,12 @@ export class UpkeepOverview extends LitElement {
             </table>
           </div>`,
       )}
-      <gw-section-title>Latest runs</gw-section-title>
-      <upkeep-runs></upkeep-runs>
+      ${
+        AsyncResult.isFailure(this.#jobs.value)
+          ? null
+          : html`<gw-section-title class="runs">Latest runs</gw-section-title>
+              <upkeep-runs></upkeep-runs>`
+      }
     `;
   }
 }

@@ -71,6 +71,12 @@ export const shared = css`
     font-weight: var(--gw-font-weight-strong);
   }
 
+  td code,
+  td time,
+  td gw-badge {
+    white-space: nowrap;
+  }
+
   .table {
     overflow-x: auto;
   }
