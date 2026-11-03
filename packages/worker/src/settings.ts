@@ -5,6 +5,7 @@
  * groundwork's tasks. A missing file means every default.
  */
 import { Config, Effect, FileSystem, Schema } from "effect";
+import { Rule } from "./deps/Policy";
 
 /** How the bump job treats one consumer. */
 const BumpRepo = Schema.Struct({
@@ -47,6 +48,17 @@ const Agent = Schema.Struct({
 export type Agent = typeof Agent.Type;
 
 export const Settings = Schema.Struct({
+  deps: Schema.optionalKey(
+    Schema.Struct({
+      /** Only these repositories, as `owner/name`; every one by default. */
+      repos: Schema.optionalKey(Schema.Array(Schema.String)),
+      /**
+       * Upkeep's own rules, applied after the updater's, so they win. Each
+       * matches and sets what an updater's rules do, such as `automerge`.
+       */
+      rules: Schema.optionalKey(Schema.Array(Rule)),
+    }),
+  ),
   bump: Schema.optionalKey(
     Schema.Struct({
       /** By repository, as `owner/name`. */

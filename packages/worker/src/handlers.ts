@@ -1,5 +1,6 @@
 /** What each job in the catalogue does on a worker, by job ID. */
 import { bump } from "./jobs/bump";
+import { deps } from "./jobs/deps";
 import { digest } from "./jobs/digest";
 import { drift } from "./jobs/drift";
 import { heal } from "./jobs/heal";
@@ -18,4 +19,5 @@ export const handlers: Handlers = {
   notifications: () => notifications(),
   "stalled-updates": () => stalledUpdates(),
   drift: () => drift(),
+  deps: () => deps(),
 };
