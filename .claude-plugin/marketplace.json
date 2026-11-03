@@ -1,0 +1,14 @@
+{
+  "name": "upkeep",
+  "description": "Agent Skills for Upkeep",
+  "owner": { "name": "Aidan Timson", "url": "https://github.com/timmo001" },
+  "plugins": [
+    {
+      "name": "upkeep",
+      "description": "Read what Upkeep runs through its Code Mode tools, MCP server or CLI",
+      "license": "Apache-2.0",
+      "source": "./skills",
+      "skills": "./"
+    }
+  ]
+}

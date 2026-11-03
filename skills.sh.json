@@ -1,0 +1,10 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    {
+      "title": "Use",
+      "description": "Read what Upkeep runs from an agent.",
+      "skills": ["upkeep"]
+    }
+  ]
+}
