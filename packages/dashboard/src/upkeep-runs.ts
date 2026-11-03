@@ -4,10 +4,11 @@
  */
 import { mdiHistory } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
+import { AsyncResult } from "effect/reactivity";
 import { html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { duration, empty, shared, stateBadge, time, view } from "./ui.ts";
-import { jobHref, runHref, runs } from "./upkeep.ts";
+import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
 
 const release = (run: Domain.Run) =>
   run.release === null
@@ -30,6 +31,16 @@ export class UpkeepRuns extends LitElement {
   }
 
   readonly #runs = new AtomController(this, () => runs(this.job), always);
+
+  readonly #jobs = new AtomController(this, () => jobs, always);
+
+  #laneOf(job: string) {
+    const known = AsyncResult.isSuccess(this.#jobs.value)
+      ? this.#jobs.value.value
+      : [];
+
+    return known.find((item) => item.id === job)?.lane ?? "repos";
+  }
 
   override render() {
     return view(this.#runs.value, (list) =>
@@ -73,7 +84,16 @@ export class UpkeepRuns extends LitElement {
                         }
                       </td>
                       <td>${release(run)}</td>
-                      <td>${run.worker ?? ""}</td>
+                      <td>
+                        ${
+                          run.state === "queued"
+                            ? html`<span class="muted"
+                                >waiting in the ${this.#laneOf(run.job)}
+                                lane</span
+                              >`
+                            : (run.worker ?? "")
+                        }
+                      </td>
                       <td>${time(run.queuedAt)}</td>
                       <td>${duration(run)}</td>
                     </tr>`,

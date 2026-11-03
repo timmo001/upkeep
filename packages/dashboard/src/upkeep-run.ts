@@ -6,9 +6,17 @@ import { mdiArrowLeft, mdiCancel } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
-import { AtomController, registry } from "./AtomController.ts";
+import { always, AtomController, registry } from "./AtomController.ts";
 import { duration, formatTime, shared, stateBadge, time, view } from "./ui.ts";
-import { cancelRun, jobHref, run, runHref, runLog } from "./upkeep.ts";
+import {
+  cancelRun,
+  jobHref,
+  jobs,
+  run,
+  runHref,
+  runLog,
+  runs,
+} from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
@@ -125,6 +133,57 @@ export class UpkeepRun extends LitElement {
 
   readonly #log = new AtomController(this, () => runLog(this.runId));
 
+  readonly #jobs = new AtomController(this, () => jobs, always);
+
+  readonly #runs = new AtomController(this, () => runs(""), always);
+
+  /**
+   * What a queued run waits behind: the runs going in its lane, and how many
+   * queued before it there. Each worker runs one run per lane at a time.
+   */
+  #waiting(current: Domain.Run) {
+    if (current.state !== "queued") return null;
+
+    const known = AsyncResult.isSuccess(this.#jobs.value)
+      ? this.#jobs.value.value
+      : [];
+
+    const all = AsyncResult.isSuccess(this.#runs.value)
+      ? this.#runs.value.value
+      : [];
+
+    const laneOf = (job: string) =>
+      known.find((item) => item.id === job)?.lane ?? "repos";
+
+    const lane = laneOf(current.job);
+    const inLane = all.filter((item) => laneOf(item.job) === lane);
+    const running = inLane.filter((item) => item.state === "running");
+
+    const ahead = inLane.filter(
+      (item) =>
+        item.state === "queued" &&
+        item.id !== current.id &&
+        (item.queuedAt < current.queuedAt ||
+          (item.queuedAt === current.queuedAt && item.id < current.id)),
+    ).length;
+
+    return html`
+      ${fact("Lane", lane)}
+      ${fact(
+        "Waiting for",
+        running.length === 0
+          ? "a worker to take it"
+          : html`${running.map(
+              (item, index) =>
+                html`${index === 0 ? null : ", "}<a href=${runHref(item.id)}
+                    >${item.job}</a
+                  >
+                  on ${item.worker ?? "a worker"}`,
+            )}${ahead === 0 ? null : html`, then ${ahead} queued before it`}`,
+      )}
+    `;
+  }
+
   override render() {
     return view(
       this.#run.value,
@@ -166,7 +225,7 @@ export class UpkeepRun extends LitElement {
                   >`,
                 )
           }
-          ${fact("Queued", time(current.queuedAt))}
+          ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
           ${current.heal === null ? null : healFacts(current.heal)}
