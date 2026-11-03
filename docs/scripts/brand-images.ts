@@ -8,10 +8,10 @@ import { writeBrandImages } from "@timmo001/docs-kit";
 
 const written = await writeBrandImages({
   logo: "src/assets/logo.svg",
-  title: "upkeep",
+  title: "Upkeep",
   tagline: ["Keeps my repositories and", "their consumers up to date."],
   site: "upkeep.timmo.dev",
-  // Groundwork's Base theme, until upkeep picks its own
+  // Groundwork's Base theme, until Upkeep picks its own
   background: "#1b1e23",
   accent: "#e5e8ec",
   outputs: {
