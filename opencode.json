@@ -22,26 +22,6 @@
       "effect": "allow"
     },
     {
-      "action": "edit",
-      "resource": "~/repos/**",
-      "effect": "ask"
-    },
-    {
-      "action": "edit",
-      "resource": "~/.config/dotfiles*/**",
-      "effect": "ask"
-    },
-    {
-      "action": "edit",
-      "resource": "~/repos/upkeep/**",
-      "effect": "allow"
-    },
-    {
-      "action": "edit",
-      "resource": "~/repos/groundwork/**",
-      "effect": "allow"
-    },
-    {
       "action": "gh.write *",
       "resource": "gh_* timmo001/upkeep*",
       "effect": "allow"
