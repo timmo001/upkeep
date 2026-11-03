@@ -2,7 +2,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
 import { Server } from "@upkeep/server";
-import { handlers, Worker } from "@upkeep/worker";
+import { ghLayer, handlers, Worker } from "@upkeep/worker";
 import { Config, Console, Effect, Layer, Option, Schema } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import packageJson from "../package.json" with { type: "json" };
@@ -410,6 +410,10 @@ const upkeep = Command.make("upkeep").pipe(
 
 upkeep.pipe(
   Command.run({ version: packageJson.version }),
-  Effect.provide(Layer.mergeAll(Jobs.catalogue, BunServices.layer)),
+  Effect.provide(
+    Layer.mergeAll(Jobs.catalogue, ghLayer()).pipe(
+      Layer.provideMerge(BunServices.layer),
+    ),
+  ),
   BunRuntime.runMain,
 );

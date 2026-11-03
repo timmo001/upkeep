@@ -4,14 +4,16 @@
  * a run or the server does stops the loop, so a worker keeps going through a
  * failed job or a server restart.
  */
+import type { Gh } from "@timmo001/effect-gh";
 import { Client, Domain } from "@upkeep/api";
 import { Cause, Duration, Effect, Exit, Option, Record, Schema } from "effect";
+import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 
 /** What a job does when it runs, given the release it's for, if any. */
 export type Handler = (
   release: Domain.Release | null,
-) => Effect.Effect<void, unknown, RunLog>;
+) => Effect.Effect<void, unknown, RunLog | Reporter | Gh>;
 
 /** The jobs a worker can run, by job ID. */
 export type Handlers = Readonly<Record<Domain.JobId, Handler>>;
@@ -79,7 +81,7 @@ const execute = Effect.fnUntraced(function* (
 
   yield* handler(run.release).pipe(
     Effect.raceFirst(heartbeats),
-    Effect.provide(RunLog.remote(run.id)),
+    Effect.provide([RunLog.remote(run.id), Reporter.remote]),
     Effect.onExit((exit) =>
       client.work.finish({ params, payload: outcome(exit) }).pipe(
         Effect.andThen(
@@ -135,4 +137,4 @@ export const work = Effect.fn("Worker.work")(function* (
 
 /** Run a job on this machine, printing its log, without the server. */
 export const runLocal = (handler: Handler, release: Domain.Release | null) =>
-  handler(release).pipe(Effect.provide(RunLog.console));
+  handler(release).pipe(Effect.provide([Reporter.local, RunLog.console]));
