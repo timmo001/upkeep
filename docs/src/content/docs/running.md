@@ -80,42 +80,23 @@ upkeep workers remove desktop
 
 ### First setup with 1Password
 
-The 1Password CLI can make the server admin token and keep each token
-`upkeep` prints, so none of them pass through the terminal or shell history.
-Make the server admin token first and copy it:
+[`.scripts/setup-1password.sh`](https://github.com/timmo001/upkeep/blob/main/.scripts/setup-1password.sh)
+sets up a new server with every token kept in 1Password, so none of them pass
+through the terminal or shell history. It needs `op`, `jq`, `curl` and
+`upkeep`:
 
 ```bash
-op item create --category=password --title="Upkeep server admin token" \
-  --generate-password=letters,digits,48 > /dev/null
-op item get "Upkeep server admin token" --fields password --reveal | wl-copy
+curl -fsSLO https://raw.githubusercontent.com/timmo001/upkeep/main/.scripts/setup-1password.sh
+bash setup-1password.sh https://upkeep.example.com aidan desktop laptop
 ```
 
-Set it as `UPKEEP_SERVER_ADMIN_TOKEN`, or the app's **server_admin_token**,
-and start the server. Then add your own admin and each worker. `op_save` runs
-a command that prints a new token and saves the token, its last line, as a new
-item:
-
-```bash
-export UPKEEP_SERVER=https://upkeep.example.com
-export UPKEEP_ADMIN_TOKEN="$(op item get "Upkeep server admin token" --fields password --reveal)"
-
-op_save() {
-  local title="$1" output
-  shift
-  output="$("$@")" || return
-  jq -n --arg title "$title" --arg token "${output##*$'\n'}" '{
-    title: $title,
-    category: "API_CREDENTIAL",
-    fields: [{ id: "credential", type: "CONCEALED", label: "credential", value: $token }]
-  }' | op item create - > /dev/null && echo "Saved $title"
-}
-
-op_save "Upkeep admin token - aidan" upkeep admins add aidan
-op_save "Upkeep worker token - desktop" upkeep workers add desktop
-```
-
-Read one back with `op item get "<title>" --fields credential --reveal`. Once
-your own admin is saved, the server admin token can go.
+It makes the server admin token and copies it, then waits while you set it as
+`UPKEEP_SERVER_ADMIN_TOKEN`, or the app's **server_admin_token**, and restart
+the server. Then it adds the admin and each worker named after it, saving
+their tokens as `Upkeep admin token - aidan`, `Upkeep worker token - desktop`
+and so on. Run it again to pick up where it stopped: items already saved are
+kept. Read one back with `op item get "<title>" --fields credential --reveal`.
+Once your own admin is saved, the server admin token can go.
 
 ## Workers
 

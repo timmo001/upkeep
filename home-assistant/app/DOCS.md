@@ -18,6 +18,8 @@ The full documentation is at [upkeep.timmo.dev](https://upkeep.timmo.dev), inclu
 
 3. Give each worker the server's URL and its printed token in `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN`.
 
+With 1Password, [`setup-1password.sh`](https://upkeep.timmo.dev/running#first-setup-with-1password) does the first two steps and keeps every token in it.
+
 The server speaks plain HTTP on port 7272, so tokens are only as private as your network. To reach it from outside, put it behind a reverse proxy or a Cloudflare tunnel for HTTPS.
 
 ## Dashboard
