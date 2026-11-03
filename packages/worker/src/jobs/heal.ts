@@ -1,8 +1,10 @@
 /**
  * The heal job: read a failed or lost run and its log, and choose what to do
- * with a decision model: run it again, hand a fix to an agent in an OpenCode
- * session in Herdr, park the job, or ask. Whatever it chooses goes in the heal's record. Without a decision
- * model in the settings, a lost run is retried and anything else is asked.
+ * with a decision model, or an LLM through OpenCode: run it again, hand a fix
+ * to an agent in an OpenCode session in Herdr, park the job, or leave it for
+ * the digest. Whatever it chooses goes in the heal's record. Without a
+ * decision model in the settings, a lost run is retried and anything else
+ * waits for the digest.
  */
 import {
   CloudflareClient,
@@ -10,13 +12,24 @@ import {
 } from "@effect/ai-cloudflare";
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { Domain } from "@upkeep/api";
+import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
-import { Cause, Config, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Config,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import * as Inbox from "../Inbox";
 import { Reporter, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
+import { run as exec } from "./bump";
 import { fix } from "./fix";
 
 /** The longest log line or error the model reads. */
@@ -68,7 +81,12 @@ interface Chosen {
 const label = (agent: Settings.Agent) =>
   agent.variant === undefined ? agent.model : `${agent.model}#${agent.variant}`;
 
-const decisionLayer = (options: Settings.DecisionModel) =>
+type ModelDecisions = Exclude<
+  Settings.DecisionModel,
+  { readonly provider: "opencode" }
+>;
+
+const decisionLayer = (options: ModelDecisions) =>
   options.provider === "cloudflare"
     ? CloudflareDecisionModel.layer({ model: options.model }).pipe(
         Layer.provide(CloudflareClient.layerConfig()),
@@ -129,21 +147,28 @@ export const describe = (
   },
 });
 
-/** What to do with no decision model: retry a lost run, ask about the rest. */
-export const fallback = (run: Domain.Run): Chosen =>
+/** What to do without a decision model: retry a lost run, ask about the rest. */
+export const fallback = (
+  run: Domain.Run,
+  why = "there's no decision model",
+): Chosen =>
   run.error?.startsWith("Lost") === true
     ? {
         decision: "retry",
-        reason: "The worker was lost, and there's no decision model",
+        reason: `The worker was lost, and ${why}`,
         agent: Option.none(),
         decided: false,
       }
     : {
         decision: "ask",
-        reason: "There's no decision model to choose",
+        reason: `Nothing chose, as ${why}`,
         agent: Option.none(),
         decided: false,
       };
+
+/** How a heal's reason names the model that chose it, to count its use. */
+const by = (model: Settings.DecisionModel) =>
+  `by ${model.provider}/${model.model}`;
 
 /** Ask the model, picking an agent too when it chooses a fix. */
 const decide = Effect.fnUntraced(function* (
@@ -155,7 +180,7 @@ const decide = Effect.fnUntraced(function* (
   const { answers } = yield* decisions.decide(Action, { input: failure });
   const { label: decision, probabilities } = answers.action;
   const sure = Math.round(probabilities[decision] * 100);
-  const reason = `${actions[decision]} (${sure}% sure, by ${model.provider}/${model.model})`;
+  const reason = `${actions[decision]} (${sure}% sure, ${by(model)})`;
 
   if (decision !== "fix" || agents.length < 2) {
     return {
@@ -190,15 +215,69 @@ const decide = Effect.fnUntraced(function* (
   } satisfies Chosen;
 });
 
+const Answer = Schema.Struct({
+  action: Domain.HealDecision,
+  agent: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * Ask an LLM through OpenCode instead of a decision model, with the same
+ * choices, for a worker that has neither a local model nor free-tier room.
+ */
+const decideByAgent = Effect.fnUntraced(function* (
+  failure: Failure,
+  agents: ReadonlyArray<Settings.Agent>,
+  model: Settings.DecisionModel,
+  opencode: string,
+) {
+  const prompt = [
+    'A job run failed. Choose what to do about it. Don\'t use any tools: reply with only one line of JSON, `{"action": ..., "agent": ...}`, and nothing else.',
+    "",
+    "Actions:",
+    ...Object.entries(actions).map(([name, when]) => `- ${name}: ${when}`),
+    "",
+    "Agents, for a fix (name one, or null for any other action):",
+    ...agents.map((agent) => `- ${label(agent)}: ${agent.for}`),
+    "",
+    "The failure:",
+    "",
+    JSON.stringify(failure.failed, null, 2),
+  ].join("\n");
+
+  const output = yield* exec(
+    opencode,
+    ["run", "--model", model.model, "--title", "Upkeep heal decision", prompt],
+    { cwd: tmpdir(), trusted: tmpdir() },
+  );
+
+  const line = output.match(/\{[^\n]*\}/g)?.at(-1) ?? output;
+
+  const answer = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Answer),
+  )(line);
+
+  return {
+    decision: answer.action,
+    reason: `${actions[answer.action]} (${by(model)})`,
+    agent: Option.fromNullishOr(
+      answer.action === "fix"
+        ? (agents.find((agent) => label(agent) === answer.agent) ?? agents[0])
+        : undefined,
+    ),
+    decided: true,
+  } satisfies Chosen;
+});
+
 /** The longest stretch of log a message to a person quotes. */
 const maxQuote = 3000;
 
 /**
- * Ask a person about a heal through the Inbox: what failed for this target,
- * in its own log lines rather than the run's summary of every failure, what
- * the heal chose and why, and what lets the job go on.
+ * Tell a person about a heal through the Inbox, only once there's something
+ * for them to do: what failed for this target, in its own log lines rather
+ * than the run's summary of every failure, what Upkeep already tried, and the
+ * step that's theirs.
  */
-const askPerson = (healing: Healing, chosen: Chosen, action: string) => {
+const askPerson = (healing: Healing, tried: string, todo: string) => {
   const { heal: record, run, log } = healing;
   const consumer = record.target.kind === "consumer";
   const target = consumer ? record.target.repo : "Upkeep";
@@ -216,34 +295,72 @@ const askPerson = (healing: Healing, chosen: Chosen, action: string) => {
       ? lines.join("\n").slice(-maxQuote)
       : (run.error ?? "(no error)").split("\n")[0];
 
-  const next =
-    record.issue !== null
-      ? `It's issue ${record.issue} in triage: resolving it there, with a note on the fix, unparks the job and tells the next heal what worked.`
-      : chosen.decision === "park"
-        ? `Once it's fixed, \`upkeep unpark ${run.job}\` lets it run again.`
-        : consumer
-          ? `The next ${run.job} run picks ${target} up again once it's fixed there.`
-          : `The next ${run.job} run tries again.`;
-
   return Inbox.send(
-    `Upkeep: ${target} needs a look (${run.job})`,
+    `Upkeep: ${target} needs you (${run.job})`,
     [
+      ":::action",
+      todo,
+      "",
+      `${tried}.`,
+      ":::",
+      "",
       `${run.job} failed for ${target} (run ${run.id}):`,
       "",
       "```text",
       quote,
       "```",
-      "",
-      `${action}: ${chosen.reason}.`,
-      "",
-      next,
     ].join("\n"),
     `upkeep-heal-${run.id}-${record.of}`,
   );
 };
 
+/**
+ * Hand a fix to an agent. A person hears about it only when the agent leaves
+ * it unfixed, with the session to pick it up from; an agent that couldn't
+ * start is left for the digest.
+ */
+const handOff = Effect.fnUntraced(function* (
+  healing: Healing,
+  agent: Settings.Agent,
+  why: string,
+) {
+  const reporter = yield* Reporter;
+  const { run } = healing;
+
+  const result = yield* fix(
+    healing.heal,
+    run,
+    healing.log,
+    healing.precedents,
+    agent,
+    (update) => reporter.heal(update),
+  ).pipe(
+    Effect.catchCause((cause) =>
+      Effect.succeed({
+        action: `Left for the digest: the agent couldn't start, ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+        session: null,
+        attention: false,
+      }),
+    ),
+  );
+
+  yield* RunLog.info(result.action);
+  yield* reporter.heal({ action: result.action });
+
+  if (result.attention && result.session !== null)
+    yield* askPerson(
+      healing,
+      `${why}, so ${label(agent)} worked on it. ${result.action}`,
+      `Pick up where the agent stopped: its \`heal ${run.job}\` pane in Herdr, or \`opencode2 --session ${result.session}\`.`,
+    );
+});
+
 /** Carry out a choice, adding what it did to the heal's record. */
-const act = Effect.fnUntraced(function* (healing: Healing, chosen: Chosen) {
+const act = Effect.fnUntraced(function* (
+  healing: Healing,
+  chosen: Chosen,
+  agents: ReadonlyArray<Settings.Agent>,
+) {
   const reporter = yield* Reporter;
   const { run } = healing;
 
@@ -269,14 +386,21 @@ const act = Effect.fnUntraced(function* (healing: Healing, chosen: Chosen) {
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
-      yield* askPerson(healing, chosen, action);
+
+      yield* askPerson(
+        healing,
+        `${action}: ${chosen.reason}`,
+        healing.heal.issue === null
+          ? `Fix what stops it, then run \`upkeep unpark ${run.job}\`.`
+          : `Fix what stops it, then resolve ${healing.heal.issue} in triage with a note on the fix, which unparks ${run.job}.`,
+      );
 
       return;
     }
 
     case "fix": {
       if (Option.isNone(chosen.agent)) {
-        const action = "Left for a person: there's no agent to fix it";
+        const action = "Left for the digest: there's no agent to fix it";
 
         yield* RunLog.warn(action);
         yield* reporter.heal({ action });
@@ -284,36 +408,22 @@ const act = Effect.fnUntraced(function* (healing: Healing, chosen: Chosen) {
         return;
       }
 
-      const action = yield* fix(
-        healing.heal,
-        run,
-        healing.log,
-        healing.precedents,
-        chosen.agent.value,
-        (update) => reporter.heal(update),
-      ).pipe(
-        Effect.catchCause((cause) =>
-          Effect.succeed(
-            `Left for a person: the agent couldn't start, ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
-          ),
-        ),
-      );
-
-      yield* RunLog.info(action);
-      yield* reporter.heal({ action });
-
-      return;
+      return yield* handOff(healing, chosen.agent.value, chosen.reason);
     }
 
     case "ask": {
-      const action = "Left for a person to look at";
+      // The model isn't sure what's wrong, which is what the last agent, the
+      // one for hard fixes, is for. Without one, or a model, it waits for the
+      // evening digest.
+      const agent = agents.at(-1);
+
+      if (chosen.decided && agent !== undefined)
+        return yield* handOff(healing, agent, chosen.reason);
+
+      const action = "Left for the digest";
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
-
-      // Without a decision model every failure lands here, so it waits for
-      // the evening digest rather than a message of its own.
-      if (chosen.decided) yield* askPerson(healing, chosen, action);
     }
   }
 });
@@ -330,19 +440,53 @@ export const heal = Effect.fnUntraced(function* () {
     Option.fromNullishOr(settings.decisions),
     {
       onNone: () => Effect.succeed(fallback(run)),
-      onSome: (model) =>
-        decide(
-          describe(record, run, log, precedents),
-          settings.agents ?? [],
-          model,
-        ).pipe(
-          Effect.provide(decisionLayer(model)),
-          Effect.catchCause((cause) =>
-            RunLog.warn(
-              `The decision model couldn't choose: ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
-            ).pipe(Effect.as(fallback(run))),
+      onSome: Effect.fnUntraced(function* (model) {
+        const limit = settings.decisionsPerDay ?? 10;
+        const now = yield* Clock.currentTimeMillis;
+
+        const used = (yield* reporter.heals(
+          now - Duration.toMillis("1 day"),
+        )).filter(({ heal }) => heal?.reason?.includes(by(model))).length;
+
+        if (used >= limit) {
+          yield* RunLog.info(
+            `Not asking the decision model: it's chosen ${used} heals today, the limit`,
+          );
+
+          return fallback(
+            run,
+            `the decision model reached its ${limit} heals today`,
+          );
+        }
+
+        const failure = describe(record, run, log, precedents);
+        const agents = settings.agents ?? [];
+
+        const orFallback = <R>(choosing: Effect.Effect<Chosen, unknown, R>) =>
+          choosing.pipe(
+            Effect.catchCause((cause) =>
+              RunLog.warn(
+                `The decision model couldn't choose: ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+              ).pipe(Effect.as(fallback(run))),
+            ),
+          );
+
+        if (model.provider === "opencode")
+          return yield* orFallback(
+            decideByAgent(
+              failure,
+              agents,
+              model,
+              settings.opencode ?? "opencode2",
+            ),
+          );
+
+        return yield* orFallback(
+          decide(failure, agents, model).pipe(
+            Effect.provide(decisionLayer(model)),
           ),
-        ),
+        );
+      }),
     },
   );
 
@@ -360,5 +504,5 @@ export const heal = Effect.fnUntraced(function* () {
     }),
   });
 
-  yield* act(healing, chosen);
+  yield* act(healing, chosen, settings.agents ?? []);
 });

@@ -185,13 +185,19 @@ model chooses what to do:
   The agent gets `sessionMinutes` (30 by default) to finish; anything it
   pushes to the default branch is recorded as the heal's commit.
 - `park` parks the job, with the model's reason.
-- `ask` leaves it for a person.
+- `ask` means the model isn't sure, so the last agent, the one for hard fixes,
+  works on it as for `fix`.
 
 The decision model and agents go in the worker's config file. The model is
-any TypeSafe System One API at `url`, with `UPKEEP_DECISION_API_KEY` when it
-needs one, or Clef on Cloudflare Workers AI with `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN` and `"provider": "cloudflare"`. The first agent is the
-default; with more than one, the model picks by what each is `for`:
+any TypeSafe System One API at `url`, such as Ollaya or Ollama on the worker,
+with `UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers
+AI with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` and
+`"provider": "cloudflare"`, or an LLM through OpenCode with
+`"provider": "opencode"` and a `provider/model` model, for a worker without a
+local model. `decisionsPerDay` caps how many heals a day the model chooses
+(10 by default), so a shared free tier keeps some room; past it, heals wait
+for the digest. The first agent is the default; with more than one, the model
+picks by what each is `for`:
 
 ```json
 {
@@ -211,10 +217,10 @@ default; with more than one, the model picks by what each is `for`:
 
 `opencode` sets the OpenCode command (`opencode2` by default) and `repo`
 Upkeep's own repository, for a heal that targets Upkeep. The worker needs
-Herdr running for a fix; without it, the fix is left for a person.
+Herdr running for a fix; without it, the fix waits for the digest.
 
-Without a decision model, a lost run is retried and anything else is left
-for a person in the evening digest.
+Without a decision model, a lost run is retried and anything else waits for
+the evening digest.
 
 ### Triage
 
@@ -228,12 +234,13 @@ minute. Without triage, heals work the same with no memory.
 
 ### Inbox
 
-A heal that parks a job, or whose decision model leaves it for a person,
-sends a message to the Plannotator Inbox, in the `Upkeep heals` thread. It
-quotes the log lines about that target, such as the one consumer's failed
-check out of a run over many, and says how the job goes on. Without a
-decision model, failures are left for the digest instead of a message each.
-The `digest` job sends the day's heals there as one
+A heal only messages the Plannotator Inbox, in the `Upkeep heals` thread,
+when there's something for a person to do: a job it parked, or a fix an
+agent left unfinished, with the session to pick it up from. The message is an
+action item that says what to do and what was tried, and quotes the log lines
+about that target, such as the one consumer's failed check out of a run over
+many. Everything else goes in the digest: the `digest` job sends the day's
+heals there as one
 message each evening. `inbox` in the worker's `heal` settings sets the
 Plannotator command (`plannotator` by default, or `false` to send nothing),
 and `inboxProject` the folder whose Inbox project they go to, the home folder

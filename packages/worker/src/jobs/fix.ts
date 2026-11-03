@@ -317,12 +317,24 @@ export const fix = Effect.fnUntraced(function* (
 
   const pushed = after !== before ? `, and pushed ${after.slice(0, 7)}` : "";
 
+  // Only a pushed fix that the agent finished is done with; anything else
+  // leaves the failure in place for a person to pick up from the session.
+  const attention = outcome !== "done" || after === before;
+
   switch (outcome) {
     case "done":
-      return `The agent finished${pushed}`;
+      return { action: `The agent finished${pushed}`, session, attention };
     case "blocked":
-      return `The agent needs a person${pushed}`;
+      return {
+        action: `The agent needs a person${pushed}`,
+        session,
+        attention,
+      };
     case "timeout":
-      return `The agent ran out of its ${minutes} minutes${pushed}; its session is left open`;
+      return {
+        action: `The agent ran out of its ${minutes} minutes${pushed}; its session is left open`,
+        session,
+        attention,
+      };
   }
 });

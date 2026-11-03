@@ -14,13 +14,18 @@ const BumpRepo = Schema.Struct({
 
 /**
  * Where heal decisions are made: any TypeSafe System One API at `url`, with
- * `$UPKEEP_DECISION_API_KEY` when it needs one, or Clef on Cloudflare
- * Workers AI with `$CLOUDFLARE_ACCOUNT_ID` and `$CLOUDFLARE_API_TOKEN`.
+ * `$UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers AI
+ * with `$CLOUDFLARE_ACCOUNT_ID` and `$CLOUDFLARE_API_TOKEN`, or an LLM through
+ * OpenCode, `provider/model#variant`, which needs no decision model at all.
  */
 const DecisionModel = Schema.Union([
   Schema.Struct({
     provider: Schema.Literal("typesafe"),
     url: Schema.String,
+    model: Schema.String,
+  }),
+  Schema.Struct({
+    provider: Schema.Literal("opencode"),
     model: Schema.String,
   }),
   Schema.Struct({
@@ -59,6 +64,14 @@ export const Settings = Schema.Struct({
       ),
       /** The OpenCode command an agent runs in, `opencode2` by default. */
       opencode: Schema.optionalKey(Schema.String),
+      /**
+       * How many heals a day, across every worker, the decision model is
+       * asked about, 10 by default, so a shared free tier keeps room for
+       * whatever else uses it. Past that, heals are left for the digest.
+       */
+      decisionsPerDay: Schema.optionalKey(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      ),
       /** Upkeep's own repository, `timmo001/upkeep` by default. */
       repo: Schema.optionalKey(Schema.String),
       /**
