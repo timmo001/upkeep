@@ -1,6 +1,6 @@
 ---
 name: Upkeep
-version: 0.1.6
+version: 0.1.7
 slug: upkeep
 description: Keep your repositories and their consumers up to date
 url: https://github.com/timmo001/upkeep
