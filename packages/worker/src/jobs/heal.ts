@@ -335,7 +335,14 @@ export const heal = Effect.fnUntraced(function* () {
           describe(record, run, log, precedents),
           settings.agents ?? [],
           model,
-        ).pipe(Effect.provide(decisionLayer(model))),
+        ).pipe(
+          Effect.provide(decisionLayer(model)),
+          Effect.catchCause((cause) =>
+            RunLog.warn(
+              `The decision model couldn't choose: ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+            ).pipe(Effect.as(fallback(run))),
+          ),
+        ),
     },
   );
 
