@@ -1,0 +1,297 @@
+/**
+ * The server's HTTP API, shared by the server, its workers and the CLI so each
+ * side encodes and decodes the same shapes. Admins read jobs and runs, start
+ * runs and manage tokens; workers take runs and report on them.
+ */
+import { Context, Schema } from "effect";
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+  HttpApiMiddleware,
+  HttpApiSchema,
+  HttpApiSecurity,
+  OpenApi,
+} from "effect/http-api";
+import {
+  JobId,
+  JobStatus,
+  LogEntry,
+  LogLine,
+  Outcome,
+  Release,
+  Run,
+  RunState,
+} from "./Domain";
+
+/** The admin a request was authenticated as. */
+export class CurrentAdmin extends Context.Service<
+  CurrentAdmin,
+  { readonly name: string }
+>()("@upkeep/api/Api/CurrentAdmin") {}
+
+/** The worker a request was authenticated as. */
+export class CurrentWorker extends Context.Service<
+  CurrentWorker,
+  { readonly name: string }
+>()("@upkeep/api/Api/CurrentWorker") {}
+
+export class Unauthorized extends Schema.TaggedError<Unauthorized>()(
+  "Unauthorized",
+  { message: Schema.String },
+  { httpApiStatus: 401 },
+) {}
+
+export class JobNotFound extends Schema.TaggedError<JobNotFound>()(
+  "JobNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no job ${this.id}`;
+  }
+}
+
+export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
+  "RunNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no run ${this.id}`;
+  }
+}
+
+/** A worker reported on a run it isn't running, such as one that was lost. */
+export class RunNotClaimed extends Schema.TaggedError<RunNotClaimed>()(
+  "RunNotClaimed",
+  { id: Schema.String, worker: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `Run ${this.id} isn't running on ${this.worker}`;
+  }
+}
+
+/** What a token can do: an admin runs the server, a worker runs jobs. */
+export const TokenScope = Schema.Literals(["admin", "worker"]);
+
+export type TokenScope = typeof TokenScope.Type;
+
+/** A token's name, which the server knows its holder by. */
+export const TokenName = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}$/),
+);
+
+/** A token's holder. The token itself is only shown when it's issued. */
+export const Token = Schema.Struct({
+  name: Schema.String,
+  createdAt: Schema.Finite,
+});
+
+export interface Token extends Schema.Schema.Type<typeof Token> {}
+
+export class TokenExists extends Schema.TaggedError<TokenExists>()(
+  "TokenExists",
+  { scope: TokenScope, holder: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `There's already a ${this.scope} called ${this.holder}`;
+  }
+}
+
+export class TokenNotFound extends Schema.TaggedError<TokenNotFound>()(
+  "TokenNotFound",
+  { scope: TokenScope, holder: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no ${this.scope} called ${this.holder}`;
+  }
+}
+
+export class AdminAuthorization extends HttpApiMiddleware.Service<
+  AdminAuthorization,
+  { provides: CurrentAdmin; requires: never }
+>()("@upkeep/api/Api/AdminAuthorization", {
+  requiredForClient: true,
+  security: { bearer: HttpApiSecurity.bearer },
+  error: Unauthorized,
+}) {}
+
+export class WorkerAuthorization extends HttpApiMiddleware.Service<
+  WorkerAuthorization,
+  { provides: CurrentWorker; requires: never }
+>()("@upkeep/api/Api/WorkerAuthorization", {
+  requiredForClient: true,
+  security: { bearer: HttpApiSecurity.bearer },
+  error: Unauthorized,
+}) {}
+
+/** The most runs one list returns. */
+export const maxRuns = 200;
+
+/** The most log lines one request carries, either way. */
+export const maxLogLines = 1000;
+
+/** The most releases one report carries. */
+export const maxReleases = 1000;
+
+export class JobsGroup extends HttpApiGroup.make("jobs")
+  .add(
+    HttpApiEndpoint.get("list", "/", {
+      success: Schema.Array(JobStatus),
+    }),
+    /**
+     * Queue a run, as the run button does. A run of the job for the same
+     * release that's still waiting is returned instead of a second one.
+     */
+    HttpApiEndpoint.post("run", "/:id/runs", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({ release: Schema.optionalKey(Release) }),
+      success: Run,
+      error: JobNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/jobs")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Jobs",
+      description: "The jobs the server runs, and starting them by hand",
+    }),
+  ) {}
+
+export class RunsGroup extends HttpApiGroup.make("runs")
+  .add(
+    HttpApiEndpoint.get("list", "/", {
+      query: {
+        job: Schema.optional(Schema.String),
+        state: Schema.optional(RunState),
+        limit: Schema.optional(Schema.Int),
+      },
+      success: Schema.Array(Run),
+    }),
+    HttpApiEndpoint.get("get", "/:id", {
+      params: { id: Schema.String },
+      success: Run,
+      error: RunNotFound,
+    }),
+    /** A run's log, from after line `after` when it's given. */
+    HttpApiEndpoint.get("log", "/:id/log", {
+      params: { id: Schema.String },
+      query: { after: Schema.optional(Schema.Int) },
+      success: Schema.Array(LogLine),
+      error: RunNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/runs")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Runs",
+      description: "Each run of a job, newest first, and its log",
+    }),
+  ) {}
+
+export class WorkGroup extends HttpApiGroup.make("work")
+  .add(
+    /** Take the oldest waiting run of one of these jobs, if there is one. */
+    HttpApiEndpoint.post("claim", "/claim", {
+      payload: Schema.Struct({ jobs: Schema.Array(JobId) }),
+      success: Schema.Struct({ run: Schema.NullOr(Run) }),
+    }),
+    /** Tell the server the run is still going. */
+    HttpApiEndpoint.post("heartbeat", "/runs/:id/heartbeat", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    HttpApiEndpoint.post("log", "/runs/:id/log", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        lines: Schema.Array(LogEntry).pipe(
+          Schema.check(Schema.isMaxLength(maxLogLines)),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    HttpApiEndpoint.post("finish", "/runs/:id/finish", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        outcome: Outcome,
+        error: Schema.optionalKey(Schema.String),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /**
+     * The latest release of each repository. The server queues every job
+     * that runs on releases for each one that changed, and only records a
+     * repository it sees for the first time. `queued` is the runs it added.
+     */
+    HttpApiEndpoint.post("releases", "/releases", {
+      payload: Schema.Struct({
+        releases: Schema.Array(Release).pipe(
+          Schema.check(Schema.isMaxLength(maxReleases)),
+        ),
+      }),
+      success: Schema.Struct({ queued: Schema.Array(Run) }),
+    }),
+  )
+  .middleware(WorkerAuthorization)
+  .prefix("/api/work")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Work",
+      description:
+        "Runs for workers to take, their logs and outcomes, and the releases they find",
+    }),
+  ) {}
+
+export class TokensGroup extends HttpApiGroup.make("tokens")
+  .add(
+    HttpApiEndpoint.get("list", "/:scope", {
+      params: { scope: TokenScope },
+      success: Schema.Array(Token),
+    }),
+    HttpApiEndpoint.post("add", "/:scope", {
+      params: { scope: TokenScope },
+      payload: Schema.Struct({ name: TokenName }),
+      success: Schema.Struct({
+        /** The new token, which is never shown again. */
+        token: Schema.String,
+      }),
+      error: TokenExists,
+    }),
+    HttpApiEndpoint.delete("remove", "/:scope/:name", {
+      params: { scope: TokenScope, name: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: TokenNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/tokens")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Tokens",
+      description: "Add, list and revoke the tokens admins and workers use",
+    }),
+  ) {}
+
+export class SystemGroup extends HttpApiGroup.make("system").add(
+  HttpApiEndpoint.get("health", "/api/health", {
+    success: HttpApiSchema.NoContent,
+  }),
+) {}
+
+/** The Upkeep server's HTTP API. */
+export class Api extends HttpApi.make("upkeep")
+  .add(JobsGroup)
+  .add(RunsGroup)
+  .add(WorkGroup)
+  .add(TokensGroup)
+  .add(SystemGroup)
+  .annotateMerge(OpenApi.annotations({ title: "Upkeep" })) {}
