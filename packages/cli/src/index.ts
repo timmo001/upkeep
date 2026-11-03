@@ -1,11 +1,12 @@
 /** The Upkeep CLI: every command lives in this tree so help and completions come from one place. */
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Api, Client } from "@upkeep/api";
+import { Api, Client, Domain } from "@upkeep/api";
 import { Server } from "@upkeep/server";
-import { Config, Console, Effect, Layer } from "effect";
-import { Argument, Command, Flag } from "effect/cli";
-import { FetchHttpClient } from "effect/http";
+import { handlers, Worker } from "@upkeep/worker";
+import { Config, Console, Effect, Layer, Option, Schema } from "effect";
+import { Argument, CliError, Command, Flag } from "effect/cli";
 import packageJson from "../package.json" with { type: "json" };
+import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
 import { serveMcp } from "./mcp";
 import { operations } from "./operations";
@@ -20,16 +21,6 @@ const server = Flag.String("server").pipe(
   Flag.withDescription("The Upkeep server's URL, or $UPKEEP_SERVER"),
   Flag.withFallbackConfig(Config.String("UPKEEP_SERVER")),
 );
-
-/** A client for the server, as the admin in `$UPKEEP_ADMIN_TOKEN`. */
-const adminClient = (url: string) =>
-  Layer.unwrap(
-    Effect.gen(function* () {
-      const token = yield* Config.Redacted("UPKEEP_ADMIN_TOKEN");
-
-      return Client.layer({ url, token });
-    }),
-  ).pipe(Layer.provide(FetchHttpClient.layer));
 
 const status = Command.make(
   "status",
@@ -97,6 +88,204 @@ const serve = Command.make(
     "Run the server: the API, the job schedule and the store in $UPKEEP_SERVER_DB",
   ),
 );
+
+export class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
+  message: Schema.String,
+}) {}
+
+const time = (at: number | null) =>
+  at === null ? "-" : new Date(at).toISOString();
+
+const runLine = (run: Domain.Run) =>
+  [
+    run.id,
+    run.job,
+    run.state,
+    time(run.queuedAt),
+    run.worker ?? "-",
+    run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,
+  ]
+    .join("  ")
+    .trimEnd();
+
+const worker = Command.make("worker", { server }, (input) =>
+  Worker.work(handlers).pipe(Effect.provide(workerClient(input.server))),
+).pipe(
+  Command.withDescription(
+    "Take and run jobs from the server with the token in $UPKEEP_WORKER_TOKEN",
+  ),
+);
+
+/** A release given as `owner/name@tag`. */
+const release = Flag.String("release").pipe(
+  Flag.withDescription("The release to run it for, as owner/name@tag"),
+  Flag.mapEffect((value) => {
+    const at = value.lastIndexOf("@");
+
+    return Schema.decodeUnknownEffect(Domain.Release)({
+      repo: value.slice(0, at),
+      tag: value.slice(at + 1),
+      url: `https://github.com/${value.slice(0, at)}/releases/tag/${value.slice(at + 1)}`,
+    }).pipe(
+      Effect.mapError(
+        () =>
+          new CliError.InvalidValue({
+            option: "release",
+            value,
+            expected: "an owner/name@tag release",
+            kind: "flag",
+          }),
+      ),
+    );
+  }),
+  Flag.optional,
+);
+
+const run = Command.make(
+  "run",
+  {
+    job: Argument.String("job").pipe(
+      Argument.withDescription("The job's ID, such as releases"),
+    ),
+    release,
+    local: Flag.Boolean("local").pipe(
+      Flag.withDescription(
+        "Run it here and print its log, instead of queueing it on the server",
+      ),
+      Flag.withDefault(false),
+    ),
+    server: Flag.optional(server),
+    json,
+  },
+  Effect.fn("run")(function* (input) {
+    if (input.local) {
+      const handler = Option.fromNullishOr(handlers[input.job]);
+
+      if (Option.isNone(handler)) {
+        return yield* new UsageError({
+          message: `There's no job ${input.job} to run here`,
+        });
+      }
+
+      return yield* Worker.runLocal(
+        handler.value,
+        Option.getOrNull(input.release),
+      );
+    }
+
+    if (Option.isNone(input.server)) {
+      return yield* new UsageError({
+        message: "Give --server or set $UPKEEP_SERVER, or run it with --local",
+      });
+    }
+
+    const queued = yield* Effect.gen(function* () {
+      const client = yield* Client;
+
+      return yield* client.jobs.run({
+        params: { id: input.job },
+        payload: Option.match(input.release, {
+          onNone: () => ({}),
+          onSome: (value) => ({ release: value }),
+        }),
+      });
+    }).pipe(Effect.provide(adminClient(input.server.value)));
+
+    if (input.json) return yield* Console.log(JSON.stringify(queued, null, 2));
+
+    yield* Console.log(
+      `Queued ${queued.job} as ${queued.id}. Follow it with upkeep log ${queued.id} --follow.`,
+    );
+  }),
+).pipe(Command.withDescription("Queue a run of a job, or run it here"));
+
+const runs = Command.make(
+  "runs",
+  {
+    job: Flag.String("job").pipe(
+      Flag.withDescription("Only this job's runs"),
+      Flag.optional,
+    ),
+    state: Flag.Literals("state", [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+    ]).pipe(Flag.withDescription("Only runs in this state"), Flag.optional),
+    limit: Flag.Int("limit").pipe(
+      Flag.withDescription(`How many, up to ${Api.maxRuns}`),
+      Flag.withDefault(20),
+    ),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const all = yield* client.runs.list({
+        query: {
+          job: Option.getOrUndefined(input.job),
+          state: Option.getOrUndefined(input.state),
+          limit: input.limit,
+        },
+      });
+
+      if (input.json) return yield* Console.log(JSON.stringify(all, null, 2));
+
+      if (all.length === 0) return yield* Console.log("No runs yet");
+
+      for (const each of all) yield* Console.log(runLine(each));
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("List runs, newest first"));
+
+const log = Command.make(
+  "log",
+  {
+    run: Argument.String("run").pipe(Argument.withDescription("The run's ID")),
+    follow: Flag.Boolean("follow").pipe(
+      Flag.withAlias("f"),
+      Flag.withDescription("Keep printing new lines until the run ends"),
+      Flag.withDefault(false),
+    ),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const params = { id: input.run };
+      let after = 0;
+
+      while (true) {
+        const finished = input.follow
+          ? (yield* client.runs.get({ params })).finishedAt !== null
+          : true;
+
+        const lines = yield* client.runs.log({ params, query: { after } });
+
+        for (const line of lines) {
+          yield* Console.log(
+            input.json
+              ? JSON.stringify(line)
+              : `${time(line.at)}  ${line.level === "info" ? "" : `${line.level}: `}${line.message}`,
+          );
+
+          after = line.seq;
+        }
+
+        if (lines.length > 0) continue;
+
+        if (finished) return;
+
+        yield* Effect.sleep("2 seconds");
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("Print a run's log, as JSON lines with --json"));
 
 const tokenCommands = (options: {
   readonly scope: Api.TokenScope;
@@ -205,7 +394,18 @@ const workers = tokenCommands({
 
 const upkeep = Command.make("upkeep").pipe(
   Command.withDescription("Keep repositories and their consumers up to date"),
-  Command.withSubcommands([status, serve, admins, workers, agent, mcp]),
+  Command.withSubcommands([
+    status,
+    run,
+    runs,
+    log,
+    serve,
+    worker,
+    admins,
+    workers,
+    agent,
+    mcp,
+  ]),
 );
 
 upkeep.pipe(

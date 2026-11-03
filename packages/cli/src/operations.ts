@@ -21,4 +21,19 @@ export const operations: readonly Operation[] = [
     description: "List the jobs upkeep runs",
     access: "read",
   },
+  {
+    name: "runs",
+    description: "List runs on the server, newest first",
+    access: "read",
+  },
+  {
+    name: "log",
+    description: "Print a run's log",
+    access: "read",
+  },
+  {
+    name: "run",
+    description: "Queue a run of a job on the server",
+    access: "write",
+  },
 ];
