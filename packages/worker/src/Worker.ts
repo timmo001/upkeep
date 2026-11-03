@@ -7,6 +7,8 @@
 import type { Gh } from "@timmo001/effect-gh";
 import { Client, Domain } from "@upkeep/api";
 import { Cause, Duration, Effect, Exit, Option, Record, Schema } from "effect";
+import type { FileSystem, Path } from "effect";
+import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
@@ -17,7 +19,13 @@ export type Handler = (
 ) => Effect.Effect<
   void,
   unknown,
-  RunLog | Reporter | Gh | ChildProcessSpawner.ChildProcessSpawner
+  | RunLog
+  | Reporter
+  | Gh
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpClient.HttpClient
 >;
 
 /** The jobs a worker can run, by job ID. */

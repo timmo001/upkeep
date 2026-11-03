@@ -5,6 +5,7 @@ import { Server } from "@upkeep/server";
 import { ghLayer, handlers, Worker } from "@upkeep/worker";
 import { Config, Console, Effect, Layer, Option, Schema } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 import packageJson from "../package.json" with { type: "json" };
 import { call, manifest } from "./agent";
 import { adminClient, workerClient } from "./clients";
@@ -415,7 +416,7 @@ const upkeep = Command.make("upkeep").pipe(
 upkeep.pipe(
   Command.run({ version: packageJson.version }),
   Effect.provide(
-    Layer.mergeAll(Jobs.catalogue, ghLayer()).pipe(
+    Layer.mergeAll(Jobs.catalogue, ghLayer(), FetchHttpClient.layer).pipe(
       Layer.provideMerge(BunServices.layer),
     ),
   ),

@@ -22,4 +22,13 @@ export const labels: Job = {
   onRelease: false,
 };
 
-export const jobs: ReadonlyArray<Job> = [releases, labels];
+export const bump: Job = {
+  id: "bump",
+  name: "Bump",
+  description:
+    "Roll a new release out to the repositories that pin or depend on it, checking and pushing each one",
+  schedule: null,
+  onRelease: true,
+};
+
+export const jobs: ReadonlyArray<Job> = [releases, labels, bump];
