@@ -20,6 +20,14 @@ grow as each part lands.
   rather than left waiting.
 - Every first-party repository rolls its releases out to its consumers through
   Upkeep.
+- The server runs as a Home Assistant app. It keeps job state and logs, hands
+  out jobs and serves the dashboard in the Home Assistant sidebar.
+- Workers run on whichever of my desktop machines is on, and take jobs from the
+  server, so each job runs once.
+- It's one `upkeep` binary: the server, the worker, the CLI, MCP and Code Mode
+  are all parts of it.
+- Consumers are found from what's already in each repository, such as workflow
+  pins and `package.json` dependencies, so no list is kept.
 
 ## Machine-readable docs
 
