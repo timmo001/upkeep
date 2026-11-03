@@ -21,6 +21,7 @@ import {
   LogEntry,
   LogLine,
   Outcome,
+  Parked,
   Precedent,
   Release,
   RepoName,
@@ -312,6 +313,10 @@ export class WorkGroup extends HttpApiGroup.make("work")
     HttpApiEndpoint.get("heals", "/heals", {
       query: { since: Schema.FiniteFromString },
       success: Schema.Array(Run),
+    }),
+    /** The parked jobs, for a worker's own status. */
+    HttpApiEndpoint.get("parked", "/parked", {
+      success: Schema.Array(Schema.Struct({ job: JobId, ...Parked.fields })),
     }),
     /**
      * Queue the failed job again for a heal, for the same release. Nothing is

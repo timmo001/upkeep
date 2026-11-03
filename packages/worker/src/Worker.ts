@@ -6,12 +6,22 @@
  */
 import type { Gh } from "@timmo001/effect-gh";
 import { Client, Domain } from "@upkeep/api";
-import { Cause, Duration, Effect, Exit, Option, Record, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Duration,
+  Effect,
+  Exit,
+  Option,
+  Record,
+  Schema,
+} from "effect";
 import type { FileSystem, Path } from "effect";
 import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
+import * as Status from "./Status";
 
 /** What a job does when it runs, given the release it's for, if any. */
 export type Handler = (
@@ -114,7 +124,7 @@ const execute = Effect.fnUntraced(function* (
     Effect.annotateLogs({ run: run.id }),
   );
 
-  yield* handler(run.release).pipe(
+  return yield* handler(run.release).pipe(
     Effect.raceFirst(heartbeats),
     Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id)]),
     Effect.onExit((exit) =>
@@ -131,7 +141,8 @@ const execute = Effect.fnUntraced(function* (
         Effect.annotateLogs({ run: run.id }),
       ),
     ),
-    Effect.ignore,
+    Effect.exit,
+    Effect.map(Exit.isFailure),
   );
 });
 
@@ -145,26 +156,58 @@ export const work = Effect.fn("Worker.work")(function* (
   const pollInterval = options.pollInterval ?? "30 seconds";
   const heartbeatInterval = options.heartbeatInterval ?? "1 minute";
 
+  const status = yield* Status.make;
+
   yield* Effect.logInfo(`Waiting for runs of ${jobs.join(", ")}`);
+  yield* status.write;
+
+  // What needs a person: parked jobs and heals from the last day that asked.
+  const attention = Effect.gen(function* () {
+    const since = (yield* Clock.currentTimeMillis) - Duration.toMillis("1 day");
+    const parked = yield* client.work.parked();
+    const heals = yield* client.work.heals({ query: { since } });
+
+    yield* status.update({
+      parked: parked.map(({ job }) => job),
+      asking: heals.filter(({ heal }) => heal?.decision === "ask").length,
+    });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logDebug("Couldn't read what needs attention", cause),
+    ),
+  );
 
   const next = client.work.claim({ payload: { jobs } }).pipe(
+    Effect.tap(() => status.update({ reachable: true })),
     Effect.flatMap(({ run }) =>
       Option.match(Option.fromNullishOr(run), {
-        onNone: () => Effect.sleep(pollInterval),
+        onNone: () =>
+          attention.pipe(Effect.andThen(Effect.sleep(pollInterval))),
         onSome: (claimed) =>
-          execute(
-            Option.getOrElse(
-              Record.get(handlers, claimed.job),
-              (): Handler => () =>
-                Effect.fail(`This worker can't run ${claimed.job}`),
+          status.update({ running: claimed.job }).pipe(
+            Effect.andThen(
+              execute(
+                Option.getOrElse(
+                  Record.get(handlers, claimed.job),
+                  (): Handler => () =>
+                    Effect.fail(`This worker can't run ${claimed.job}`),
+                ),
+                claimed,
+                heartbeatInterval,
+              ),
             ),
-            claimed,
-            heartbeatInterval,
+            Effect.flatMap((failed) =>
+              status.update({
+                running: null,
+                last: { job: claimed.job, failed },
+              }),
+            ),
           ),
       }),
     ),
     Effect.catchCause((cause) =>
       Effect.logWarning("Couldn't ask the server for work", cause).pipe(
+        Effect.andThen(status.update({ reachable: false })),
         Effect.andThen(Effect.sleep(pollInterval)),
       ),
     ),

@@ -437,6 +437,18 @@ const WorkHandlers = HttpApiBuilder.group(
         );
       }),
       heals: ({ query }) => store.heals(query.since).pipe(Effect.orDie),
+      parked: () =>
+        store.parked().pipe(
+          Effect.map((parked) =>
+            [...parked].map(([job, { reason, at, issue }]) => ({
+              job,
+              reason,
+              at,
+              issue,
+            })),
+          ),
+          Effect.orDie,
+        ),
       retry: Effect.fn(function* ({ params }) {
         const worker = yield* Api.CurrentWorker;
 

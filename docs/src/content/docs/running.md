@@ -125,6 +125,14 @@ On Arch, the `upkeep-git` package builds the binary from main and installs a
 jobs use, such as `mise`, `opencode2` and `plannotator`, then run
 `systemctl --user enable --now upkeep-worker.service`.
 
+A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
+`$UPKEEP_WORKER_STATUS`: a `health`, a one-line `summary` and when it was
+`updated`. The summary says what's running, how the last run ended, which
+jobs are parked and how many heals in the last day asked for a person, so a
+service monitor can show more than that the process is up. It's `warning`
+while anything needs a person and `degraded` while the server can't be
+reached.
+
 ## Runs
 
 ```bash
