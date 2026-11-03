@@ -34,8 +34,8 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           version="$(sed -n 's/^version: //p' home-assistant/app/config.yaml)"
-          if [ "$version" != "${TAG#v}" ]; then
-            echo "::error title=App version::home-assistant/app/config.yaml has version $version, not ${TAG#v}"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error title=App version::Tag $TAG doesn't match home-assistant/app/config.yaml's version $version. Tags are the bare version, with no v"
             exit 1
           fi
 
