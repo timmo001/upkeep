@@ -107,6 +107,12 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  "0003_triage_issues": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN heal_issue TEXT`;
+    yield* sql`ALTER TABLE parked ADD COLUMN issue TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -134,6 +140,7 @@ const RunRow = Schema.Struct({
   ),
   healCommit: Schema.NullOr(Schema.String),
   healSession: Schema.NullOr(Schema.String),
+  healIssue: Schema.NullOr(Schema.String),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -159,6 +166,7 @@ const toRun = ({
   healActions,
   healCommit,
   healSession,
+  healIssue,
   ...row
 }: typeof RunRow.Type): Domain.Run => ({
   ...row,
@@ -180,6 +188,7 @@ const toRun = ({
           actions: healActions ?? [],
           commit: healCommit,
           session: healSession,
+          issue: healIssue,
         },
 });
 
@@ -198,11 +207,12 @@ export interface NewRun {
   readonly job: Domain.JobId;
   readonly trigger: Domain.Trigger;
   readonly release: Domain.Release | null;
-  /** For a heal: the failed run, its job and what to heal. */
+  /** For a heal: the failed run, its job, what to heal and its triage issue. */
   readonly heal?: {
     readonly of: string;
     readonly job: Domain.JobId;
     readonly target: Domain.Target;
+    readonly issue?: string | null;
   };
 }
 
@@ -254,8 +264,17 @@ export class Store extends Context.Service<
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
     /** How many heals of a job's runs were queued since `since`. */
     healsSince(job: string, since: number): Effect.Effect<number, StoreError>;
-    /** Park a job, replacing the reason when it's already parked. */
-    park(job: string, reason: string): Effect.Effect<void, StoreError>;
+    /** Every heal queued since `since`, newest first. */
+    heals(since: number): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /**
+     * Park a job, replacing the reason and issue when it's already parked.
+     * `issue` is its triage issue, which unparks it once resolved.
+     */
+    park(
+      job: string,
+      reason: string,
+      issue: string | null,
+    ): Effect.Effect<void, StoreError>;
     /** Unpark a job, returning whether it was parked. */
     unpark(job: string): Effect.Effect<boolean, StoreError>;
     /** The parked jobs, by job ID. */
@@ -364,6 +383,7 @@ export class Store extends Context.Service<
             healJob: heal?.job ?? null,
             healTarget: heal === undefined ? null : targetColumn(heal.target),
             healActions: heal === undefined ? null : "[]",
+            healIssue: heal?.issue ?? null,
           })}
           RETURNING *
         `);
@@ -575,18 +595,29 @@ export class Store extends Context.Service<
       return rows[0]?.count ?? 0;
     }, Effect.mapError(storeError));
 
+    const heals = Effect.fn("Store.heals")(function* (since: number) {
+      return yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE heal_of IS NOT NULL AND queued_at >= ${since}
+        ORDER BY queued_at DESC, id DESC
+      `);
+    }, Effect.mapError(storeError));
+
     const park = Effect.fn("Store.park")(function* (
       job: string,
       reason: string,
+      issue: string | null,
     ) {
       yield* sql`
         INSERT INTO parked ${sql.insert({
           job,
           reason,
           parkedAt: yield* Clock.currentTimeMillis,
+          issue,
         })}
         ON CONFLICT (job) DO UPDATE
-        SET reason = excluded.reason, parked_at = excluded.parked_at
+        SET reason = excluded.reason, parked_at = excluded.parked_at,
+          issue = excluded.issue
       `;
     }, Effect.mapError(storeError));
 
@@ -600,7 +631,7 @@ export class Store extends Context.Service<
 
     const parked = Effect.fn("Store.parked")(function* () {
       const rows = yield* sql`
-        SELECT job, reason, parked_at AS at FROM parked
+        SELECT job, reason, parked_at AS at, issue FROM parked
       `.pipe(Effect.flatMap(decodeParked));
 
       return new Map(
@@ -779,6 +810,7 @@ export class Store extends Context.Service<
       finish,
       updateHeal,
       healsSince,
+      heals,
       park,
       unpark,
       parked,

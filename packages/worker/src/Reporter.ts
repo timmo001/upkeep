@@ -14,24 +14,28 @@ export class Reporter extends Context.Service<
     readonly releases: (
       releases: ReadonlyArray<Domain.Release>,
     ) => Effect.Effect<ReadonlyArray<Domain.Run>, unknown>;
-    /** For a heal: its record, and the run it heals with the end of its log. */
-    readonly healing: () => Effect.Effect<
-      {
-        readonly heal: Domain.Heal;
-        readonly run: Domain.Run;
-        readonly log: ReadonlyArray<Domain.LogLine>;
-      },
-      unknown
-    >;
+    /**
+     * For a heal: its record, the run it heals with the end of its log, and
+     * what triage knows of failures like it.
+     */
+    readonly healing: () => Effect.Effect<Healing, unknown>;
     /** For a heal: queue the failed job again, unless it's parked. */
     readonly retry: () => Effect.Effect<Domain.Run | null, unknown>;
-    /** Park a job until someone unparks it. */
+    /**
+     * Park a job until someone unparks it, or until `issue`, its triage
+     * issue, is resolved.
+     */
     readonly park: (
       job: string,
       reason: string,
+      issue: string | null,
     ) => Effect.Effect<void, unknown>;
     /** For a heal: fill in its record. */
     readonly heal: (update: Api.HealUpdate) => Effect.Effect<void, unknown>;
+    /** The heals queued since `since`, newest first. */
+    readonly heals: (
+      since: number,
+    ) => Effect.Effect<ReadonlyArray<Domain.Run>, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /** Send findings to the server, for the run `runId`. */
@@ -59,9 +63,13 @@ export class Reporter extends Context.Service<
           healing: () => client.work.healing({ params }),
           retry: () =>
             client.work.retry({ params }).pipe(Effect.map(({ run }) => run)),
-          park: (job, reason) =>
-            client.work.park({ params: { job }, payload: { reason } }),
+          park: (job, reason, issue) =>
+            client.work.park({
+              params: { job },
+              payload: issue === null ? { reason } : { reason, issue },
+            }),
           heal: (update) => client.work.heal({ params, payload: update }),
+          heals: (since) => client.work.heals({ query: { since } }),
         });
       }),
     );
@@ -81,6 +89,14 @@ export class Reporter extends Context.Service<
           Effect.provide(RunLog.RunLog.console),
         ),
       heal: () => Effect.void,
+      heals: () => Effect.succeed([]),
     }),
   );
+}
+
+export interface Healing {
+  readonly heal: Domain.Heal;
+  readonly run: Domain.Run;
+  readonly log: ReadonlyArray<Domain.LogLine>;
+  readonly precedents: ReadonlyArray<Domain.Precedent>;
 }

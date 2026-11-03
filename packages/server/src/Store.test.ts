@@ -169,6 +169,7 @@ test("a heal's record fills in as its worker reports", () =>
         actions: ["Queued bump again", "Watched it pass"],
         commit: null,
         session: null,
+        issue: null,
       });
       expect(yield* store.healsSince("bump", 0)).toBe(1);
       expect(yield* store.healsSince("labels", 0)).toBe(0);
@@ -180,7 +181,7 @@ test("a parked job stays parked until it's unparked", () =>
     Effect.gen(function* () {
       const store = yield* Store;
 
-      yield* store.park("bump", "Failed past its heals");
+      yield* store.park("bump", "Failed past its heals", null);
 
       expect((yield* store.parked()).get("bump")?.reason).toBe(
         "Failed past its heals",

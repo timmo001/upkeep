@@ -15,6 +15,7 @@
   "dependencies": {
     "@effect/platform-bun": "4.1.2",
     "@effect/sql-sqlite-bun": "4.1.2",
+    "@timmo001/effect-triage": "0.20.1",
     "@upkeep/api": "workspace:*",
     "effect": "4.1.2"
   },

@@ -21,6 +21,7 @@ import {
   LogEntry,
   LogLine,
   Outcome,
+  Precedent,
   Release,
   RepoName,
   Run,
@@ -293,15 +294,24 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
     }),
-    /** A heal's record, and the run it's healing with the end of its log. */
+    /**
+     * A heal's record, the run it's healing with the end of its log, and the
+     * same or similar failures triage has seen before.
+     */
     HttpApiEndpoint.get("healing", "/runs/:id/healing", {
       params: { id: Schema.String },
       success: Schema.Struct({
         heal: Heal,
         run: Run,
         log: Schema.Array(LogLine),
+        precedents: Schema.Array(Precedent),
       }),
       error: [RunNotFound, RunNotClaimed],
+    }),
+    /** The heals queued since `since`, newest first, for the daily digest. */
+    HttpApiEndpoint.get("heals", "/heals", {
+      query: { since: Schema.FiniteFromString },
+      success: Schema.Array(Run),
     }),
     /**
      * Queue the failed job again for a heal, for the same release. Nothing is
@@ -312,10 +322,16 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
       error: [RunNotFound, RunNotClaimed],
     }),
-    /** Park a job, so nothing queues it until it's unparked. */
+    /**
+     * Park a job, so nothing queues it until it's unparked. With its triage
+     * issue, resolving that issue unparks it.
+     */
     HttpApiEndpoint.post("park", "/park/:job", {
       params: { job: Schema.String },
-      payload: Schema.Struct({ reason: Schema.String }),
+      payload: Schema.Struct({
+        reason: Schema.String,
+        issue: Schema.optionalKey(Schema.String),
+      }),
       success: HttpApiSchema.NoContent,
       error: JobNotFound,
     }),

@@ -12,7 +12,8 @@ import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { Domain } from "@upkeep/api";
 import { Cause, Config, Effect, Layer, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
-import { Reporter } from "../Reporter";
+import * as Inbox from "../Inbox";
+import { Reporter, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { fix } from "./fix";
@@ -30,6 +31,8 @@ const Failure = Schema.Struct({
     target: Schema.String,
     error: Schema.String,
     log: Schema.Array(Schema.String),
+    /** How the same or similar failures went before, from triage's notes. */
+    before: Schema.Array(Schema.String),
   }),
 });
 
@@ -78,11 +81,12 @@ const decisionLayer = (options: Settings.DecisionModel) =>
         ),
       );
 
-/** What the model reads: the run, its error and the end of its log. */
+/** What the model reads: the run, its error, the end of its log and precedents. */
 export const describe = (
   heal: Domain.Heal,
   run: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
+  precedents: ReadonlyArray<Domain.Precedent> = [],
 ): Failure => ({
   failed: {
     job: run.job,
@@ -92,6 +96,12 @@ export const describe = (
     log: log
       .slice(-maxLines)
       .map((line) => `${line.level}: ${line.message.slice(0, maxMessage)}`),
+    before: precedents.flatMap((precedent) =>
+      precedent.notes.map(
+        (note) =>
+          `${precedent.title} (${precedent.state}): ${note.slice(0, maxMessage)}`,
+      ),
+    ),
   },
 });
 
@@ -152,15 +162,35 @@ const decide = Effect.fnUntraced(function* (
   } satisfies Chosen;
 });
 
+/** Ask a person about a heal through the Inbox, with what it chose and why. */
+const askPerson = (healing: Healing, chosen: Chosen, action: string) => {
+  const { heal: record, run } = healing;
+
+  const target =
+    record.target.kind === "upkeep" ? "Upkeep" : record.target.repo;
+
+  return Inbox.send(
+    `Upkeep: ${run.job} needs a look (${target})`,
+    [
+      `Upkeep's ${run.job} run ${run.id} failed for ${target}:`,
+      "",
+      "```text",
+      (run.error ?? "(no error)").slice(0, 2000),
+      "```",
+      "",
+      `The heal chose to ${chosen.decision}: ${chosen.reason}.`,
+      `${action}.`,
+      "",
+      record.issue === null
+        ? `Once it's fixed, \`upkeep unpark ${run.job}\` lets it run again if it's parked.`
+        : `It's issue ${record.issue} in triage: resolving it there, with a note on the fix, unparks the job and tells the next heal what worked.`,
+    ].join("\n"),
+    `upkeep-heal-${run.id}-${record.of}`,
+  );
+};
+
 /** Carry out a choice, adding what it did to the heal's record. */
-const act = Effect.fnUntraced(function* (
-  healing: {
-    readonly heal: Domain.Heal;
-    readonly run: Domain.Run;
-    readonly log: ReadonlyArray<Domain.LogLine>;
-  },
-  chosen: Chosen,
-) {
+const act = Effect.fnUntraced(function* (healing: Healing, chosen: Chosen) {
   const reporter = yield* Reporter;
   const { run } = healing;
 
@@ -180,12 +210,13 @@ const act = Effect.fnUntraced(function* (
     }
 
     case "park": {
-      yield* reporter.park(run.job, chosen.reason);
+      yield* reporter.park(run.job, chosen.reason, healing.heal.issue);
 
       const action = `Parked ${run.job}`;
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
+      yield* askPerson(healing, chosen, action);
 
       return;
     }
@@ -204,6 +235,7 @@ const act = Effect.fnUntraced(function* (
         healing.heal,
         run,
         healing.log,
+        healing.precedents,
         chosen.agent.value,
         (update) => reporter.heal(update),
       ).pipe(
@@ -225,6 +257,7 @@ const act = Effect.fnUntraced(function* (
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
+      yield* askPerson(healing, chosen, action);
     }
   }
 });
@@ -232,7 +265,8 @@ const act = Effect.fnUntraced(function* (
 export const heal = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
   const settings = (yield* Settings.load()).heal ?? {};
-  const { heal: record, run, log } = yield* reporter.healing();
+  const healing = yield* reporter.healing();
+  const { heal: record, run, log, precedents } = healing;
 
   yield* RunLog.info(`Healing ${run.job} run ${run.id}: ${run.error ?? ""}`);
 
@@ -241,9 +275,11 @@ export const heal = Effect.fnUntraced(function* () {
     {
       onNone: () => Effect.succeed(fallback(run)),
       onSome: (model) =>
-        decide(describe(record, run, log), settings.agents ?? [], model).pipe(
-          Effect.provide(decisionLayer(model)),
-        ),
+        decide(
+          describe(record, run, log, precedents),
+          settings.agents ?? [],
+          model,
+        ).pipe(Effect.provide(decisionLayer(model))),
     },
   );
 
@@ -261,5 +297,5 @@ export const heal = Effect.fnUntraced(function* () {
     }),
   });
 
-  yield* act({ heal: record, run, log }, chosen);
+  yield* act(healing, chosen);
 });

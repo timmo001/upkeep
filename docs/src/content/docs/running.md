@@ -21,6 +21,9 @@ behind a reverse proxy for HTTPS.
 | `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                        |
 | `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands |
 | `UPKEEP_HEALS_PER_DAY`      | How many heals one job can have a day before it's parked, 3 by default |
+| `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional               |
+| `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                        |
+| `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                 |
 
 ## Tokens
 
@@ -126,6 +129,26 @@ Herdr running for a fix; without it, the fix is left for a person.
 Without a decision model, a lost run is retried and anything else is left
 for a person.
 
+### Triage
+
+With the three `UPKEEP_TRIAGE_*` settings on the server, each failure that's
+healed is sent to triage as an error, so the same failure groups into one
+issue there. A heal reads the notes on that issue and on similar ones, and
+both the decision model and the agent see how those went. When a fix is
+pushed, the server resolves the issue with a note on what fixed it. A job
+parked for a failure unparks once its triage issue is resolved, checked every
+minute. Without triage, heals work the same with no memory.
+
+### Inbox
+
+A heal that parks a job or leaves it for a person sends a message to the
+Plannotator Inbox, in the `Upkeep heals` thread, saying what failed and how
+to let the job run again. The `digest` job sends the day's heals there as one
+message each evening. `inbox` in the worker's `heal` settings sets the
+Plannotator command (`plannotator` by default, or `false` to send nothing),
+and `inboxProject` the folder whose Inbox project they go to, the home folder
+by default.
+
 ## Jobs
 
 | Job        | Runs             | Does                                                                                                                                                                                                                                                                       |
@@ -134,6 +157,7 @@ for a person.
 | `labels`   | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.          |
 | `bump`     | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. |
 | `heal`     | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
+| `digest`   | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.

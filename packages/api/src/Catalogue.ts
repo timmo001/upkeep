@@ -40,4 +40,12 @@ export const heal: Job = {
   onRelease: false,
 };
 
-export const jobs: ReadonlyArray<Job> = [releases, labels, bump, heal];
+export const digest: Job = {
+  id: "digest",
+  name: "Digest",
+  description: "Send the day's heals to the Inbox as one message",
+  schedule: "0 20 * * *",
+  onRelease: false,
+};
+
+export const jobs: ReadonlyArray<Job> = [releases, labels, bump, heal, digest];

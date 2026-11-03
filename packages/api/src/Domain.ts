@@ -102,14 +102,32 @@ export const Heal = Schema.Struct({
   actions: Schema.Array(Schema.String),
   commit: Schema.NullOr(Schema.String),
   session: Schema.NullOr(Schema.String),
+  /** The failure's issue in triage, when the server reports to one. */
+  issue: Schema.NullOr(Schema.String),
 });
 
 export interface Heal extends Schema.Schema.Type<typeof Heal> {}
 
-/** A job the server stopped queueing until it's unparked, and why. */
+/**
+ * The same failure, or one like it, from triage: its title, where it stands,
+ * and its notes, such as how it was fixed.
+ */
+export const Precedent = Schema.Struct({
+  title: Schema.String,
+  state: Schema.String,
+  notes: Schema.Array(Schema.String),
+});
+
+export interface Precedent extends Schema.Schema.Type<typeof Precedent> {}
+
+/**
+ * A job the server stopped queueing until it's unparked, and why. Resolving
+ * its triage issue, when it has one, unparks it.
+ */
 export const Parked = Schema.Struct({
   reason: Schema.String,
   at: Schema.Finite,
+  issue: Schema.NullOr(Schema.String),
 });
 
 export interface Parked extends Schema.Schema.Type<typeof Parked> {}

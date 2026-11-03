@@ -61,6 +61,15 @@ export const Settings = Schema.Struct({
       opencode: Schema.optionalKey(Schema.String),
       /** Upkeep's own repository, `timmo001/upkeep` by default. */
       repo: Schema.optionalKey(Schema.String),
+      /**
+       * The Plannotator command asks and the daily digest go through,
+       * `plannotator` by default, or `false` to send nothing.
+       */
+      inbox: Schema.optionalKey(
+        Schema.Union([Schema.String, Schema.Literal(false)]),
+      ),
+      /** The folder whose Inbox project they go to, the home folder by default. */
+      inboxProject: Schema.optionalKey(Schema.String),
     }),
   ),
 });

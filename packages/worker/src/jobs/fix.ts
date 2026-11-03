@@ -49,11 +49,12 @@ const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.map((root) => `${root}/upkeep/heal`),
 );
 
-/** What the agent is told: the failure, and how far it may go. */
+/** What the agent is told: the failure, how it went before, and how far it may go. */
 const prompt = (
   heal: Domain.Heal,
   run: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
+  precedents: ReadonlyArray<Domain.Precedent>,
   repo: string,
   minutes: number,
 ) => {
@@ -76,6 +77,19 @@ const prompt = (
     "",
     ...log.slice(-60).map((line) => `${line.level}: ${line.message}`),
     "",
+    ...(precedents.length === 0
+      ? []
+      : [
+          "The same or similar failures before, with triage's notes on them:",
+          "",
+          ...precedents.flatMap((precedent) => [
+            `- ${precedent.title} (${precedent.state})`,
+            ...precedent.notes.map(
+              (note) => `  ${note.replaceAll("\n", "\n  ")}`,
+            ),
+          ]),
+          "",
+        ]),
     `Find the cause and fix it in this checkout of ${repo}.`,
     ...reach,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
@@ -241,6 +255,7 @@ export const fix = Effect.fnUntraced(function* (
   heal: Domain.Heal,
   failed: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
+  precedents: ReadonlyArray<Domain.Precedent>,
   agent: Settings.Agent,
   record: (update: {
     readonly session?: string;
@@ -280,7 +295,7 @@ export const fix = Effect.fnUntraced(function* (
       `${opencode} --session ${session}`,
       directory,
       `heal ${failed.job}`,
-      prompt(heal, failed, log, repo, minutes),
+      prompt(heal, failed, log, precedents, repo, minutes),
     );
 
     yield* RunLog.info(`Opened it in Herdr pane ${paneId}`);

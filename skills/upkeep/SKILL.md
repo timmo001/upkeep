@@ -13,7 +13,7 @@ Prefer the `upkeep` Code Mode namespace, then the MCP server (`upkeep mcp`); fal
 - `upkeep run <job>` queues a run (write). `upkeep run <job> --local` runs it on this machine and reports nothing, which is the safe way to try a job.
 - `upkeep cancel <run>` drops a queued run or stops a running one (write).
 - `upkeep runs --job heal` lists heals: what each one heals, what was decided and what was done (read).
-- `upkeep unpark <job>` lets a job parked after too many heals be queued again (write).
+- `upkeep unpark <job>` lets a parked job be queued again (write). With triage set up, resolving the job's triage issue unparks it too.
 - `upkeep agent tools --json` prints every operation with its input schema and how an agent may use it; `upkeep agent call <tool>` runs one with JSON input on stdin.
 
 Token commands (`upkeep admins`, `upkeep workers`) hand out secrets: leave them to the person.

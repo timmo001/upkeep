@@ -1,7 +1,7 @@
 /**
  * The Upkeep server: the HTTP API workers and the CLI talk to, the scheduler
- * that queues jobs on their cron, and the sweep that fails runs whose worker
- * went quiet.
+ * that queues jobs on their cron, the sweep that fails runs whose worker went
+ * quiet, and the one that unparks jobs once their triage issue is resolved.
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
@@ -19,6 +19,7 @@ import { HttpMiddleware, HttpRouter } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
+import { Triage } from "./Triage";
 
 /** How long a running run can go without a heartbeat before it's lost. */
 export const lostAfter = Duration.minutes(10);
@@ -146,10 +147,20 @@ const heal = Effect.fn("heal")(function* (
       ? [{ kind: "upkeep" }]
       : consumers.map((repo) => ({ kind: "consumer", repo }));
 
+  const triage = yield* Triage;
+
+  const issues = yield* Effect.forEach(targets, (target) =>
+    triage.report(run, target),
+  );
+
   if (used + targets.length > limit) {
     const reason = `${run.job} failed again after ${used} heals today, past the limit of ${limit}`;
 
-    yield* store.park(run.job, reason);
+    yield* store.park(
+      run.job,
+      reason,
+      Option.getOrNull(Option.firstSomeOf(issues)),
+    );
     yield* Effect.logWarning(`Parked ${run.job}`).pipe(
       Effect.annotateLogs({ run: run.id, reason }),
     );
@@ -157,15 +168,47 @@ const heal = Effect.fn("heal")(function* (
     return;
   }
 
-  for (const target of targets) {
+  for (const [index, target] of targets.entries()) {
     yield* queue({
       job: Catalogue.heal.id,
       trigger: "heal",
       release: run.release,
-      heal: { of: run.id, job: run.job, target },
+      heal: {
+        of: run.id,
+        job: run.job,
+        target,
+        issue: Option.getOrNull(issues[index] ?? Option.none()),
+      },
     });
   }
 });
+
+/**
+ * Unpark each job whose triage issue has been resolved, once a minute, so
+ * resolving the failure in triage lets the job run again.
+ */
+export const unparkResolved = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const triage = yield* Triage;
+
+    yield* Effect.gen(function* () {
+      const parked = yield* store.parked();
+
+      for (const [job, { issue }] of parked) {
+        if (issue === null || !(yield* triage.resolved(issue))) continue;
+
+        if (yield* store.unpark(job)) {
+          yield* Effect.logInfo(`Unparked ${job}: its triage issue resolved`);
+        }
+      }
+    }).pipe(
+      Effect.catchCause(Effect.logError),
+      Effect.repeat(Schedule.spaced(Duration.minutes(1))),
+      Effect.forkScoped,
+    );
+  }),
+);
 
 /** A heal run's record and the run it's healing. Other runs aren't found. */
 const healedRun = Effect.fnUntraced(function* (id: string) {
@@ -274,6 +317,7 @@ const WorkHandlers = HttpApiBuilder.group(
   "work",
   Effect.fn(function* (handlers) {
     const store = yield* Store;
+    const triage = yield* Triage;
 
     return handlers.handleAll({
       claim: Effect.fn(function* ({ payload }) {
@@ -323,6 +367,7 @@ const WorkHandlers = HttpApiBuilder.group(
 
         yield* heal(ended, payload.consumers ?? []).pipe(
           Effect.provideService(Store, store),
+          Effect.provideService(Triage, triage),
           Effect.catchCause(Effect.logError),
         );
       }),
@@ -332,6 +377,27 @@ const WorkHandlers = HttpApiBuilder.group(
         yield* store
           .updateHeal(params.id, worker.name, payload)
           .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        // A pushed fix settles the failure in triage, with a note on how.
+        if (payload.commit === undefined) return;
+
+        const updated = yield* store
+          .run(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        const record = updated.heal;
+
+        if (record === null || record.issue === null) return;
+
+        yield* triage.resolve(
+          record.issue,
+          [
+            `Fixed by Upkeep's heal run ${updated.id} in ${payload.commit}.`,
+            "",
+            `What broke: ${record.reason ?? record.job}`,
+            ...record.actions.map((action) => `- ${action}`),
+          ].join("\n"),
+        );
       }),
       healing: Effect.fn(function* ({ params }) {
         const worker = yield* Api.CurrentWorker;
@@ -345,12 +411,15 @@ const WorkHandlers = HttpApiBuilder.group(
             heal,
             run,
             log: yield* store.logTail(run.id, Api.healLogLines),
+            precedents:
+              heal.issue === null ? [] : yield* triage.precedents(heal.issue),
           };
         }).pipe(
           Effect.provideService(Store, store),
           Effect.catchTag("StoreError", Effect.die),
         );
       }),
+      heals: ({ query }) => store.heals(query.since).pipe(Effect.orDie),
       retry: Effect.fn(function* ({ params }) {
         const worker = yield* Api.CurrentWorker;
 
@@ -378,7 +447,9 @@ const WorkHandlers = HttpApiBuilder.group(
 
         const worker = yield* Api.CurrentWorker;
 
-        yield* store.park(params.job, payload.reason).pipe(Effect.orDie);
+        yield* store
+          .park(params.job, payload.reason, payload.issue ?? null)
+          .pipe(Effect.orDie);
 
         yield* Effect.logWarning(`Parked ${params.job}`).pipe(
           Effect.annotateLogs({ worker: worker.name, reason: payload.reason }),
@@ -476,6 +547,7 @@ export const scheduler = Layer.effectDiscard(
 export const lostRuns = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* Store;
+    const triage = yield* Triage;
 
     yield* Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -490,6 +562,7 @@ export const lostRuns = Layer.effectDiscard(
       }
     }).pipe(
       Effect.provideService(Store, store),
+      Effect.provideService(Triage, triage),
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.minutes(1))),
       Effect.forkScoped,
@@ -503,12 +576,16 @@ export interface ServeOptions {
 }
 
 /**
- * Serve the API over plain HTTP, with the scheduler and lost-run sweep. For
- * HTTPS, put it behind a reverse proxy, which handles TLS.
+ * Serve the API over plain HTTP, with the scheduler and the lost-run and
+ * unpark sweeps. For HTTPS, put it behind a reverse proxy, which handles TLS.
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
     HttpRouter.serve(routes).pipe(Layer.provide(BunHttpServer.layer(options))),
     scheduler,
     lostRuns,
-  ).pipe(Layer.provide(Tokens.layer), Layer.provideMerge(Store.layer));
+    unparkResolved,
+  ).pipe(
+    Layer.provide([Tokens.layer, Triage.layer]),
+    Layer.provideMerge(Store.layer),
+  );
