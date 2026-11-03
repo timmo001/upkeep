@@ -40,6 +40,12 @@ the `UPKEEP_` prefix. Set **server_admin_token** to add the first admin and
 workers with `--server`. The dashboard shows in Home Assistant's sidebar
 through ingress, with no token needed.
 
+[![Add the Upkeep app repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Ftimmo001%2Fupkeep)
+
+Once the repository is added, open the app to install it:
+
+[![Open the Upkeep app in your Home Assistant](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=8d5fb82e_upkeep&repository_url=https%3A%2F%2Fgithub.com%2Ftimmo001%2Fupkeep)
+
 `--ingress-port` (`UPKEEP_INGRESS_PORT`) serves the API and dashboard on a
 second port for ingress, 8099 in the app. It only answers `--ingress-from`
 (`UPKEEP_INGRESS_FROM`), the Supervisor at `172.30.32.2` by default, and

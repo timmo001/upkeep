@@ -9,6 +9,11 @@ before they're pushed and failures fixed forward. A web dashboard, built on
 [groundwork](https://github.com/timmo001/groundwork), shows their state beside
 pull requests, issues, notifications and releases.
 
-It's at the planning stage, with nothing to run yet. The plan and its progress
+The server runs as a Home Assistant app:
+
+[![Add the Upkeep app repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Ftimmo001%2Fupkeep)
+[![Open the Upkeep app in your Home Assistant](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=8d5fb82e_upkeep&repository_url=https%3A%2F%2Fgithub.com%2Ftimmo001%2Fupkeep)
+
+The plan and its progress
 live in [#1](https://github.com/timmo001/upkeep/issues/1), with the working
 document attached to it. The docs are at <https://upkeep.timmo.dev>.
