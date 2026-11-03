@@ -78,32 +78,44 @@ upkeep workers list
 upkeep workers remove desktop
 ```
 
-### Keeping tokens in 1Password
+### First setup with 1Password
 
-The 1Password CLI can make the server admin token and keep each printed token,
-so none of them pass through the terminal or shell history. `op_save` takes
-the token from the last line of what `upkeep` prints:
+The 1Password CLI can make the server admin token and keep each token
+`upkeep` prints, so none of them pass through the terminal or shell history.
+Make the server admin token first and copy it:
 
 ```bash
 op item create --category=password --title="Upkeep server admin token" \
-  --generate-password=letters,digits,48
+  --generate-password=letters,digits,48 > /dev/null
+op item get "Upkeep server admin token" --fields password --reveal | wl-copy
+```
 
+Set it as `UPKEEP_SERVER_ADMIN_TOKEN`, or the app's **server_admin_token**,
+and start the server. Then add your own admin and each worker. `op_save` runs
+a command that prints a new token and saves the token, its last line, as a new
+item:
+
+```bash
 export UPKEEP_SERVER=https://upkeep.example.com
 export UPKEEP_ADMIN_TOKEN="$(op item get "Upkeep server admin token" --fields password --reveal)"
 
 op_save() {
-  tail -n 1 | jq -Rn --arg title "$1" '{
+  local title="$1" output
+  shift
+  output="$("$@")" || return
+  jq -n --arg title "$title" --arg token "${output##*$'\n'}" '{
     title: $title,
     category: "API_CREDENTIAL",
-    fields: [{ id: "credential", type: "CONCEALED", label: "credential", value: input }]
-  }' | op item create -
+    fields: [{ id: "credential", type: "CONCEALED", label: "credential", value: $token }]
+  }' | op item create - > /dev/null && echo "Saved $title"
 }
 
-upkeep admins add aidan | op_save "Upkeep admin token - aidan"
-upkeep workers add desktop | op_save "Upkeep worker token - desktop"
+op_save "Upkeep admin token - aidan" upkeep admins add aidan
+op_save "Upkeep worker token - desktop" upkeep workers add desktop
 ```
 
-Read one back with `op item get "<title>" --fields credential --reveal`.
+Read one back with `op item get "<title>" --fields credential --reveal`. Once
+your own admin is saved, the server admin token can go.
 
 ## Workers
 
