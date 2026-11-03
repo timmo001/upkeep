@@ -1,9 +1,16 @@
 /*
- * The docs site's styles: docs-kit's Blume theme with Groundwork's Base theme,
- * until upkeep picks its own, and Base's fonts.
+ * The docs site's styles: docs-kit's Blume theme with Groundwork's Glazing
+ * colours, Upkeep's starting point until its own design lands, set in Mona
+ * Sans and Geist Mono rather than Glazing's Inter.
  */
 @import "@timmo001/docs-kit/blume/theme.css";
-@import "@timmo001/docs-kit/blume/themes/base.css";
+@import "@timmo001/docs-kit/blume/themes/glazing.css";
 
 @import "@fontsource-variable/mona-sans";
 @import "@fontsource-variable/geist-mono";
+
+:root {
+  --blume-font-body: "Mona Sans Variable", "Mona Sans", system-ui, sans-serif;
+  --blume-font-display:
+    "Mona Sans Variable", "Mona Sans", system-ui, sans-serif;
+}

@@ -11,9 +11,9 @@ const written = await writeBrandImages({
   title: "Upkeep",
   tagline: ["Keeps my repositories and", "their consumers up to date."],
   site: "upkeep.timmo.dev",
-  // Groundwork's Base theme, until Upkeep picks its own
-  background: "#1b1e23",
-  accent: "#e5e8ec",
+  // Groundwork's Glazing theme, Upkeep's starting point until its own design
+  background: "#1b1d29",
+  accent: "#749bee",
   outputs: {
     socialPreview: "../.github/social-preview.png",
     logo: "public/logo.png",
