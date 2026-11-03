@@ -66,6 +66,15 @@ export const stalledUpdates: Job = {
   onRelease: false,
 };
 
+export const drift: Job = {
+  id: "drift",
+  name: "Drift",
+  description:
+    "Check each repository's tooling.yml against the latest releases of its tools: push the pin moves that need no review, and fail with what to review for the rest",
+  schedule: "0 */6 * * *",
+  onRelease: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   labels,
@@ -74,4 +83,5 @@ export const jobs: ReadonlyArray<Job> = [
   digest,
   notifications,
   stalledUpdates,
+  drift,
 ];

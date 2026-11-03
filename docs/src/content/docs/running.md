@@ -257,6 +257,7 @@ by default.
 | `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
 | `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                      |
 | `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                    |
+| `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
@@ -316,3 +317,41 @@ Clones are kept in `upkeep/stalled-updates` in the XDG cache directory. Set
 `UPKEEP_STALLED_UPDATES_DRY_RUN=true` to stop before each commit and log what
 would be pushed. A dry run logs the repositories that failed rather than
 failing, so it queues no heals.
+
+### Drift
+
+Every six hours the `drift` job finds the signed-in account's repositories
+with a `tooling.yml` at their root, which records the tools each one wraps,
+configures or forks, and the release of each last reviewed:
+
+```yaml
+tools:
+  - repo: cli/cli # whose releases are tracked
+    reviewed: v2.89.0 # the release last reviewed
+    update: mise run tooling:refresh # optional; run with the new tag
+    pins: # optional; files a pin move touches, tooling.yml by default
+      - tooling.yml
+    review: Check the snapshot under tooling/gh against src/. # optional
+  - repo: omacom/omarchy
+    reviewed: v4.5.0-rc2
+    prereleases: true # optional; follow prereleases too
+  - repo: Effect-TS/effect
+    reviewed: effect@4.0.1
+    tags: ^effect@ # optional; follow the newest matching tag
+```
+
+A tool is followed to its latest GitHub release, or with `tags` or
+`prereleases` to its newest matching version tag. When one moved and has an
+`update` command, the command runs with the new tag and the tag is recorded
+as reviewed. If only the pins changed, that's committed as
+`Update <repo> to <tag>`, pushed to the default branch, and its CI watched.
+
+If the update changed anything else, or the tool has no `update` command,
+the release needs a review, so nothing is pushed for it. The repository is
+logged with what to review, its `review` note and the release links, and the
+run fails naming it, so a heal hands the review to an agent, which records
+the tag once it's done.
+
+Clones are kept in `upkeep/drift` in the XDG cache directory. Set
+`UPKEEP_DRIFT_DRY_RUN=true` to log what would be pushed instead, without
+failing for the reviews.
