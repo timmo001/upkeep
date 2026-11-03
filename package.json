@@ -4,7 +4,8 @@
   "type": "module",
   "packageManager": "bun@1.4.4",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "docs"
   ],
   "scripts": {
     "format": "prettier --write .",
@@ -12,5 +13,10 @@
   },
   "devDependencies": {
     "prettier": "3.9.10"
-  }
+  },
+  "trustedDependencies": [
+    "rs-module-lexer",
+    "sharp",
+    "workerd"
+  ]
 }

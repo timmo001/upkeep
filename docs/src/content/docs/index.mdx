@@ -1,0 +1,31 @@
+---
+title: Overview
+description: Keeps my repositories and their consumers up to date, and shows what needs doing.
+---
+
+upkeep keeps my repositories and the projects that use them up to date, and
+shows what needs doing in one place. It's built for my own use, in the open.
+
+It's being planned. The plan and the decisions still open are tracked in
+[timmo001/upkeep#1](https://github.com/timmo001/upkeep/issues/1), and these docs
+grow as each part lands.
+
+## What's decided
+
+- A worker runs jobs, and a web dashboard shows their state beside pull
+  requests, issues, notifications and releases.
+- Jobs start on a new release of one of my repositories, on a schedule, or from
+  a run button.
+- Changes are checked before they're pushed, and a failure is fixed forward
+  rather than left waiting.
+- Every first-party repository rolls its releases out to its consumers through
+  upkeep.
+
+## Machine-readable docs
+
+| URL                                    | Use                                      |
+| -------------------------------------- | ---------------------------------------- |
+| https://upkeep.timmo.dev/llms.txt      | Compact page index                       |
+| https://upkeep.timmo.dev/llms-full.txt | Full docs bundle                         |
+| https://upkeep.timmo.dev/mcp           | Hosted MCP (search, page and navigation) |
+| `/{route}.md`                          | One page as Markdown                     |
