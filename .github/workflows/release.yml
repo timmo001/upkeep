@@ -1,6 +1,7 @@
 ---
 # Builds the Home Assistant app image for each architecture on a published
-# release, and tags one multi-arch manifest at ghcr.io/timmo001/upkeep-app.
+# release, tags one multi-arch manifest at ghcr.io/timmo001/upkeep-app, then
+# has timmo001/home-assistant-apps copy the app in.
 name: Release
 
 # yamllint disable-line rule:truthy
@@ -157,3 +158,14 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository }}-app
           VERSION: ${{ steps.meta.outputs.version }}
         run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+
+  # Asks timmo001/home-assistant-apps to copy this release's app folder, now
+  # its image is pushed.
+  home-assistant-apps:
+    name: Home Assistant apps repository
+    needs: image-manifest
+    uses: timmo001/workflows/.github/workflows/home-assistant-app-dispatch.yml@de4221cd9b24ad3d61aa1db87b6e4864cf56d5a1 # 20261027.0
+    with:
+      repository: timmo001/home-assistant-apps
+    secrets:
+      token: ${{ secrets.RELEASE_COMMIT_TOKEN }}
