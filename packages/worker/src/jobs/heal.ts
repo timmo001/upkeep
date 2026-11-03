@@ -10,6 +10,7 @@ import {
 } from "@effect/ai-cloudflare";
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { Domain } from "@upkeep/api";
+import { stripVTControlCharacters } from "node:util";
 import { Cause, Config, Effect, Layer, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import * as Inbox from "../Inbox";
@@ -60,6 +61,8 @@ interface Chosen {
   readonly decision: Domain.HealDecision;
   readonly reason: string;
   readonly agent: Option.Option<Settings.Agent>;
+  /** Whether a decision model chose it, rather than the fallback. */
+  readonly decided: boolean;
 }
 
 const label = (agent: Settings.Agent) =>
@@ -81,6 +84,27 @@ const decisionLayer = (options: Settings.DecisionModel) =>
         ),
       );
 
+/**
+ * The log lines about the heal's target: for a consumer, the ones naming its
+ * repository, so a run over many repositories reads as this one's failure.
+ * Anything else, or a consumer the log never names, gets the whole tail.
+ */
+export const relevant = (
+  heal: Domain.Heal,
+  log: ReadonlyArray<Domain.LogLine>,
+) => {
+  if (heal.target.kind === "upkeep") return log;
+
+  const { repo } = heal.target;
+
+  const about = log.filter(
+    ({ message }) =>
+      message.startsWith(`${repo}:`) || message.startsWith(`${repo}#`),
+  );
+
+  return about.length === 0 ? log : about;
+};
+
 /** What the model reads: the run, its error, the end of its log and precedents. */
 export const describe = (
   heal: Domain.Heal,
@@ -93,7 +117,7 @@ export const describe = (
     trigger: run.trigger,
     target: heal.target.kind === "upkeep" ? "upkeep" : heal.target.repo,
     error: (run.error ?? "").slice(0, maxMessage),
-    log: log
+    log: relevant(heal, log)
       .slice(-maxLines)
       .map((line) => `${line.level}: ${line.message.slice(0, maxMessage)}`),
     before: precedents.flatMap((precedent) =>
@@ -112,11 +136,13 @@ export const fallback = (run: Domain.Run): Chosen =>
         decision: "retry",
         reason: "The worker was lost, and there's no decision model",
         agent: Option.none(),
+        decided: false,
       }
     : {
         decision: "ask",
         reason: "There's no decision model to choose",
         agent: Option.none(),
+        decided: false,
       };
 
 /** Ask the model, picking an agent too when it chooses a fix. */
@@ -136,6 +162,7 @@ const decide = Effect.fnUntraced(function* (
       decision,
       reason,
       agent: Option.fromNullishOr(decision === "fix" ? agents[0] : undefined),
+      decided: true,
     } satisfies Chosen;
   }
 
@@ -159,31 +186,57 @@ const decide = Effect.fnUntraced(function* (
     agent: Option.fromNullishOr(
       agents.find((agent) => label(agent) === picked.answers.agent.label),
     ),
+    decided: true,
   } satisfies Chosen;
 });
 
-/** Ask a person about a heal through the Inbox, with what it chose and why. */
-const askPerson = (healing: Healing, chosen: Chosen, action: string) => {
-  const { heal: record, run } = healing;
+/** The longest stretch of log a message to a person quotes. */
+const maxQuote = 3000;
 
-  const target =
-    record.target.kind === "upkeep" ? "Upkeep" : record.target.repo;
+/**
+ * Ask a person about a heal through the Inbox: what failed for this target,
+ * in its own log lines rather than the run's summary of every failure, what
+ * the heal chose and why, and what lets the job go on.
+ */
+const askPerson = (healing: Healing, chosen: Chosen, action: string) => {
+  const { heal: record, run, log } = healing;
+  const consumer = record.target.kind === "consumer";
+  const target = consumer ? record.target.repo : "Upkeep";
+
+  const lines = relevant(record, log)
+    .filter(({ level }) => level !== "info" || consumer)
+    .map(({ level, message }) =>
+      stripVTControlCharacters(
+        `${level === "info" ? "" : `${level}: `}${message}`,
+      ),
+    );
+
+  const quote =
+    lines.length > 0
+      ? lines.join("\n").slice(-maxQuote)
+      : (run.error ?? "(no error)").split("\n")[0];
+
+  const next =
+    record.issue !== null
+      ? `It's issue ${record.issue} in triage: resolving it there, with a note on the fix, unparks the job and tells the next heal what worked.`
+      : chosen.decision === "park"
+        ? `Once it's fixed, \`upkeep unpark ${run.job}\` lets it run again.`
+        : consumer
+          ? `The next ${run.job} run picks ${target} up again once it's fixed there.`
+          : `The next ${run.job} run tries again.`;
 
   return Inbox.send(
-    `Upkeep: ${run.job} needs a look (${target})`,
+    `Upkeep: ${target} needs a look (${run.job})`,
     [
-      `Upkeep's ${run.job} run ${run.id} failed for ${target}:`,
+      `${run.job} failed for ${target} (run ${run.id}):`,
       "",
       "```text",
-      (run.error ?? "(no error)").slice(0, 2000),
+      quote,
       "```",
       "",
-      `The heal chose to ${chosen.decision}: ${chosen.reason}.`,
-      `${action}.`,
+      `${action}: ${chosen.reason}.`,
       "",
-      record.issue === null
-        ? `Once it's fixed, \`upkeep unpark ${run.job}\` lets it run again if it's parked.`
-        : `It's issue ${record.issue} in triage: resolving it there, with a note on the fix, unparks the job and tells the next heal what worked.`,
+      next,
     ].join("\n"),
     `upkeep-heal-${run.id}-${record.of}`,
   );
@@ -257,7 +310,10 @@ const act = Effect.fnUntraced(function* (healing: Healing, chosen: Chosen) {
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
-      yield* askPerson(healing, chosen, action);
+
+      // Without a decision model every failure lands here, so it waits for
+      // the evening digest rather than a message of its own.
+      if (chosen.decided) yield* askPerson(healing, chosen, action);
     }
   }
 });

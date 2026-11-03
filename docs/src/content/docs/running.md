@@ -214,7 +214,7 @@ Upkeep's own repository, for a heal that targets Upkeep. The worker needs
 Herdr running for a fix; without it, the fix is left for a person.
 
 Without a decision model, a lost run is retried and anything else is left
-for a person.
+for a person in the evening digest.
 
 ### Triage
 
@@ -228,9 +228,12 @@ minute. Without triage, heals work the same with no memory.
 
 ### Inbox
 
-A heal that parks a job or leaves it for a person sends a message to the
-Plannotator Inbox, in the `Upkeep heals` thread, saying what failed and how
-to let the job run again. The `digest` job sends the day's heals there as one
+A heal that parks a job, or whose decision model leaves it for a person,
+sends a message to the Plannotator Inbox, in the `Upkeep heals` thread. It
+quotes the log lines about that target, such as the one consumer's failed
+check out of a run over many, and says how the job goes on. Without a
+decision model, failures are left for the digest instead of a message each.
+The `digest` job sends the day's heals there as one
 message each evening. `inbox` in the worker's `heal` settings sets the
 Plannotator command (`plannotator` by default, or `false` to send nothing),
 and `inboxProject` the folder whose Inbox project they go to, the home folder
