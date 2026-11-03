@@ -78,6 +78,33 @@ upkeep workers list
 upkeep workers remove desktop
 ```
 
+### Keeping tokens in 1Password
+
+The 1Password CLI can make the server admin token and keep each printed token,
+so none of them pass through the terminal or shell history. `op_save` takes
+the token from the last line of what `upkeep` prints:
+
+```bash
+op item create --category=password --title="Upkeep server admin token" \
+  --generate-password=letters,digits,48
+
+export UPKEEP_SERVER=https://upkeep.example.com
+export UPKEEP_ADMIN_TOKEN="$(op item get "Upkeep server admin token" --fields password --reveal)"
+
+op_save() {
+  tail -n 1 | jq -Rn --arg title "$1" '{
+    title: $title,
+    category: "API_CREDENTIAL",
+    fields: [{ id: "credential", type: "CONCEALED", label: "credential", value: input }]
+  }' | op item create -
+}
+
+upkeep admins add aidan | op_save "Upkeep admin token - aidan"
+upkeep workers add desktop | op_save "Upkeep worker token - desktop"
+```
+
+Read one back with `op item get "<title>" --fields credential --reveal`.
+
 ## Workers
 
 ```bash
