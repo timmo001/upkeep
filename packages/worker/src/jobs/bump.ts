@@ -123,7 +123,7 @@ const collect = (stream: Stream.Stream<Uint8Array, unknown>) =>
  * a non-zero exit. Clones live under the cache root, which mise is told to
  * trust, and nothing may prompt.
  */
-const run = Effect.fnUntraced(function* (
+export const run = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: { readonly cwd: string; readonly trusted: string },
@@ -305,7 +305,7 @@ const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
 );
 
 /** A clean checkout of the default branch, reusing the last one. */
-const checkout = Effect.fnUntraced(function* (
+export const checkout = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   directory: string,

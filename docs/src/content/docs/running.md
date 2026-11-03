@@ -88,8 +88,12 @@ A heal reads the failed run's error and the end of its log, and a decision
 model chooses what to do:
 
 - `retry` queues the failed job again, for the same release.
-- `fix` picks an agent from the worker's list to fix it. Agent fixes aren't
-  wired up yet, so for now it's left for a person.
+- `fix` picks an agent from the worker's list to fix it. The worker checks
+  out the target in `upkeep/heal` in the XDG cache directory, creates an
+  OpenCode session with the agent's model and variant, checking OpenCode has
+  both, and opens it in a new Herdr workspace with the failure as its prompt.
+  The agent gets `sessionMinutes` (30 by default) to finish; anything it
+  pushes to the default branch is recorded as the heal's commit.
 - `park` parks the job, with the model's reason.
 - `ask` leaves it for a person.
 
@@ -109,10 +113,15 @@ default; with more than one, the model picks by what each is `for`:
     },
     "agents": [
       { "model": "provider/model", "variant": "high", "for": "Most fixes" }
-    ]
+    ],
+    "sessionMinutes": 30
   }
 }
 ```
+
+`opencode` sets the OpenCode command (`opencode2` by default) and `repo`
+Upkeep's own repository, for a heal that targets Upkeep. The worker needs
+Herdr running for a fix; without it, the fix is left for a person.
 
 Without a decision model, a lost run is retried and anything else is left
 for a person.

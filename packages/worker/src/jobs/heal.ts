@@ -1,7 +1,7 @@
 /**
  * The heal job: read a failed or lost run and its log, and choose what to do
- * with a decision model: run it again, hand a fix to an agent, park the job,
- * or ask. Whatever it chooses goes in the heal's record. Without a decision
+ * with a decision model: run it again, hand a fix to an agent in an OpenCode
+ * session in Herdr, park the job, or ask. Whatever it chooses goes in the heal's record. Without a decision
  * model in the settings, a lost run is retried and anything else is asked.
  */
 import {
@@ -10,11 +10,12 @@ import {
 } from "@effect/ai-cloudflare";
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { Domain } from "@upkeep/api";
-import { Config, Effect, Layer, Option, Schema } from "effect";
+import { Cause, Config, Effect, Layer, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
+import { fix } from "./fix";
 
 /** The longest log line or error the model reads. */
 const maxMessage = 300;
@@ -152,8 +153,16 @@ const decide = Effect.fnUntraced(function* (
 });
 
 /** Carry out a choice, adding what it did to the heal's record. */
-const act = Effect.fnUntraced(function* (run: Domain.Run, chosen: Chosen) {
+const act = Effect.fnUntraced(function* (
+  healing: {
+    readonly heal: Domain.Heal;
+    readonly run: Domain.Run;
+    readonly log: ReadonlyArray<Domain.LogLine>;
+  },
+  chosen: Chosen,
+) {
   const reporter = yield* Reporter;
+  const { run } = healing;
 
   switch (chosen.decision) {
     case "retry": {
@@ -181,12 +190,38 @@ const act = Effect.fnUntraced(function* (run: Domain.Run, chosen: Chosen) {
       return;
     }
 
-    case "fix":
+    case "fix": {
+      if (Option.isNone(chosen.agent)) {
+        const action = "Left for a person: there's no agent to fix it";
+
+        yield* RunLog.warn(action);
+        yield* reporter.heal({ action });
+
+        return;
+      }
+
+      const action = yield* fix(
+        healing.heal,
+        run,
+        healing.log,
+        chosen.agent.value,
+        (update) => reporter.heal(update),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.succeed(
+            `Left for a person: the agent couldn't start, ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+          ),
+        ),
+      );
+
+      yield* RunLog.info(action);
+      yield* reporter.heal({ action });
+
+      return;
+    }
+
     case "ask": {
-      const action =
-        chosen.decision === "fix"
-          ? "Left for a person: agent fixes aren't wired up yet"
-          : "Left for a person to look at";
+      const action = "Left for a person to look at";
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
@@ -226,5 +261,5 @@ export const heal = Effect.fnUntraced(function* () {
     }),
   });
 
-  yield* act(run, chosen);
+  yield* act({ heal: record, run, log }, chosen);
 });

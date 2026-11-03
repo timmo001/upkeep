@@ -53,6 +53,14 @@ export const Settings = Schema.Struct({
       decisions: Schema.optionalKey(DecisionModel),
       /** The agents a fix can go to; the first is the default. */
       agents: Schema.optionalKey(Schema.Array(Agent)),
+      /** How long an agent has to fix a run, 30 minutes by default. */
+      sessionMinutes: Schema.optionalKey(
+        Schema.Number.check(Schema.isGreaterThan(0)),
+      ),
+      /** The OpenCode command an agent runs in, `opencode2` by default. */
+      opencode: Schema.optionalKey(Schema.String),
+      /** Upkeep's own repository, `timmo001/upkeep` by default. */
+      repo: Schema.optionalKey(Schema.String),
     }),
   ),
 });
