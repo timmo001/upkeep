@@ -17,6 +17,7 @@
     "@effect/sql-sqlite-bun": "4.1.2",
     "@timmo001/effect-triage": "0.20.1",
     "@upkeep/api": "workspace:*",
+    "@upkeep/dashboard": "workspace:*",
     "effect": "4.1.2"
   },
   "devDependencies": {

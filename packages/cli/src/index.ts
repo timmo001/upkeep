@@ -97,11 +97,25 @@ const serve = Command.make(
       Flag.withFallbackConfig(Config.Int("UPKEEP_PORT")),
       Flag.withDefault(7272),
     ),
+    ingressPort: Flag.Int("ingress-port").pipe(
+      Flag.withDescription(
+        "A second port for Home Assistant ingress, which only answers --ingress-from and needs no admin token",
+      ),
+      Flag.withFallbackConfig(Config.Int("UPKEEP_INGRESS_PORT")),
+      Flag.optional,
+    ),
+    ingressFrom: Flag.String("ingress-from").pipe(
+      Flag.withDescription(
+        "The only address the ingress port answers, Home Assistant's Supervisor",
+      ),
+      Flag.withFallbackConfig(Config.String("UPKEEP_INGRESS_FROM")),
+      Flag.withDefault("172.30.32.2"),
+    ),
   },
   (options) => Layer.launch(Server.layer(options)),
 ).pipe(
   Command.withDescription(
-    "Run the server: the API, the job schedule and the store in $UPKEEP_SERVER_DB",
+    "Run the server: the API, the dashboard, the job schedule and the store in $UPKEEP_SERVER_DB",
   ),
 );
 

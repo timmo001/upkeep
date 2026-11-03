@@ -1,0 +1,94 @@
+/**
+ * `upkeep-runs`: the latest runs, of every job or the one in `job`, kept up
+ * to date while it's on screen.
+ */
+import { mdiHistory } from "@mdi/js";
+import type { Domain } from "@upkeep/api";
+import { html, LitElement } from "lit";
+import { always, AtomController } from "./AtomController.ts";
+import { duration, empty, shared, stateBadge, time, view } from "./ui.ts";
+import { jobHref, runHref, runs } from "./upkeep.ts";
+
+const release = (run: Domain.Run) =>
+  run.release === null
+    ? ""
+    : html`<a href=${run.release.url}
+        >${run.release.repo}@${run.release.tag}</a
+      >`;
+
+export class UpkeepRuns extends LitElement {
+  static override properties = { job: {} };
+
+  static override styles = shared;
+
+  /** The job to show the runs of, or every job's when empty. */
+  declare job: string;
+
+  constructor() {
+    super();
+    this.job = "";
+  }
+
+  readonly #runs = new AtomController(this, () => runs(this.job), always);
+
+  override render() {
+    return view(this.#runs.value, (list) =>
+      list.length === 0
+        ? empty(mdiHistory, "No runs yet.")
+        : html`<div class="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>State</th>
+                  ${this.job === "" ? html`<th>Job</th>` : null}
+                  <th>Trigger</th>
+                  <th>Release</th>
+                  <th>Worker</th>
+                  <th>Queued</th>
+                  <th>Took</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list.map(
+                  (run) =>
+                    html`<tr>
+                      <td>
+                        <a href=${runHref(run.id)}>${stateBadge(run.state)}</a>
+                      </td>
+                      ${
+                        this.job === ""
+                          ? html`<td>
+                              <a href=${jobHref(run.job)}>${run.job}</a>
+                            </td>`
+                          : null
+                      }
+                      <td>
+                        ${run.trigger}${
+                          run.heal === null
+                            ? ""
+                            : html` of
+                                <a href=${runHref(run.heal.of)}
+                                  >${run.heal.job}</a
+                                >`
+                        }
+                      </td>
+                      <td>${release(run)}</td>
+                      <td>${run.worker ?? ""}</td>
+                      <td>${time(run.queuedAt)}</td>
+                      <td>${duration(run)}</td>
+                    </tr>`,
+                )}
+              </tbody>
+            </table>
+          </div>`,
+    );
+  }
+}
+
+customElements.define("upkeep-runs", UpkeepRuns);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "upkeep-runs": UpkeepRuns;
+  }
+}

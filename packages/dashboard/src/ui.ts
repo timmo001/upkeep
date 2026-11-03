@@ -1,0 +1,220 @@
+/**
+ * Pieces every dashboard element shares: icons, times, run state badges, and
+ * how a request's result shows while it loads or when it fails.
+ */
+import {
+  mdiCancel,
+  mdiCheckCircleOutline,
+  mdiCloseCircleOutline,
+  mdiLogout,
+  mdiPlayCircleOutline,
+  mdiProgressClock,
+} from "@mdi/js";
+import type { Api, Domain } from "@upkeep/api";
+import { type Cause, Option, Predicate } from "effect";
+import { AsyncResult } from "effect/reactivity";
+import { css, html, svg, type TemplateResult } from "lit";
+import { registry } from "./AtomController.ts";
+import { token } from "./upkeep.ts";
+import "@timmo001/groundwork-ui/gw-alert.ts";
+import "@timmo001/groundwork-ui/gw-badge.ts";
+import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-empty-state.ts";
+import "@timmo001/groundwork-ui/gw-spinner.ts";
+import "./upkeep-sign-in.ts";
+
+/** Styles every element shares. */
+export const shared = css`
+  :host {
+    display: block;
+  }
+
+  a {
+    color: var(--gw-color-link);
+  }
+
+  .muted {
+    color: var(--gw-color-text-secondary);
+  }
+
+  code,
+  pre {
+    font-family: var(--gw-font-mono);
+  }
+
+  .icon {
+    width: 1.25em;
+    height: 1.25em;
+    fill: currentColor;
+    vertical-align: middle;
+  }
+
+  .message {
+    margin-block: var(--gw-space-3);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: var(--gw-space-2) var(--gw-space-3);
+    border-bottom: 1px solid var(--gw-color-border-quiet);
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  th {
+    color: var(--gw-color-text-secondary);
+    font-weight: var(--gw-font-weight-strong);
+  }
+
+  .table {
+    overflow-x: auto;
+  }
+`;
+
+/** A Material Design icon, from one of `@mdi/js`'s paths. */
+export const icon = (path: string) =>
+  html`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+    ${svg`<path d=${path}></path>`}
+  </svg>`;
+
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+const units: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000],
+  ["second", 1000],
+];
+
+/** How long ago a time was, such as "3 hours ago". */
+export const ago = (millis: number) => {
+  const elapsed = millis - Date.now();
+  const unit = units.find(([, size]) => Math.abs(elapsed) >= size);
+
+  return unit === undefined
+    ? relative.format(0, "second")
+    : relative.format(Math.round(elapsed / unit[1]), unit[0]);
+};
+
+const dateTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+
+export const formatTime = (millis: number) => dateTime.format(millis);
+
+/** A time as "3 hours ago", with the exact time in its tooltip. */
+export const time = (millis: number) =>
+  html`<time
+    datetime=${new Date(millis).toISOString()}
+    title=${formatTime(millis)}
+    >${ago(millis)}</time
+  >`;
+
+/** How long a run took, or has taken so far. */
+export const duration = (run: Domain.Run) => {
+  if (run.startedAt === null) return "";
+
+  const seconds = Math.round(
+    ((run.finishedAt ?? Date.now()) - run.startedAt) / 1000,
+  );
+
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+};
+
+const states: Record<
+  Domain.RunState,
+  { readonly path: string; readonly tone: string }
+> = {
+  queued: { path: mdiProgressClock, tone: "neutral" },
+  running: { path: mdiPlayCircleOutline, tone: "info" },
+  succeeded: { path: mdiCheckCircleOutline, tone: "success" },
+  failed: { path: mdiCloseCircleOutline, tone: "danger" },
+  cancelled: { path: mdiCancel, tone: "warning" },
+};
+
+export const stateBadge = (state: Domain.RunState) =>
+  html`<gw-badge
+    size="small"
+    icon=${states[state].path}
+    tone=${states[state].tone}
+    >${state}</gw-badge
+  >`;
+
+const signOut = () => registry.set(token, "");
+
+/**
+ * The errors the dashboard's requests fail with. A stream fails with
+ * `NoSuchElementError` when it ends without a value.
+ */
+type ApiError =
+  | Api.Unauthorized
+  | Api.JobNotFound
+  | Api.RunNotFound
+  | Api.RunNotClaimed
+  | Api.RunFinished
+  | Cause.NoSuchElementError;
+
+/**
+ * A request's error. A refusal asks for an admin token, unless one was
+ * already given, when it offers to sign out instead. Behind Home Assistant
+ * ingress the server never refuses, so no token is needed. With no error,
+ * the request itself failed.
+ */
+const renderError = (error: Option.Option<ApiError>) => {
+  if (Option.isNone(error)) {
+    return html`<gw-alert class="message" tone="danger" urgent
+      >Couldn't reach the Upkeep server.</gw-alert
+    >`;
+  }
+
+  if (!Predicate.isTagged(error.value, "Unauthorized")) {
+    return html`<gw-alert class="message" tone="warning"
+      >${error.value.message}</gw-alert
+    >`;
+  }
+
+  return registry.get(token) === ""
+    ? html`<upkeep-sign-in></upkeep-sign-in>`
+    : html`<gw-alert class="message" tone="danger" urgent>
+        The server refused this admin token.
+        <gw-button
+          slot="actions"
+          size="small"
+          appearance="filled"
+          variant="neutral"
+          icon=${mdiLogout}
+          @click=${signOut}
+          >Sign out</gw-button
+        >
+      </gw-alert>`;
+};
+
+/**
+ * A request's result: a spinner until it first loads, then its value, kept
+ * while it refreshes, or what went wrong.
+ */
+export const view = <A>(
+  result: AsyncResult.AsyncResult<A, ApiError>,
+  render: (value: A) => TemplateResult,
+) => {
+  if (AsyncResult.isFailure(result)) {
+    return renderError(AsyncResult.error(result));
+  }
+
+  return Option.match(AsyncResult.value(result), {
+    onNone: () => html`<gw-spinner label="Loading"></gw-spinner>`,
+    onSome: render,
+  });
+};
+
+/** What a list shows with nothing in it. */
+export const empty = (path: string, message: string) =>
+  html`<gw-empty-state icon=${path}><p>${message}</p></gw-empty-state>`;

@@ -37,7 +37,23 @@ The server also ships as a Home Assistant app, `ghcr.io/timmo001/upkeep-app`,
 for aarch64 and amd64. It keeps its database in the app's data and serves the
 API on port 7272. Its options are the settings above, lowercase and without
 the `UPKEEP_` prefix. Set **server_admin_token** to add the first admin and
-workers with `--server`.
+workers with `--server`. The dashboard shows in Home Assistant's sidebar
+through ingress, with no token needed.
+
+`--ingress-port` (`UPKEEP_INGRESS_PORT`) serves the API and dashboard on a
+second port for ingress, 8099 in the app. It only answers `--ingress-from`
+(`UPKEEP_INGRESS_FROM`), the Supervisor at `172.30.32.2` by default, and
+treats every request as an admin's, since Home Assistant has already signed
+the user in.
+
+## Dashboard
+
+The server serves the dashboard at its root, such as
+`http://127.0.0.1:7272/`. It lists the jobs with their last run and whether
+they're parked, then the latest runs, and shows each run with its heal record
+and its log, which follows the run as it goes. Jobs can be run or unparked,
+and runs cancelled, from there. It asks for an admin token the first time and
+keeps it in the browser.
 
 ## Tokens
 

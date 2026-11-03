@@ -1,11 +1,12 @@
 /**
- * The Upkeep server: the HTTP API workers and the CLI talk to, the scheduler
- * that queues jobs on their cron, the sweep that fails runs whose worker went
- * quiet, the one that unparks jobs once their triage issue is resolved, and
- * the one that prunes old runs.
+ * The Upkeep server: the HTTP API workers and the CLI talk to, the dashboard,
+ * the scheduler that queues jobs on their cron, the sweep that fails runs
+ * whose worker went quiet, the one that unparks jobs once their triage issue
+ * is resolved, and the one that prunes old runs.
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
+import { bundleDashboard } from "@upkeep/dashboard/bundle" with { type: "macro" };
 import {
   Clock,
   Config,
@@ -16,7 +17,12 @@ import {
   Redacted,
   Schedule,
 } from "effect";
-import { HttpMiddleware, HttpRouter } from "effect/http";
+import {
+  HttpMiddleware,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
@@ -509,19 +515,155 @@ const SystemHandlers = HttpApiBuilder.group(Api.Api, "system", (handlers) =>
   ),
 );
 
+/** The API's routes with `adminAuthorization`, needing a `Store` and `Tokens`. */
+const apiRoutes = (
+  adminAuthorization: Layer.Layer<Api.AdminAuthorization, never, Tokens>,
+) =>
+  HttpApiBuilder.layer(Api.Api, {
+    openapiPath: "/api/openapi.json",
+  }).pipe(
+    Layer.provide([
+      JobsHandlers,
+      RunsHandlers,
+      WorkHandlers,
+      TokensHandlers,
+      SystemHandlers,
+    ]),
+    Layer.provide([adminAuthorization, WorkerAuthorizationLayer]),
+  );
+
 /** The API's routes, needing a `Store` and `Tokens`. */
-export const routes = HttpApiBuilder.layer(Api.Api, {
-  openapiPath: "/api/openapi.json",
-}).pipe(
-  Layer.provide([
-    JobsHandlers,
-    RunsHandlers,
-    WorkHandlers,
-    TokensHandlers,
-    SystemHandlers,
-  ]),
-  Layer.provide([AdminAuthorizationLayer, WorkerAuthorizationLayer]),
+export const routes = apiRoutes(AdminAuthorizationLayer);
+
+/**
+ * Admin access for Home Assistant ingress, where Home Assistant has already
+ * signed the user in. Only safe behind `ingressGuard`.
+ */
+const IngressAdminAuthorizationLayer = Layer.succeed(
+  Api.AdminAuthorization,
+  Api.AdminAuthorization.of({
+    bearer: (httpEffect) =>
+      Effect.provideService(httpEffect, Api.CurrentAdmin, {
+        name: "home-assistant",
+      }),
+  }),
 );
+
+/** Answers only the Supervisor on the ingress port, refusing everyone else. */
+const ingressGuard =
+  (supervisor: string) =>
+  <E, R>(
+    httpEffect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+  ) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      Option.exists(
+        request.remoteAddress,
+        (remote) => remote === supervisor || remote === `::ffff:${supervisor}`,
+      )
+        ? httpEffect
+        : Effect.succeed(HttpServerResponse.empty({ status: 403 })),
+    );
+
+const contentTypes = new Map([
+  ["html", "text/html; charset=utf-8"],
+  ["js", "text/javascript; charset=utf-8"],
+  ["css", "text/css; charset=utf-8"],
+  ["svg", "image/svg+xml"],
+]);
+
+const { "index.html": indexHtml = "", ...assets } = bundleDashboard();
+
+/** Assets at least this big are also kept gzipped, for browsers that take it. */
+const compressFrom = 1024;
+
+const assetHeaders = {
+  "cache-control": "public, max-age=31536000, immutable",
+  vary: "accept-encoding",
+};
+
+/**
+ * The dashboard's assets, built into the binary. Their names carry a content
+ * hash, so they never change. The bigger ones are compressed once here, so
+ * the page's script isn't sent whole on every load.
+ */
+const dashboardFiles = new Map(
+  Object.entries(assets).map(([name, body]) => {
+    const contentType = contentTypes.get(name.split(".").pop() ?? "");
+
+    const plain = HttpServerResponse.text(body, {
+      contentType,
+      headers: assetHeaders,
+    });
+
+    return [
+      name,
+      {
+        plain,
+        gzipped:
+          body.length < compressFrom
+            ? plain
+            : HttpServerResponse.uint8Array(
+                Bun.gzipSync(new TextEncoder().encode(body)),
+                {
+                  contentType,
+                  headers: { ...assetHeaders, "content-encoding": "gzip" },
+                },
+              ),
+      },
+    ];
+  }),
+);
+
+const acceptsGzip = (request: HttpServerRequest.HttpServerRequest) =>
+  /(?:^|,)\s*gzip\s*(?:;|,|$)/.test(request.headers["accept-encoding"] ?? "");
+
+const notFound = HttpServerResponse.empty({ status: 404 });
+
+/** The page, with its base set to `base` so links and assets resolve under it. */
+const page = (base: string) =>
+  HttpServerResponse.text(
+    indexHtml.replace('<base href="/"', `<base href="${base}"`),
+    {
+      contentType: contentTypes.get("html"),
+      headers: { "cache-control": "no-cache" },
+    },
+  );
+
+const rootPage = page("/");
+
+/** Home Assistant's ingress prefix, such as `/api/hassio_ingress/<token>`. */
+const ingressPath = /^\/api\/hassio_ingress\/[\w-]+$/;
+
+/**
+ * The dashboard. Asset files are served as they are, and every other path
+ * outside the API gets the page, which routes in the browser. Under ingress
+ * the page's base is the path Home Assistant serves it from.
+ */
+const dashboard = (options: { readonly ingress: boolean }) =>
+  HttpRouter.add("GET", "/*", (request) => {
+    const path = new URL(request.url, "http://upkeep").pathname.slice(1);
+    const file = dashboardFiles.get(path);
+
+    if (file !== undefined) {
+      return Effect.succeed(acceptsGzip(request) ? file.gzipped : file.plain);
+    }
+
+    if (
+      path === "api" ||
+      path.startsWith("api/") ||
+      (path.includes(".") && path !== "index.html")
+    ) {
+      return Effect.succeed(notFound);
+    }
+
+    const prefix = request.headers["x-ingress-path"];
+
+    return Effect.succeed(
+      options.ingress && prefix !== undefined && ingressPath.test(prefix)
+        ? page(`${prefix}/`)
+        : rootPage,
+    );
+  });
 
 /**
  * Queue each scheduled job on its cron. A failure is logged and the schedule
@@ -606,16 +748,43 @@ export const pruneRuns = Layer.effectDiscard(
 export interface ServeOptions {
   readonly hostname: string;
   readonly port: number;
+  /**
+   * A second port for Home Assistant ingress, which only answers `ingressFrom`
+   * and treats every request as an admin's, since Home Assistant has already
+   * signed the user in.
+   */
+  readonly ingressPort: Option.Option<number>;
+  /** The address ingress requests come from: the Supervisor's. */
+  readonly ingressFrom: string;
 }
 
 /**
- * Serve the API over plain HTTP, with the scheduler and the lost-run, unpark
- * and prune sweeps. For HTTPS, put it behind a reverse proxy, which handles
- * TLS.
+ * Serve the API and the dashboard over plain HTTP, with the scheduler and the
+ * lost-run, unpark and prune sweeps. For HTTPS, put it behind a reverse proxy,
+ * which handles TLS.
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
-    HttpRouter.serve(routes).pipe(Layer.provide(BunHttpServer.layer(options))),
+    HttpRouter.serve(Layer.merge(routes, dashboard({ ingress: false }))).pipe(
+      Layer.provide(
+        BunHttpServer.layer({ hostname: options.hostname, port: options.port }),
+      ),
+    ),
+    Option.match(options.ingressPort, {
+      onNone: () => Layer.empty,
+      onSome: (port) =>
+        HttpRouter.serve(
+          Layer.merge(
+            apiRoutes(IngressAdminAuthorizationLayer),
+            dashboard({ ingress: true }),
+          ),
+          { middleware: ingressGuard(options.ingressFrom) },
+        ).pipe(
+          Layer.provide(
+            BunHttpServer.layer({ hostname: options.hostname, port }),
+          ),
+        ),
+    }),
     scheduler,
     lostRuns,
     unparkResolved,

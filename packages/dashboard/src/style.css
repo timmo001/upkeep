@@ -1,0 +1,13 @@
+/* The page's theme: groundwork's tokens, with Glazing until themes can be picked. */
+@import "@timmo001/groundwork-tokens/themes.css";
+
+:root {
+  font-family: var(--gw-font-sans);
+  font-size: var(--gw-font-size-m);
+  color: var(--gw-color-text-primary);
+  background: var(--gw-color-surface-default);
+}
+
+body {
+  margin: 0;
+}

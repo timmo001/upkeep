@@ -1,0 +1,208 @@
+/**
+ * `upkeep-run`: one run, what started it, a heal's record when it's a heal,
+ * and its log as it grows, with a button to cancel it while it's going.
+ */
+import { mdiArrowLeft, mdiCancel } from "@mdi/js";
+import type { Domain } from "@upkeep/api";
+import { AsyncResult } from "effect/reactivity";
+import { css, html, LitElement, type TemplateResult } from "lit";
+import { AtomController, registry } from "./AtomController.ts";
+import { duration, formatTime, shared, stateBadge, time, view } from "./ui.ts";
+import { cancelRun, jobHref, run, runHref, runLog } from "./upkeep.ts";
+import "@timmo001/groundwork-ui/gw-alert.ts";
+import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-page-header.ts";
+import "@timmo001/groundwork-ui/gw-section-title.ts";
+
+const going = (state: Domain.RunState) =>
+  state === "queued" || state === "running";
+
+const fact = (label: string, value: string | TemplateResult) =>
+  html`<dt>${label}</dt>
+    <dd>${value}</dd>`;
+
+const target = (heal: Domain.Heal) =>
+  heal.target.kind === "upkeep" ? "Upkeep" : heal.target.repo;
+
+const healFacts = (heal: Domain.Heal) => html`
+  ${fact("Heals", html`<a href=${runHref(heal.of)}>${heal.job}</a>`)}
+  ${fact("Target", target(heal))}
+  ${heal.decision === null ? null : fact("Decision", heal.decision)}
+  ${heal.reason === null ? null : fact("Why", heal.reason)}
+  ${
+    heal.model === null
+      ? null
+      : fact(
+          "Model",
+          heal.variant === null
+            ? heal.model
+            : `${heal.model} (${heal.variant})`,
+        )
+  }
+  ${heal.commit === null ? null : fact("Commit", html`<code>${heal.commit}</code>`)}
+  ${
+    heal.actions.length === 0
+      ? null
+      : fact(
+          "Did",
+          html`<ul>
+            ${heal.actions.map((action) => html`<li>${action}</li>`)}
+          </ul>`,
+        )
+  }
+`;
+
+export class UpkeepRun extends LitElement {
+  static override properties = { runId: { attribute: false } };
+
+  static override styles = [
+    shared,
+    css`
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--gw-space-2) var(--gw-space-4);
+        margin: var(--gw-space-4) 0;
+      }
+
+      dt {
+        color: var(--gw-color-text-secondary);
+      }
+
+      dd {
+        margin: 0;
+      }
+
+      dd ul {
+        margin: 0;
+        padding-left: 1.25em;
+      }
+
+      pre {
+        margin: 0;
+        padding: var(--gw-space-3);
+        overflow-x: auto;
+        border-radius: var(--gw-space-2);
+        background: var(--gw-color-surface-lower);
+        font-size: var(--gw-font-size-s);
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .line {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--gw-space-3);
+      }
+
+      .line time {
+        color: var(--gw-color-text-secondary);
+      }
+
+      .warn {
+        color: var(--gw-color-warning);
+      }
+
+      .error {
+        color: var(--gw-color-danger);
+      }
+    `,
+  ];
+
+  declare runId: string;
+
+  constructor() {
+    super();
+    this.runId = "";
+  }
+
+  readonly #run = new AtomController(
+    this,
+    () => run(this.runId),
+    (current) => !AsyncResult.isSuccess(current) || going(current.value.state),
+  );
+
+  readonly #log = new AtomController(this, () => runLog(this.runId));
+
+  override render() {
+    return view(
+      this.#run.value,
+      (current) => html`
+        <gw-page-header heading=${current.job}>
+          <gw-button
+            slot="start"
+            href=${jobHref(current.job)}
+            appearance="plain"
+            variant="neutral"
+            icon=${mdiArrowLeft}
+            labels="hide"
+            >Back</gw-button
+          >
+          ${
+            going(current.state)
+              ? html`<gw-button
+                  slot="actions"
+                  size="small"
+                  appearance="outlined"
+                  variant="danger"
+                  icon=${mdiCancel}
+                  @click=${() => registry.set(cancelRun, current.id)}
+                  >Cancel</gw-button
+                >`
+              : null
+          }
+        </gw-page-header>
+        <dl>
+          ${fact("State", stateBadge(current.state))}
+          ${fact("Trigger", current.trigger)}
+          ${
+            current.release === null
+              ? null
+              : fact(
+                  "Release",
+                  html`<a href=${current.release.url}
+                    >${current.release.repo}@${current.release.tag}</a
+                  >`,
+                )
+          }
+          ${fact("Queued", time(current.queuedAt))}
+          ${current.worker === null ? null : fact("Worker", current.worker)}
+          ${current.startedAt === null ? null : fact("Took", duration(current))}
+          ${current.heal === null ? null : healFacts(current.heal)}
+        </dl>
+        ${
+          current.error === null
+            ? null
+            : html`<gw-alert class="message" tone="danger"
+                >${current.error}</gw-alert
+              >`
+        }
+        <gw-section-title>Log</gw-section-title>
+        ${view(this.#log.value, (lines) =>
+          lines.length === 0
+            ? html`<p class="muted">
+                ${going(current.state) ? "Nothing logged yet." : "No log."}
+              </p>`
+            : html`<pre>
+${lines.map(
+                  (line) =>
+                    html`<div class="line ${line.level}">
+                      <time datetime=${new Date(line.at).toISOString()}
+                        >${formatTime(line.at)}</time
+                      ><span>${line.message}</span>
+                    </div>`,
+                )}</pre>`,
+        )}
+      `,
+    );
+  }
+}
+
+customElements.define("upkeep-run", UpkeepRun);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "upkeep-run": UpkeepRun;
+  }
+}

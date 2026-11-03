@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  The dashboard's page. The server rewrites the base under Home Assistant
+  ingress, so every link and asset resolves under its path.
+-->
+<html lang="en" data-gw-theme="glazing">
+  <head>
+    <meta charset="utf-8" />
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Upkeep</title>
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <upkeep-app></upkeep-app>
+  </body>
+</html>

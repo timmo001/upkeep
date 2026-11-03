@@ -20,6 +20,10 @@ The full documentation is at [upkeep.timmo.dev](https://upkeep.timmo.dev), inclu
 
 The server speaks plain HTTP on port 7272, so tokens are only as private as your network. To reach it from outside, put it behind a reverse proxy or a Cloudflare tunnel for HTTPS.
 
+## Dashboard
+
+Open **Upkeep** in the sidebar for the dashboard: the jobs with their last run, the latest runs, and each run's log as it goes. Home Assistant has already signed you in, so it needs no token there. It's also at `http://homeassistant.local:7272/`, where it asks for an admin token.
+
 ## Options
 
 These match the server's settings of the same name, without the `UPKEEP_` prefix.
