@@ -34,6 +34,6 @@ These match the server's settings of the same name, without the `UPKEEP_` prefix
 - **heals_per_day**: how many heals one job can have a day before it's parked.
 - **keep_days**: how many days finished runs and their logs are kept.
 - **keep_runs**: how many of each job's latest finished runs are kept however old.
-- **triage_host_token** and **triage_admin_token**: tokens for a triage server to remember failures in. Heals work without it. With the triage app from the same repository installed and running, Upkeep finds it on the Supervisor's network. Set **triage_url** for a triage server anywhere else.
+- **triage_host_token** and **triage_admin_token**: tokens for a triage server to remember failures in. Heals work without it. Add them with `triage hosts add upkeep` and `triage admins add upkeep`, rather than using triage's server admin token. With the triage app from the same repository installed and running, Upkeep finds it on the Supervisor's network. Set **triage_url** for a triage server anywhere else.
 
 The database is kept in the app's data, and the app stops briefly during backups so it's copied consistently.

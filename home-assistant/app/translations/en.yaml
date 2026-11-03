@@ -27,7 +27,12 @@ configuration:
       installed and running.
   triage_host_token:
     name: Triage host token
-    description: A triage host token, to send failures as events.
+    description: >-
+      A triage host token named upkeep, to send failures as events. Add one
+      with `triage hosts add upkeep`. Set both tokens to use triage.
   triage_admin_token:
     name: Triage admin token
-    description: A triage admin token, to read and resolve their issues.
+    description: >-
+      A triage admin token for Upkeep, to read past fixes before a heal and
+      resolve issues once fixed. Add one with `triage admins add upkeep`
+      rather than using triage's server admin token.
