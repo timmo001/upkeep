@@ -156,6 +156,19 @@ const RunsHandlers = HttpApiBuilder.group(
         store
           .log(params.id, query.after ?? 0, defaultLogLines)
           .pipe(Effect.catchTag("StoreError", Effect.die)),
+      cancel: Effect.fn(function* ({ params }) {
+        const admin = yield* Api.CurrentAdmin;
+
+        const cancelled = yield* store
+          .cancel(params.id, admin.name)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        yield* Effect.logInfo(
+          `${cancelled.dropped ? "Dropped" : "Cancelled"} ${cancelled.run.job}`,
+        ).pipe(Effect.annotateLogs({ run: params.id, admin: admin.name }));
+
+        return cancelled;
+      }),
     });
   }),
 );

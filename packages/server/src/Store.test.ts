@@ -91,6 +91,46 @@ test("a running run with no recent heartbeat fails as lost", () =>
     }),
   ));
 
+test("cancelling drops a queued run and stops a running one", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const queued = yield* store.queueRun({
+        job: "labels",
+        trigger: "manual",
+        release: null,
+      });
+
+      expect((yield* store.cancel(queued.id, "aidan")).dropped).toBe(true);
+      expect((yield* store.run(queued.id).pipe(Effect.flip))._tag).toBe(
+        "RunNotFound",
+      );
+
+      yield* store.queueRun({
+        job: "releases",
+        trigger: "manual",
+        release: null,
+      });
+
+      const id = Option.getOrThrow(
+        yield* store.claim(["releases"], "desktop"),
+      ).id;
+
+      const cancelled = yield* store.cancel(id, "aidan");
+
+      expect(cancelled.dropped).toBe(false);
+      expect(cancelled.run.state).toBe("cancelled");
+      expect(cancelled.run.error).toBe("Cancelled by aidan");
+      expect(
+        (yield* store.heartbeat(id, "desktop").pipe(Effect.flip))._tag,
+      ).toBe("RunNotClaimed");
+      expect((yield* store.cancel(id, "aidan").pipe(Effect.flip))._tag).toBe(
+        "RunFinished",
+      );
+    }),
+  ));
+
 test("a repository's first release is only recorded", () =>
   run(
     Effect.gen(function* () {

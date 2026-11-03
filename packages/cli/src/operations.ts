@@ -17,6 +17,7 @@ export const access = {
   runs: "read",
   log: "read",
   run: "write",
+  cancel: "write",
 } satisfies { readonly [Name in ToolName]: Access };
 
 /** An operation's access class. */

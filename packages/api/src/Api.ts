@@ -73,6 +73,25 @@ export class RunNotClaimed extends Schema.TaggedError<RunNotClaimed>()(
   }
 }
 
+/** A run that's already ended, so there's nothing to cancel. */
+export class RunFinished extends Schema.TaggedError<RunFinished>()(
+  "RunFinished",
+  { id: Schema.String, state: RunState },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `Run ${this.id} has already ${this.state}`;
+  }
+}
+
+/** A cancelled run, and whether it was dropped from the queue before it ran. */
+export const Cancelled = Schema.Struct({
+  run: Run,
+  dropped: Schema.Boolean,
+});
+
+export interface Cancelled extends Schema.Schema.Type<typeof Cancelled> {}
+
 /** What a token can do: an admin runs the server, a worker runs jobs. */
 export const TokenScope = Schema.Literals(["admin", "worker"]);
 
@@ -184,6 +203,15 @@ export class RunsGroup extends HttpApiGroup.make("runs")
       query: { after: Schema.optional(Schema.Int) },
       success: Schema.Array(LogLine),
       error: RunNotFound,
+    }),
+    /**
+     * Cancel a run. A queued run is dropped; a running one is marked
+     * cancelled, and its worker stops at its next heartbeat.
+     */
+    HttpApiEndpoint.post("cancel", "/:id/cancel", {
+      params: { id: Schema.String },
+      success: Cancelled,
+      error: [RunNotFound, RunFinished],
     }),
   )
   .middleware(AdminAuthorization)

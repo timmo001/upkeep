@@ -211,12 +211,10 @@ const runs = Command.make(
       Flag.withDescription("Only this job's runs"),
       Flag.optional,
     ),
-    state: Flag.Literals("state", [
-      "queued",
-      "running",
-      "succeeded",
-      "failed",
-    ]).pipe(Flag.withDescription("Only runs in this state"), Flag.optional),
+    state: Flag.Literals("state", Domain.RunState.literals).pipe(
+      Flag.withDescription("Only runs in this state"),
+      Flag.optional,
+    ),
     limit: Flag.Int("limit").pipe(
       Flag.withDescription(`How many, up to ${Api.maxRuns}`),
       Flag.withDefault(20),
@@ -291,6 +289,39 @@ const log = Command.make(
     (effect, input) => Effect.provide(effect, adminClient(input.server)),
   ),
 ).pipe(Command.withDescription("Print a run's log, as JSON lines with --json"));
+
+const cancel = Command.make(
+  "cancel",
+  {
+    run: Argument.String("run").pipe(Argument.withDescription("The run's ID")),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const cancelled = yield* client.runs.cancel({
+        params: { id: input.run },
+      });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(cancelled, null, 2));
+      }
+
+      yield* Console.log(
+        cancelled.dropped
+          ? `Dropped ${cancelled.run.job} from the queue`
+          : `Cancelled ${cancelled.run.job}; ${cancelled.run.worker ?? "its worker"} stops at its next heartbeat`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Cancel a run: drop it from the queue, or stop it on its worker",
+  ),
+);
 
 const tokenCommands = (options: {
   readonly scope: Api.TokenScope;
@@ -404,6 +435,7 @@ const upkeep = Command.make("upkeep").pipe(
     run,
     runs,
     log,
+    cancel,
     serve,
     worker,
     admins,

@@ -43,7 +43,7 @@ export class RunLost extends Schema.TaggedError<RunLost>()("RunLost", {
   id: Schema.String,
 }) {
   override get message() {
-    return `The server no longer has run ${this.id} running here`;
+    return `The server no longer has run ${this.id} running here: it was cancelled or lost`;
   }
 }
 
@@ -99,6 +99,9 @@ const execute = Effect.fnUntraced(function* (
       client.work.finish({ params, payload: outcome(exit) }).pipe(
         Effect.andThen(
           Effect.logInfo(`Finished ${run.job}: ${outcome(exit).outcome}`),
+        ),
+        Effect.catchTag("RunNotClaimed", () =>
+          Effect.logInfo(`The server had already ended ${run.job}`),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("Couldn't report how the run ended", cause),

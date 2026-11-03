@@ -160,6 +160,17 @@ export class Store extends Context.Service<
       outcome: Domain.Outcome,
       error: string | null,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /**
+     * Drop a queued run, or mark a running one cancelled so its worker stops
+     * at its next heartbeat. `by` is who cancelled it, for the run's error.
+     */
+    cancel(
+      id: string,
+      by: string,
+    ): Effect.Effect<
+      Api.Cancelled,
+      Api.RunNotFound | Api.RunFinished | StoreError
+    >;
     log(
       id: string,
       after: number,
@@ -394,6 +405,43 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
+    const cancel = Effect.fn("Store.cancel")(
+      function* (id: string, by: string) {
+        const found = yield* run(id);
+
+        if (found.state === "queued") {
+          yield* sql`DELETE FROM runs WHERE id = ${id}`.pipe(
+            Effect.mapError(storeError),
+          );
+
+          return { run: found, dropped: true };
+        }
+
+        if (found.state !== "running") {
+          return yield* new Api.RunFinished({ id, state: found.state });
+        }
+
+        const [cancelled] = yield* selectRuns(sql`
+          UPDATE runs
+          SET state = 'cancelled',
+            finished_at = ${yield* Clock.currentTimeMillis},
+            error = ${`Cancelled by ${by}`}
+          WHERE id = ${id}
+          RETURNING *
+        `).pipe(Effect.mapError(storeError));
+
+        if (cancelled === undefined) {
+          return yield* Effect.die(
+            new Error("The cancelled run wasn't returned"),
+          );
+        }
+
+        return { run: cancelled, dropped: false };
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
     const log = Effect.fn("Store.log")(function* (
       id: string,
       after: number,
@@ -511,6 +559,7 @@ export class Store extends Context.Service<
       heartbeat,
       appendLog,
       finish,
+      cancel,
       log,
       failLost,
       recordReleases,

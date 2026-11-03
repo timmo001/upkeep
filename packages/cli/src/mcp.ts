@@ -67,8 +67,20 @@ const Run = Tool.make("run", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const Cancel = Tool.make("cancel", {
+  description:
+    "Cancel a run on the server. A queued run is dropped; a running one is marked cancelled and its worker stops at its next heartbeat.",
+  parameters: Schema.Struct({ run: Schema.String }),
+  success: Api.Cancelled,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
-export const Tools = Toolkit.make(Status, Runs, Log, Run);
+export const Tools = Toolkit.make(Status, Runs, Log, Run, Cancel);
 
 /** Call the server as the admin in the environment, failing with a readable error. */
 const onServer = <A, E extends { readonly message: string }>(
@@ -125,6 +137,12 @@ export const toolsLayer = Tools.toLayer(
               payload:
                 input.release === undefined ? {} : { release: input.release },
             }),
+          ),
+        ),
+      cancel: (input: { readonly run: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.runs.cancel({ params: { id: input.run } }),
           ),
         ),
     };

@@ -39,12 +39,16 @@ export const Trigger = Schema.Literals(["schedule", "release", "manual"]);
 
 export type Trigger = typeof Trigger.Type;
 
-/** Where a run is: waiting for a worker, on one, or done. */
+/**
+ * Where a run is: waiting for a worker, on one, or done. A run cancelled
+ * while it was running is `cancelled`; one cancelled while queued is dropped.
+ */
 export const RunState = Schema.Literals([
   "queued",
   "running",
   "succeeded",
   "failed",
+  "cancelled",
 ]);
 
 export type RunState = typeof RunState.Type;

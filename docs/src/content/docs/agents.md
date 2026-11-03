@@ -22,8 +22,9 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `runs`    | Read   | Lists runs on the server, newest first                  |
 | `log`     | Read   | Prints a run's log                                      |
 | `run`     | Write  | Queues a run, reusing one of the same job still waiting |
+| `cancel`  | Write  | Drops a queued run, or stops a running one              |
 
-`runs`, `log` and `run` talk to the server in `UPKEEP_SERVER` as the admin in
+`runs`, `log`, `run` and `cancel` talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`. Managing tokens stays a CLI command for people, since it
 hands out secrets.
 

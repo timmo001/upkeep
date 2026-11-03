@@ -55,11 +55,15 @@ upkeep run releases
 upkeep run releases --local
 upkeep runs --job releases --state failed
 upkeep log <run> --follow
+upkeep cancel <run>
 ```
 
 `upkeep run` queues a run for a worker; a run of the same job and release
 that's still waiting is reused instead. With `--local` it runs here instead,
 printing its log and reporting nothing to the server.
+
+`upkeep cancel` drops a queued run from the queue. A running one is marked
+`cancelled`, and its worker stops it at its next heartbeat.
 
 ## Jobs
 
