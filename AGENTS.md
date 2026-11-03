@@ -42,9 +42,9 @@ Decision, and work that depends on one waits for it.
   rather than turning a check off; each package's `src/types/` holds
   declarations for dependencies that ship none.
 - Track public work in issues with sub-issues and blocked-by relationships set;
-  plans, research and decisions are attached to the issue. Ideas and feature
-  requests go to Discussions where a repo has them on. Private work can stay in
-  whatever tool fits until it lands on a public repo.
+  plans, research and decisions are attached to the issue, and so are ideas and
+  feature requests. Private work can stay in whatever tool fits until it lands
+  on a public repo.
 
 ## Background Dev Servers
 
