@@ -3,7 +3,17 @@ import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
 import { Server } from "@upkeep/server";
 import { ghLayer, handlers, Worker } from "@upkeep/worker";
-import { Config, Console, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cause,
+  Config,
+  Console,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Runtime,
+  Schema,
+} from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import packageJson from "../package.json" with { type: "json" };
@@ -12,6 +22,7 @@ import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
 import { serveMcp } from "./mcp";
 import { toolNames } from "./operations";
+import { layerOptions } from "./options";
 
 const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON for scripts and agents instead of text"),
@@ -470,12 +481,29 @@ const upkeep = Command.make("upkeep").pipe(
   ]),
 );
 
+// SIGTERM is a request to stop, as from Docker or the Home Assistant
+// Supervisor, so stopping because of it exits with 0. Ctrl-C still exits
+// with 130.
+let terminated = false;
+
+process.once("SIGTERM", () => {
+  terminated = true;
+});
+
 upkeep.pipe(
   Command.run({ version: packageJson.version }),
   Effect.provide(
-    Layer.mergeAll(Jobs.catalogue, ghLayer(), FetchHttpClient.layer).pipe(
-      Layer.provideMerge(BunServices.layer),
-    ),
+    Layer.mergeAll(
+      Jobs.catalogue,
+      ghLayer(),
+      FetchHttpClient.layer,
+      layerOptions,
+    ).pipe(Layer.provideMerge(BunServices.layer)),
   ),
-  BunRuntime.runMain,
+  BunRuntime.runMain({
+    teardown: (exit, onExit) =>
+      terminated && Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+        ? onExit(0)
+        : Runtime.defaultTeardown(exit, onExit),
+  }),
 );

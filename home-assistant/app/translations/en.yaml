@@ -1,0 +1,32 @@
+# The app's option names and descriptions in Home Assistant.
+---
+configuration:
+  server_admin_token:
+    name: Server admin token
+    description: >-
+      An admin token the server always accepts, at least 32 characters, for
+      adding workers and admins with --server. It isn't stored or listed.
+      Leave it empty once you've added an admin of your own.
+  heals_per_day:
+    name: Heals per day
+    description: >-
+      How many heals one job can have a day before it's parked.
+  keep_days:
+    name: Days to keep runs
+    description: >-
+      How many days finished runs and their logs are kept.
+  keep_runs:
+    name: Runs to keep per job
+    description: >-
+      How many of each job's latest finished runs are kept however old.
+  triage_url:
+    name: Triage URL
+    description: >-
+      Triage's address, so failures are remembered as triage issues. Leave it
+      empty to heal without triage.
+  triage_host_token:
+    name: Triage host token
+    description: A triage host token, to send failures as events.
+  triage_admin_token:
+    name: Triage admin token
+    description: A triage admin token, to read and resolve their issues.

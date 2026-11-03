@@ -1,0 +1,6 @@
+# Keeps the image build context to the sources the Dockerfile copies.
+**/node_modules
+**/dist
+.dev
+.git
+.mise

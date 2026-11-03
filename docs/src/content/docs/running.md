@@ -27,6 +27,18 @@ behind a reverse proxy for HTTPS.
 | `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                        |
 | `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                 |
 
+The settings can also come from a JSON file at `UPKEEP_OPTIONS`, with
+lowercase keys and no `UPKEEP_` prefix, such as `{ "keep_days": 14 }`. The
+environment wins over the file.
+
+### Home Assistant
+
+The server also ships as a Home Assistant app, `ghcr.io/timmo001/upkeep-app`,
+for aarch64 and amd64. It keeps its database in the app's data and serves the
+API on port 7272. Its options are the settings above, lowercase and without
+the `UPKEEP_` prefix. Set **server_admin_token** to add the first admin and
+workers with `--server`.
+
 ## Tokens
 
 Admins read runs, start jobs and manage tokens; workers take runs. Each token

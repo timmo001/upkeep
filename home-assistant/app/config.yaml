@@ -1,0 +1,30 @@
+---
+name: Upkeep
+version: 0.0.0
+slug: upkeep
+description: Keep your repositories and their consumers up to date
+url: https://github.com/timmo001/upkeep
+arch:
+  - aarch64
+  - amd64
+image: ghcr.io/timmo001/upkeep-app
+ports:
+  7272/tcp: 7272
+ports_description:
+  7272/tcp: The Upkeep server's API, for workers and admins
+watchdog: http://[HOST]:[PORT:7272]/api/health
+# Stopped during backups so the SQLite database is copied in a consistent
+# state. Workers retry until the server is back.
+backup: cold
+options:
+  heals_per_day: 3
+  keep_days: 30
+  keep_runs: 20
+schema:
+  server_admin_token: password?
+  heals_per_day: int(0,)
+  keep_days: int(1,)
+  keep_runs: int(0,)
+  triage_url: url?
+  triage_host_token: password?
+  triage_admin_token: password?
