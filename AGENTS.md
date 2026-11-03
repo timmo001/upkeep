@@ -75,3 +75,12 @@ Changes made here are pushed as they land, with no go-ahead needed. Once
    sessions' work alone, and push.
 2. Tick the change off on its issue, with a link to the commit.
 3. Report what landed and anything flagged.
+
+## Notifications
+
+This project moves fast, so clear its GitHub notifications as soon as the
+work settles them, without asking: a failed CI run once a later run on the
+same branch passes, an issue or pull request once it's closed or answered.
+List them with `dot git notifications --bar-json`, matching the repository and
+title, and clear each with `dot git notifications --mark-read <id>`. Leave the
+ones the work didn't settle.
