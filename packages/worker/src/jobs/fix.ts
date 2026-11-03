@@ -91,6 +91,11 @@ const prompt = (
           "",
         ]),
     `Find the cause and fix it in this checkout of ${repo}.`,
+    ...(run.job === "renovate"
+      ? [
+          "The run was taking over the Renovate pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit.",
+        ]
+      : []),
     ...reach,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
     `You have ${minutes} minutes. End with a short summary of what you did.`,

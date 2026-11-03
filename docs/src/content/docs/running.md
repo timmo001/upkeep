@@ -236,6 +236,7 @@ by default.
 | `heal`          | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
 | `digest`        | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
 | `notifications` | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                      |
+| `renovate`      | Hourly           | Takes over Renovate pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Renovate](#renovate).                                                                                                 |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
@@ -271,3 +272,25 @@ XDG config directory:
   }
 }
 ```
+
+### Renovate
+
+Each hour the `renovate` job finds the open Renovate pull requests in the
+signed-in account's repositories and takes over those whose checks all
+finished and some failed. Drafts, forks, archived repositories, pull requests
+into other branches, abandoned updates and Renovate's onboarding are left
+alone, as are pull
+requests whose checks pass or are still running, since Renovate merges those
+itself.
+
+Each update is squashed onto a clean clone of the default branch, its
+dependencies installed, and checked as a bump is (with the same
+per-repository checks). It's pushed as the pull request's title, and the
+pull request is closed with a comment linking the commit. The job then waits
+for the commit's CI. A repository that fails at any step is logged and the
+others carry on; the run fails at the end, naming them, and a heal for each
+one hands the update to an agent to apply and fix forward.
+
+Clones are kept in `upkeep/renovate` in the XDG cache directory. Set
+`UPKEEP_RENOVATE_DRY_RUN=true` to stop before each commit and log what would
+be pushed.

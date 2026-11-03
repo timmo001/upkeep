@@ -5,6 +5,7 @@ import { heal } from "./jobs/heal";
 import { labels } from "./jobs/labels";
 import { notifications } from "./jobs/notifications";
 import { releases } from "./jobs/releases";
+import { renovate } from "./jobs/renovate";
 import type { Handlers } from "./Worker";
 
 export const handlers: Handlers = {
@@ -14,4 +15,5 @@ export const handlers: Handlers = {
   heal: () => heal(),
   digest: () => digest(),
   notifications: () => notifications(),
+  renovate: () => renovate(),
 };

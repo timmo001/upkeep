@@ -57,6 +57,15 @@ export const notifications: Job = {
   onRelease: false,
 };
 
+export const renovate: Job = {
+  id: "renovate",
+  name: "Renovate",
+  description:
+    "Take over Renovate pull requests whose checks failed: push each update to the default branch and close the pull request",
+  schedule: "0 * * * *",
+  onRelease: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   labels,
@@ -64,4 +73,5 @@ export const jobs: ReadonlyArray<Job> = [
   heal,
   digest,
   notifications,
+  renovate,
 ];
