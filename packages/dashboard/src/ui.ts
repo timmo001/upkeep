@@ -7,6 +7,7 @@ import {
   mdiCheckCircleOutline,
   mdiCloseCircleOutline,
   mdiLogout,
+  mdiOpenInNew,
   mdiPlayCircleOutline,
   mdiProgressClock,
 } from "@mdi/js";
@@ -49,6 +50,22 @@ export const shared = css`
     vertical-align: middle;
   }
 
+  a.external .icon {
+    width: 0.9em;
+    height: 0.9em;
+    margin-inline-start: 0.2em;
+    vertical-align: baseline;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .message {
     margin-block: var(--gw-space-3);
   }
@@ -87,6 +104,21 @@ export const icon = (path: string) =>
   html`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
     ${svg`<path d=${path}></path>`}
   </svg>`;
+
+/**
+ * A link that leaves the dashboard: it opens in a new tab, with an icon
+ * saying so.
+ */
+export const externalLink = (href: string, content: string | TemplateResult) =>
+  html`<a
+    class="external"
+    href=${href}
+    target="_blank"
+    rel="noopener noreferrer"
+    >${content}${icon(mdiOpenInNew)}<span class="visually-hidden">
+      (opens in a new tab)</span
+    ></a
+  >`;
 
 const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 

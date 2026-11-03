@@ -7,7 +7,15 @@ import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
-import { duration, formatTime, shared, stateBadge, time, view } from "./ui.ts";
+import {
+  duration,
+  externalLink,
+  formatTime,
+  shared,
+  stateBadge,
+  time,
+  view,
+} from "./ui.ts";
 import {
   cancelRun,
   jobHref,
@@ -220,9 +228,10 @@ export class UpkeepRun extends LitElement {
               ? null
               : fact(
                   "Release",
-                  html`<a href=${current.release.url}
-                    >${current.release.repo}@${current.release.tag}</a
-                  >`,
+                  externalLink(
+                    current.release.url,
+                    `${current.release.repo}@${current.release.tag}`,
+                  ),
                 )
           }
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}

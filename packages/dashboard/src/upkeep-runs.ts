@@ -7,15 +7,21 @@ import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
-import { duration, empty, shared, stateBadge, time, view } from "./ui.ts";
+import {
+  duration,
+  empty,
+  externalLink,
+  shared,
+  stateBadge,
+  time,
+  view,
+} from "./ui.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
 
 const release = (run: Domain.Run) =>
   run.release === null
     ? ""
-    : html`<a href=${run.release.url}
-        >${run.release.repo}@${run.release.tag}</a
-      >`;
+    : externalLink(run.release.url, `${run.release.repo}@${run.release.tag}`);
 
 export class UpkeepRuns extends LitElement {
   static override properties = { job: {} };
