@@ -237,6 +237,10 @@ pushed, the server resolves the issue with a note on what fixed it. A job
 parked for a failure unparks once its triage issue is resolved, checked every
 minute. Without triage, heals work the same with no memory.
 
+In the Home Assistant app, only the two tokens are needed when the triage
+app from the same repository is installed and running: the server asks the
+Supervisor for its address on startup and logs the one it uses.
+
 ### Inbox
 
 A heal only messages the Plannotator Inbox, in the `Upkeep heals` thread,

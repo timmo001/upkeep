@@ -23,7 +23,8 @@ configuration:
     name: Triage URL
     description: >-
       Triage's address, so failures are remembered as triage issues. Leave it
-      empty to heal without triage.
+      empty to use the triage app from the same repository, when it's
+      installed and running.
   triage_host_token:
     name: Triage host token
     description: A triage host token, to send failures as events.

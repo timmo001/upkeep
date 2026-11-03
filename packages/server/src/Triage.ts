@@ -16,8 +16,14 @@ import {
   Option,
   Redacted,
   Schedule,
+  Schema,
 } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 import { HttpApiClient, HttpApiMiddleware } from "effect/http-api";
 
 /** How many precedents a heal reads. */
@@ -60,26 +66,89 @@ export class Triage extends Context.Service<
   /**
    * Triage at `$UPKEEP_TRIAGE_URL`, sending events with the host token in
    * `$UPKEEP_TRIAGE_HOST_TOKEN` and reading and resolving issues with the
-   * admin token in `$UPKEEP_TRIAGE_ADMIN_TOKEN`.
+   * admin token in `$UPKEEP_TRIAGE_ADMIN_TOKEN`. Without a URL, the Home
+   * Assistant app finds the triage app from the same repository through the
+   * Supervisor.
    */
   static readonly layer = Layer.unwrap(
     Effect.gen(function* () {
       const settings = yield* Config.all({
-        url: Config.String("UPKEEP_TRIAGE_URL"),
+        url: Config.option(Config.String("UPKEEP_TRIAGE_URL")),
         host: Config.Redacted("UPKEEP_TRIAGE_HOST_TOKEN"),
         admin: Config.Redacted("UPKEEP_TRIAGE_ADMIN_TOKEN"),
       }).pipe(Config.option);
 
-      return Option.match(settings, {
-        onNone: () => Triage.none,
-        onSome: (options) =>
-          Layer.effect(Triage, make(options)).pipe(
-            Layer.provide(FetchHttpClient.layer),
-          ),
-      });
+      if (Option.isNone(settings)) return Triage.none;
+
+      const url = Option.isSome(settings.value.url)
+        ? settings.value.url
+        : yield* discover;
+
+      if (Option.isNone(url)) {
+        yield* Effect.logWarning(
+          "Triage tokens are set, but no triage URL was set or found",
+        );
+
+        return Triage.none;
+      }
+
+      yield* Effect.logInfo(`Reporting failures to triage at ${url.value}`);
+
+      return Layer.effect(Triage, make({ ...settings.value, url: url.value }));
     }),
-  );
+  ).pipe(Layer.provide(FetchHttpClient.layer));
 }
+
+const AppInfo = Schema.Struct({
+  body: Schema.Struct({
+    data: Schema.Struct({
+      slug: Schema.String,
+      hostname: Schema.String,
+      state: Schema.String,
+    }),
+  }),
+});
+
+/** The port triage's API listens on inside its app. */
+const triagePort = 7171;
+
+/**
+ * The URL of the triage app installed from the same repository as this app,
+ * on the Supervisor's network, when it's running. Nothing outside the Home
+ * Assistant app, which has `$SUPERVISOR_TOKEN`.
+ */
+const discover = Effect.gen(function* () {
+  const token = yield* Config.option(Config.Redacted("SUPERVISOR_TOKEN"));
+
+  if (Option.isNone(token)) return Option.none<string>();
+
+  const http = yield* HttpClient.HttpClient;
+
+  const info = (slug: string) =>
+    http
+      .get(`http://supervisor/addons/${slug}/info`, {
+        headers: { authorization: `Bearer ${Redacted.value(token.value)}` },
+      })
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaJson(AppInfo)),
+        Effect.map((response) => response.body.data),
+      );
+
+  const self = yield* info("self");
+  const repository = self.slug.split("_")[0];
+  const triage = yield* info(`${repository}_triage`);
+
+  return triage.state === "started"
+    ? Option.some(`http://${triage.hostname}:${triagePort}`)
+    : Option.none<string>();
+}).pipe(
+  Effect.catchCause((cause) =>
+    Effect.logWarning("Couldn't find the triage app", cause).pipe(
+      Effect.as(Option.none<string>()),
+    ),
+  ),
+);
 
 const client = (url: string, token: Redacted.Redacted) => {
   const bearer: HttpApiMiddleware.HttpApiMiddlewareClient<
