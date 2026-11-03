@@ -9,4 +9,5 @@ skills-lock.json
 AGENTS.md
 .astro/
 .blume/
+.blume-verify/
 .wrangler/
