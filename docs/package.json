@@ -7,7 +7,7 @@
     "dev": "blume dev",
     "start": "blume dev",
     "build": "blume build --strict",
-    "check": "blume check --strict",
+    "check": "blume check --strict --isolated",
     "validate": "blume validate --strict",
     "deploy": "wrangler deploy --config dist/server/wrangler.json",
     "deploy:preview": "wrangler versions upload --config dist/server/wrangler.json",
