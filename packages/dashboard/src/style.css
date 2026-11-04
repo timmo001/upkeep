@@ -1,4 +1,8 @@
-/* The page's theme: groundwork's tokens, with Glazing until themes can be picked. */
+/* The page's theme and type: groundwork's tokens with Glazing, and Glazing's
+   fonts. The boot script applies the stored light or dark mode before the
+   first paint. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist-mono";
 @import "@timmo001/groundwork-tokens/themes.css";
 
 :root {

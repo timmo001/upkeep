@@ -22,5 +22,5 @@
       }
     ]
   },
-  "include": ["src", "bundle.ts", "oxlint.config.ts"]
+  "include": ["src", "scripts", "bundle.ts", "oxlint.config.ts"]
 }
