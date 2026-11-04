@@ -463,7 +463,9 @@ export const check = Effect.fnUntraced(function* (
   for (const task of ["check", "build"]) {
     if (!tasks.includes(task)) continue;
 
-    yield* run("mise", ["run", task], options);
+    // The clone was cleaned, but mise keeps what it last ran outside it, so
+    // without --force it skips installs whose output is gone
+    yield* run("mise", ["run", "--force", task], options);
     ran.push(`mise run ${task}`);
   }
 
