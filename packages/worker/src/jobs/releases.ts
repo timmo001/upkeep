@@ -1,13 +1,14 @@
 /**
  * The releases job: read the latest release of each repository I own through
- * `gh`, and report them so the server queues the jobs that run on a new one.
- * Forks, archived repositories and ones without a release are skipped.
+ * `gh`, and report the ones tracked for it so the server queues the jobs that
+ * run on a new one. Forks, archived repositories and ones without a release
+ * are skipped.
  */
 import { Graphql } from "@timmo001/effect-gh";
-import type { Domain } from "@upkeep/api";
+import { Catalogue, type Domain } from "@upkeep/api";
 import { Effect, Schema } from "effect";
 import * as RunLog from "../RunLog";
-import { Reporter } from "../Reporter";
+import { Reporter, trackedFor } from "../Reporter";
 
 const document = `
   query ($after: String) {
@@ -82,7 +83,11 @@ const latestReleases = Effect.fnUntraced(function* () {
 
 export const releases = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
-  const found = yield* latestReleases();
+  const tracked = yield* trackedFor(Catalogue.releases.id);
+
+  const found = (yield* latestReleases()).filter((release) =>
+    tracked(release.repo),
+  );
 
   yield* RunLog.info(
     `Found the latest release of ${found.length} repositories`,

@@ -7,7 +7,7 @@
  * the rest carry on; the run fails at the end, naming them.
  */
 import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
-import type { Domain } from "@upkeep/api";
+import { Catalogue, type Domain } from "@upkeep/api";
 import {
   Cause,
   Config,
@@ -23,6 +23,7 @@ import {
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as RunLog from "../RunLog";
+import { trackedFor } from "../Reporter";
 import * as Settings from "../settings";
 import { ConsumersFailed, skipped } from "../Worker";
 
@@ -673,7 +674,11 @@ export const bump = Effect.fnUntraced(function* (
     Commit,
   );
 
-  const consumers = yield* discover(release, sha);
+  const tracked = yield* trackedFor(Catalogue.bump.id);
+
+  const consumers = new Map(
+    [...(yield* discover(release, sha))].filter(([repo]) => tracked(repo)),
+  );
 
   if (consumers.size === 0) {
     yield* RunLog.info(

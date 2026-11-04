@@ -4,12 +4,15 @@
  * is squashed onto a clean checkout of the default branch, checked, pushed
  * straight to it and closed with a link to the commit, then CI is watched.
  * It reads no updater config, only the pull request's diff, so it works
- * whatever the repository's config. A repository that fails is logged and the
+ * whatever the repository's config. Only repositories tracked for it are
+ * touched. A repository that fails is logged and the
  * rest carry on; the run fails at the end, naming them, so a heal can fix
  * each one forward.
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
+import { Catalogue } from "@upkeep/api";
 import { Config, Effect, Path, Schema } from "effect";
+import { trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -301,7 +304,8 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
     Config.withDefault(false),
   );
 
-  const found = yield* open();
+  const tracked = yield* trackedFor(Catalogue.stalledUpdates.id);
+  const found = (yield* open()).filter(({ repo }) => tracked(repo));
   const byRepo = new Map<string, Array<PullRequest>>();
   let left = 0;
 

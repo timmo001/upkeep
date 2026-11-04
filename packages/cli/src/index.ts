@@ -202,6 +202,25 @@ const run = Command.make(
       return yield* Worker.runLocal(
         handler.value,
         Option.getOrNull(input.release),
+        (job) =>
+          Option.match(input.server, {
+            onNone: () =>
+              Effect.fail(
+                new UsageError({
+                  message:
+                    "Give --server or set $UPKEEP_SERVER to read the repositories tracked for it",
+                }),
+              ),
+            onSome: (url) =>
+              Effect.gen(function* () {
+                const client = yield* Client;
+                const all = yield* client.repos.list();
+
+                return all
+                  .filter((tracked) => tracked.jobs.includes(job))
+                  .map((tracked) => tracked.repo);
+              }).pipe(Effect.provide(adminClient(url))),
+          }),
       );
     }
 
@@ -476,6 +495,102 @@ const workers = tokenCommands({
   variable: "UPKEEP_WORKER_TOKEN on the worker",
 });
 
+const repoName = Argument.String("repo").pipe(
+  Argument.withDescription("The repository, as owner/name"),
+  Argument.withSchema(Domain.RepoName),
+);
+
+const repoParams = (repo: string) => {
+  const [owner = "", name = ""] = repo.split("/");
+
+  return { owner, name };
+};
+
+const reposAdd = Command.make(
+  "add",
+  {
+    repo: repoName,
+    job: Flag.String("job").pipe(
+      Flag.withDescription(
+        "A job to opt it into, repeatable; every job that works on repositories by default",
+      ),
+      Flag.atLeast(0),
+    ),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const tracked = yield* client.repos.track({
+        params: repoParams(input.repo),
+        payload: input.job.length === 0 ? {} : { jobs: input.job },
+      });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(tracked, null, 2));
+      }
+
+      yield* Console.log(
+        `Tracking ${tracked.repo} for ${tracked.jobs.join(", ")}`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Track a repository, or change the jobs it's opted into",
+  ),
+);
+
+const reposList = Command.make(
+  "list",
+  { json, server },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const all = yield* client.repos.list();
+
+      if (input.json) return yield* Console.log(JSON.stringify(all, null, 2));
+
+      if (all.length === 0) {
+        return yield* Console.log(
+          "No repositories tracked yet. Add one with upkeep repos add <owner/name>.",
+        );
+      }
+
+      for (const tracked of all) {
+        yield* Console.log(`${tracked.repo}  ${tracked.jobs.join(",")}`);
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("List the tracked repositories and their jobs"));
+
+const reposRemove = Command.make(
+  "remove",
+  { repo: repoName, server },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.repos.untrack({ params: repoParams(input.repo) });
+      yield* Console.log(`Stopped tracking ${input.repo}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription("Stop tracking a repository, so no job works on it"),
+);
+
+const repos = Command.make("repos").pipe(
+  Command.withDescription(
+    "Manage the repositories Upkeep works on and the jobs each is opted into",
+  ),
+  Command.withSubcommands([reposAdd, reposList, reposRemove]),
+);
+
 const upkeep = Command.make("upkeep").pipe(
   Command.withDescription("Keep repositories and their consumers up to date"),
   Command.withSubcommands([
@@ -485,6 +600,7 @@ const upkeep = Command.make("upkeep").pipe(
     log,
     cancel,
     unpark,
+    repos,
     serve,
     worker,
     admins,

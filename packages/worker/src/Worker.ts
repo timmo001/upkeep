@@ -239,6 +239,15 @@ export const work = Effect.fn("Worker.work")(function* (
   });
 });
 
-/** Run a job on this machine, printing its log, without the server. */
-export const runLocal = (handler: Handler, release: Domain.Release | null) =>
-  handler(release).pipe(Effect.provide([Reporter.local, RunLog.console]));
+/**
+ * Run a job on this machine, printing its log, without a worker. `repos`
+ * reads the repositories tracked for a job.
+ */
+export const runLocal = (
+  handler: Handler,
+  release: Domain.Release | null,
+  repos: (job: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
+) =>
+  handler(release).pipe(
+    Effect.provide([Reporter.local(repos), RunLog.console]),
+  );

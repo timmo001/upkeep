@@ -36,6 +36,10 @@ export class Reporter extends Context.Service<
     readonly heals: (
       since: number,
     ) => Effect.Effect<ReadonlyArray<Domain.Run>, unknown>;
+    /** The repositories the server tracks for a job, the only ones it works on. */
+    readonly repos: (
+      job: Domain.JobId,
+    ) => Effect.Effect<ReadonlyArray<string>, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /** Send findings to the server, for the run `runId`. */
@@ -70,29 +74,51 @@ export class Reporter extends Context.Service<
             }),
           heal: (update) => client.work.heal({ params, payload: update }),
           heals: (since) => client.work.heals({ query: { since } }),
+          repos: (job) => client.work.repos({ query: { job } }),
         });
       }),
     );
 
   /**
    * Queue and park nothing, for a run that only shows what it would do. A
-   * heal needs the server's run, so it can't run here.
+   * heal needs the server's run, so it can't run here. The tracked
+   * repositories come from `repos`, as an admin reads them.
    */
-  static readonly local = Layer.succeed(
-    Reporter,
-    Reporter.of({
-      releases: () => Effect.succeed([]),
-      healing: () => Effect.fail("A heal only runs on a worker"),
-      retry: () => Effect.succeed(null),
-      park: (job, reason) =>
-        RunLog.info(`Would park ${job}: ${reason}`).pipe(
-          Effect.provide(RunLog.RunLog.console),
-        ),
-      heal: () => Effect.void,
-      heals: () => Effect.succeed([]),
-    }),
-  );
+  static readonly local = (
+    repos: (job: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
+  ) =>
+    Layer.succeed(
+      Reporter,
+      Reporter.of({
+        releases: () => Effect.succeed([]),
+        healing: () => Effect.fail("A heal only runs on a worker"),
+        retry: () => Effect.succeed(null),
+        park: (job, reason) =>
+          RunLog.info(`Would park ${job}: ${reason}`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+          ),
+        heal: () => Effect.void,
+        heals: () => Effect.succeed([]),
+        repos,
+      }),
+    );
 }
+
+/**
+ * Whether a repository is tracked for a job, ignoring case as GitHub does.
+ * Logs how many are, so a run that does nothing says why.
+ */
+export const trackedFor = Effect.fnUntraced(function* (job: Domain.JobId) {
+  const reporter = yield* Reporter;
+  const repos = yield* reporter.repos(job);
+  const names = new Set(repos.map((repo) => repo.toLowerCase()));
+
+  yield* RunLog.info(
+    `${names.size} ${names.size === 1 ? "repository is" : "repositories are"} tracked for ${job}`,
+  );
+
+  return (repo: string) => names.has(repo.toLowerCase());
+});
 
 export interface Healing {
   readonly heal: Domain.Heal;

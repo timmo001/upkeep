@@ -50,8 +50,6 @@ export type Agent = typeof Agent.Type;
 export const Settings = Schema.Struct({
   deps: Schema.optionalKey(
     Schema.Struct({
-      /** Only these repositories, as `owner/name`; every one by default. */
-      repos: Schema.optionalKey(Schema.Array(Schema.String)),
       /**
        * Upkeep's own rules, applied after the updater's, so they win. Each
        * matches and sets what an updater's rules do, such as `automerge`.

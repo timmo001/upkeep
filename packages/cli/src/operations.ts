@@ -19,6 +19,9 @@ export const access = {
   run: "write",
   cancel: "write",
   unpark: "write",
+  repos: "read",
+  track: "write",
+  untrack: "write",
 } satisfies { readonly [Name in ToolName]: Access };
 
 /** An operation's access class. */

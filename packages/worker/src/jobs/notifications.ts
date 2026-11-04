@@ -1,11 +1,14 @@
 /**
  * The notifications job: dismiss unread GitHub notifications for dependency
- * updates that have merged, since GitHub can't switch them off. Each run logs
+ * updates that have merged, since GitHub can't switch them off, in the
+ * repositories tracked for it. Each run logs
  * what it dismissed and what it couldn't check, and anything else is left
  * unread for a person.
  */
 import { Api } from "@timmo001/effect-gh";
+import { Catalogue } from "@upkeep/api";
 import { Cause, Effect, Schema } from "effect";
+import { trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
 const Thread = Schema.Struct({
@@ -94,6 +97,8 @@ class NotificationsUnchecked extends Schema.TaggedError<NotificationsUnchecked>(
  * is logged and the rest carry on; the run fails at the end, counting them.
  */
 export const notifications = Effect.fnUntraced(function* () {
+  const tracked = yield* trackedFor(Catalogue.notifications.id);
+
   const pages = yield* Api.pages(
     { endpoint: "notifications", method: "GET", query: { per_page: 100 } },
     Schema.Array(Thread),
@@ -101,7 +106,12 @@ export const notifications = Effect.fnUntraced(function* () {
 
   const threads = pages
     .flat()
-    .filter((thread) => thread.unread && thread.subject.type === "PullRequest");
+    .filter(
+      (thread) =>
+        thread.unread &&
+        thread.subject.type === "PullRequest" &&
+        tracked(thread.repository.full_name),
+    );
 
   let dismissed = 0;
   let unchecked = 0;

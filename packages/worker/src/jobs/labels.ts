@@ -5,8 +5,10 @@
  * doesn't know is deleted only when nothing uses it.
  */
 import { Graphql, Label } from "@timmo001/effect-gh";
+import { Catalogue } from "@upkeep/api";
 import { Cause, Config, Data, Effect, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
 type Current = Label.Label;
@@ -219,11 +221,12 @@ class LabelsFailed extends Schema.TaggedError<LabelsFailed>()("LabelsFailed", {
 }
 
 /**
- * Sync every repository in the manifest. One that fails is logged and the
- * rest carry on; the run fails at the end, naming them.
+ * Sync every tracked repository in the manifest. One that fails is logged and
+ * the rest carry on; the run fails at the end, naming them.
  */
 export const labels = Effect.fnUntraced(function* () {
-  const entries = yield* manifest();
+  const tracked = yield* trackedFor(Catalogue.labels.id);
+  const entries = (yield* manifest()).filter((entry) => tracked(entry.repo));
   const failed: Array<string> = [];
 
   yield* RunLog.info(`Syncing the labels of ${entries.length} repositories`);

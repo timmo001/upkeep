@@ -12,8 +12,10 @@
  * heal hands to an agent.
  */
 import { Api, Search } from "@timmo001/effect-gh";
+import { Catalogue } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { Yaml } from "effect/encoding";
+import { trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed } from "../Worker";
 import { checkout, reason, run, watch } from "./bump";
@@ -462,7 +464,8 @@ export const drift = Effect.fnUntraced(function* () {
     Config.withDefault(false),
   );
 
-  const repos = yield* repositories();
+  const tracked = yield* trackedFor(Catalogue.drift.id);
+  const repos = (yield* repositories()).filter(tracked);
   const failed: Array<string> = [];
 
   const counts: Record<Outcome, number> = {

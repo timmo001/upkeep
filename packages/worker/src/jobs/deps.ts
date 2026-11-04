@@ -6,12 +6,14 @@
  * the read-only first stage of Upkeep's own dependency updater (#5).
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
+import { Catalogue } from "@upkeep/api";
 import { Effect, Option, Schema } from "effect";
 import { Datasources } from "../deps/Datasources";
 import * as Managers from "../deps/Managers";
 import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
+import { trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -206,14 +208,14 @@ const planRepository = Effect.fnUntraced(function* (
   return Option.some(groups);
 });
 
-/** Plan every repository with an updater config, two at a time. */
+/** Plan every tracked repository with an updater config, two at a time. */
 export const deps = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
   const extras = settings.deps;
-  const only = extras?.repos?.map((repo) => repo.toLowerCase());
+  const tracked = yield* trackedFor(Catalogue.deps.id);
 
-  const repos = (yield* repositories()).filter(
-    (repo) => only === undefined || only.includes(repo.full_name.toLowerCase()),
+  const repos = (yield* repositories()).filter((repo) =>
+    tracked(repo.full_name),
   );
 
   yield* RunLog.info(`Reading dependencies in ${repos.length} repositories`);

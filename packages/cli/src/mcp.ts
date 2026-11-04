@@ -91,8 +91,59 @@ const Unpark = Tool.make("unpark", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const Repos = Tool.make("repos", {
+  description:
+    "List the repositories the server tracks and the jobs each is opted into. A job that works on repositories leaves every other one alone.",
+  success: Schema.Struct({ repos: Schema.Array(Domain.TrackedRepo) }),
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const Track = Tool.make("track", {
+  description:
+    "Track a repository, or change the jobs it's opted into. Without jobs it's opted into every job that works on repositories.",
+  parameters: Schema.Struct({
+    repo: Domain.RepoName,
+    jobs: Schema.optionalKey(Schema.Array(Domain.JobId)),
+  }),
+  success: Domain.TrackedRepo,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const Untrack = Tool.make("untrack", {
+  description: "Stop tracking a repository, so no job works on it",
+  parameters: Schema.Struct({ repo: Domain.RepoName }),
+  success: Schema.Struct({ repo: Domain.RepoName }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
-export const Tools = Toolkit.make(Status, Runs, Log, Run, Cancel, Unpark);
+export const Tools = Toolkit.make(
+  Status,
+  Runs,
+  Log,
+  Run,
+  Cancel,
+  Unpark,
+  Repos,
+  Track,
+  Untrack,
+);
+
+/** A repository's path parameters from `owner/name`. */
+const repoParams = (repo: string) => {
+  const [owner = "", name = ""] = repo.split("/");
+
+  return { owner, name };
+};
 
 /** Call the server as the admin in the environment, failing with a readable error. */
 const onServer = <A, E extends { readonly message: string }>(
@@ -163,6 +214,32 @@ export const toolsLayer = Tools.toLayer(
             client.jobs
               .unpark({ params: { id: input.job } })
               .pipe(Effect.as({ job: input.job })),
+          ),
+        ),
+      repos: () =>
+        onServer(
+          Client.use((client) =>
+            client.repos.list().pipe(Effect.map((repos) => ({ repos }))),
+          ),
+        ),
+      track: (input: {
+        readonly repo: string;
+        readonly jobs?: ReadonlyArray<string> | undefined;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.repos.track({
+              params: repoParams(input.repo),
+              payload: input.jobs === undefined ? {} : { jobs: input.jobs },
+            }),
+          ),
+        ),
+      untrack: (input: { readonly repo: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.repos
+              .untrack({ params: repoParams(input.repo) })
+              .pipe(Effect.as({ repo: input.repo })),
           ),
         ),
     };
