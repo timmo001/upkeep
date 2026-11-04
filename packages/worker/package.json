@@ -16,7 +16,6 @@
     "@effect/ai-cloudflare": "4.1.2",
     "@effect/ai-typesafe": "4.1.2",
     "@timmo001/effect-gh": "0.10.0",
-    "@timmo001/effect-herdr": "0.9.0-timmo001.5",
     "@upkeep/api": "workspace:*",
     "effect": "4.1.2",
     "minimatch": "10.2.6",

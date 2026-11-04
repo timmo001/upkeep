@@ -382,7 +382,7 @@ const handOff = Effect.fnUntraced(function* (
     yield* askPerson(
       healing,
       `${why}, so ${label(agent)} worked on it. ${result.action}`,
-      `Pick up where the agent stopped: its pane in the \`Upkeep heals\` Herdr workspace, or \`opencode2 --session ${result.session}\`.`,
+      `Pick up where the agent stopped: \`opencode2 --session ${result.session}\`.`,
       result.said,
     );
 });

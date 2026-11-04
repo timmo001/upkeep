@@ -217,12 +217,13 @@ model chooses what to do:
 - `fix` picks an agent from the worker's list to fix it. The worker checks
   out the target in `upkeep/heal` in the XDG cache directory, creates an
   OpenCode session with the agent's model and variant, checking OpenCode has
-  both, and opens it in a pane of the `Upkeep heals` Herdr workspace, named
-  for the job and repository, with the failure as its prompt.
-  The agent gets `sessionMinutes` (30 by default) to finish; every commit it
-  pushes to the default branch is recorded as the heal's changes, and what it
-  said last as its summary. A fix it finished and pushed has its pane closed;
-  anything else is left open and marked as needing you.
+  both, and runs it headless with `opencode run --auto`, named for the job
+  and repository, with the failure as its prompt. Nothing opens on the
+  desktop. The agent gets `sessionMinutes` (30 by default) to finish; every
+  commit it pushes to the default branch is recorded as the heal's changes,
+  and what it said last as its summary. One that stopped, ran out of time or
+  asked for you is marked as needing you, and its Inbox message names the
+  session to pick it up from.
 - `park` parks the job, with the model's reason.
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
   works on it as for `fix`.

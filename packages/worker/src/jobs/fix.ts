@@ -1,13 +1,11 @@
 /**
  * A heal's fix: check out the target, create an OpenCode session with the
- * chosen model and variant through OpenCode's API, checking both, and open it
- * in a pane of the heals' Herdr workspace, named for the job and repository,
- * to work on the failed run. The agent has the session limit to finish;
- * whatever it pushed is recorded as the heal's commits, what it said last as
- * its summary, and a finished fix's pane is closed.
+ * chosen model and variant through OpenCode's API, checking both, and run it
+ * headless with `opencode run` on the failed run, so nothing opens on the
+ * desktop. The agent has the session limit to finish; whatever it pushed is
+ * recorded as the heal's commits and what it said last as its summary.
  */
 import { Api } from "@timmo001/effect-gh";
-import { herdrSdkLayer, HerdrSdk, type PaneId } from "@timmo001/effect-herdr";
 import type { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Option, Schema } from "effect";
 import * as RunLog from "../RunLog";
@@ -196,86 +194,6 @@ const createSession = Effect.fnUntraced(function* (
   return session.data.id;
 });
 
-/** The Herdr workspace every heal's agent opens in, a pane each. */
-const healWorkspace = "Upkeep heals";
-
-/**
- * Open the session in a pane named for the heal, in the heals' workspace,
- * and give it the prompt. The first heal creates the workspace.
- */
-const openPane = Effect.fnUntraced(function* (
-  command: string,
-  directory: string,
-  label: string,
-  text: string,
-) {
-  const herdr = yield* HerdrSdk;
-
-  const existing = (yield* herdr.workspaces.list()).find(
-    (workspace) => workspace.label === healWorkspace,
-  );
-
-  const paneId: PaneId =
-    existing === undefined
-      ? (yield* herdr.workspaces.createInDirectory(directory, {
-          label: healWorkspace,
-          focus: false,
-        })).rootPane.id
-      : yield* Effect.gen(function* () {
-          const panes = yield* herdr.panes.list({
-            workspaceId: existing.id,
-          });
-
-          const split = yield* herdr.panes.split(panes.at(-1)?.id, {
-            workspaceId: existing.id,
-            direction: panes.length % 2 === 1 ? "right" : "down",
-            cwd: directory,
-            focus: false,
-          });
-
-          return split.id;
-        });
-
-  yield* herdr.panes.rename(paneId, label);
-  yield* herdr.panes.sendInput(paneId, { text: command, keys: ["enter"] });
-
-  const agent = yield* herdr.agents
-    .wait({ paneId }, { until: ["idle", "done"], timeoutMs: 60_000 })
-    .pipe(
-      Effect.retry({ times: 30 }),
-      Effect.timeout("90 seconds"),
-      Effect.mapError(
-        () => new FixFailed({ message: "OpenCode didn't start in Herdr" }),
-      ),
-    );
-
-  if (Option.getOrUndefined(agent.agent) !== "opencode")
-    return yield* new FixFailed({
-      message: "Herdr didn't see OpenCode start in the pane",
-    });
-
-  yield* herdr.agents.prompt({ paneId }, { text });
-
-  return paneId;
-});
-
-/** Wait for the agent to finish, or to need a person. */
-const finished = Effect.fnUntraced(function* (paneId: PaneId) {
-  const herdr = yield* HerdrSdk;
-  let worked = false;
-
-  for (;;) {
-    yield* Effect.sleep("15 seconds");
-
-    const { status } = yield* herdr.agents.get({ paneId });
-
-    if (status === "working") worked = true;
-    else if (status === "blocked") return "blocked" as const;
-    else if (status === "done" || (worked && status === "idle"))
-      return "done" as const;
-  }
-});
-
 /** The tip of a remote branch. */
 const tip = (
   branch: string,
@@ -393,9 +311,9 @@ export const fix = Effect.fnUntraced(function* (
   yield* fs.makeDirectory(root, { recursive: true });
   yield* checkout(repo, branch, directory, root);
 
-  // The pane's shell asks before trusting a new checkout's mise config, and
-  // that prompt would swallow the command typed into it. Trusting it needs
-  // the cache root left out of the trusted paths, or mise has nothing to do.
+  // The agent's shell runs in OpenCode's service, which would ask before
+  // trusting a new checkout's mise config. Trusting it needs the cache root
+  // left out of the trusted paths, or mise has nothing to do.
   if (yield* usesMise(directory))
     yield* run("mise", ["trust"], { cwd: directory, trusted: "" });
 
@@ -405,25 +323,32 @@ export const fix = Effect.fnUntraced(function* (
   yield* record({ session });
   yield* RunLog.info(`Created OpenCode session ${session} in ${directory}`);
 
-  const opened = yield* Effect.gen(function* () {
-    const paneId = yield* openPane(
-      `${opencode} --session ${session}`,
-      directory,
+  // The agent runs in the background: nothing opens on the desktop, and one
+  // that needs a person is picked up from its session, which the Inbox names.
+  const outcome = yield* run(
+    opencode,
+    [
+      "run",
+      // Nobody is there to answer a permission prompt; denied ones stay denied.
+      "--auto",
+      "--session",
+      session,
+      "--title",
       `${failed.job} ${repo.split("/").at(-1) ?? repo}`,
       prompt(heal, failed, log, precedents, repo, minutes),
-    );
+    ],
+    options,
+  ).pipe(
+    Effect.as("done" as const),
+    Effect.catch((error) =>
+      RunLog.warn(
+        `The agent stopped: ${error instanceof Error ? error.message : String(error)}`,
+      ).pipe(Effect.as("blocked" as const)),
+    ),
+    Effect.timeoutOption(`${minutes} minutes`),
+    Effect.map(Option.getOrElse(() => "timeout" as const)),
+  );
 
-    yield* RunLog.info(`Opened it in Herdr pane ${paneId}`);
-
-    const ended = yield* finished(paneId).pipe(
-      Effect.timeoutOption(`${minutes} minutes`),
-      Effect.map(Option.getOrElse(() => "timeout" as const)),
-    );
-
-    return { paneId, ended };
-  }).pipe(Effect.provide(herdrSdkLayer));
-
-  const outcome = opened.ended;
   const after = yield* tip(branch, options);
 
   if (after !== "" && after !== before) {
@@ -447,13 +372,6 @@ export const fix = Effect.fnUntraced(function* (
     outcome !== "done" ||
     verdict === "needs you" ||
     (verdict === undefined && after === before);
-
-  // A finished fix's pane has nothing left to look at.
-  if (!attention)
-    yield* HerdrSdk.use((herdr) => herdr.panes.close(opened.paneId)).pipe(
-      Effect.provide(herdrSdkLayer),
-      Effect.ignore,
-    );
 
   switch (outcome) {
     case "done":
