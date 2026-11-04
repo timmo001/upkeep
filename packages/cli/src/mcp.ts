@@ -125,10 +125,20 @@ const Untrack = Tool.make("untrack", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
+const Activity = Tool.make("activity", {
+  description:
+    "What happened lately on the server: how runs ended, the commits they pushed, newest first, and the runs that need a person. `hours` defaults to 24.",
+  parameters: Schema.Struct({ hours: Schema.optionalKey(Schema.Finite) }),
+  success: Domain.Activity,
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
 export const Tools = Toolkit.make(
   Status,
   Runs,
+  Activity,
   Log,
   Run,
   Cancel,
@@ -169,6 +179,12 @@ export const toolsLayer = Tools.toLayer(
         onServer(
           Client.use((client) =>
             client.runs.list({ query }).pipe(Effect.map((runs) => ({ runs }))),
+          ),
+        ),
+      activity: (input: { readonly hours?: number | undefined }) =>
+        onServer(
+          Client.use((client) =>
+            client.activity.get({ query: { hours: input.hours } }),
           ),
         ),
       log: (input: {

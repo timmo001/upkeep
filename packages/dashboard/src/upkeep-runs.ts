@@ -5,9 +5,10 @@
 import { mdiHistory } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
-import { html, LitElement } from "lit";
+import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import {
+  attentionBadge,
   duration,
   empty,
   externalLink,
@@ -26,7 +27,14 @@ const release = (run: Domain.Run) =>
 export class UpkeepRuns extends LitElement {
   static override properties = { job: {} };
 
-  static override styles = shared;
+  static override styles = [
+    shared,
+    css`
+      td.summary {
+        min-width: 16em;
+      }
+    `,
+  ];
 
   /** The job to show the runs of, or every job's when empty. */
   declare job: string;
@@ -64,6 +72,7 @@ export class UpkeepRuns extends LitElement {
                   <th>State</th>
                   ${this.job === "" ? html`<th>Job</th>` : null}
                   <th>Trigger</th>
+                  <th>What it did</th>
                   <th>Release</th>
                   <th>Worker</th>
                   <th>Queued</th>
@@ -93,6 +102,10 @@ export class UpkeepRuns extends LitElement {
                                   >${run.heal.job}</a
                                 >`
                         }
+                      </td>
+                      <td class="summary">
+                        ${run.attention ? attentionBadge : null}
+                        ${run.summary?.split("\n")[0] ?? ""}
                       </td>
                       <td>${release(run)}</td>
                       <td>

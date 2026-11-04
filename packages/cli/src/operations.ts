@@ -15,6 +15,7 @@ export type ToolName = keyof typeof Tools.tools;
 export const access = {
   status: "read",
   runs: "read",
+  activity: "read",
   log: "read",
   run: "write",
   cancel: "write",

@@ -3,6 +3,7 @@
  * how a request's result shows while it loads or when it fails.
  */
 import {
+  mdiAlertCircleOutline,
   mdiCancel,
   mdiCheckCircleOutline,
   mdiCloseCircleOutline,
@@ -258,3 +259,19 @@ export const view = <A>(
 /** What a list shows with nothing in it. */
 export const empty = (path: string, message: string) =>
   html`<gw-empty-state icon=${path}><p>${message}</p></gw-empty-state>`;
+
+/** A pushed commit: its repository, short SHA linked to it, and subject. */
+export const commit = (change: Domain.Change) =>
+  html`<span class="commit"
+    ><span class="muted">${change.repo.split("/").at(-1)}</span>
+    ${externalLink(change.url, html`<code>${change.sha.slice(0, 7)}</code>`)}
+    ${change.subject}</span
+  >`;
+
+/** A badge for a run that left something for a person. */
+export const attentionBadge = html`<gw-badge
+  size="small"
+  icon=${mdiAlertCircleOutline}
+  tone="warning"
+  >needs you</gw-badge
+>`;

@@ -8,6 +8,8 @@ import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import {
+  attentionBadge,
+  commit,
   duration,
   externalLink,
   formatTime,
@@ -55,7 +57,19 @@ const healFacts = (heal: Domain.Heal) => html`
             : `${heal.model} (${heal.variant})`,
         )
   }
-  ${heal.commit === null ? null : fact("Commit", html`<code>${heal.commit}</code>`)}
+  ${
+    heal.commit === null
+      ? null
+      : fact(
+          "Commit",
+          heal.target.kind === "consumer"
+            ? externalLink(
+                `https://github.com/${heal.target.repo}/commit/${heal.commit}`,
+                html`<code>${heal.commit.slice(0, 7)}</code>`,
+              )
+            : html`<code>${heal.commit}</code>`,
+        )
+  }
   ${
     heal.actions.length === 0
       ? null
@@ -114,6 +128,14 @@ export class UpkeepRun extends LitElement {
 
       .line time {
         color: var(--gw-color-text-secondary);
+      }
+
+      .summary {
+        white-space: pre-wrap;
+      }
+
+      .changes {
+        padding-left: 1.25em;
       }
 
       .warn {
@@ -221,7 +243,11 @@ export class UpkeepRun extends LitElement {
           }
         </gw-page-header>
         <dl>
-          ${fact("State", stateBadge(current.state))}
+          ${fact(
+            "State",
+            html`${stateBadge(current.state)}
+            ${current.attention ? attentionBadge : null}`,
+          )}
           ${fact("Trigger", current.trigger)}
           ${
             current.release === null
@@ -239,6 +265,20 @@ export class UpkeepRun extends LitElement {
           ${current.startedAt === null ? null : fact("Took", duration(current))}
           ${current.heal === null ? null : healFacts(current.heal)}
         </dl>
+        ${
+          current.summary === null
+            ? null
+            : html`<gw-section-title>Summary</gw-section-title>
+                <p class="summary">${current.summary}</p>`
+        }
+        ${
+          current.changes.length === 0
+            ? null
+            : html`<gw-section-title>Commits</gw-section-title>
+                <ul class="changes">
+                  ${current.changes.map((change) => html`<li>${commit(change)}</li>`)}
+                </ul>`
+        }
         ${
           current.error === null
             ? null

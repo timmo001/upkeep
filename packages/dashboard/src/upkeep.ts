@@ -84,6 +84,12 @@ export const runs = Atom.family((job: string) =>
   }),
 );
 
+/** What happened in the last day, for the overview's summary. */
+export const activity = UpkeepApi.query("activity", "get", {
+  query: {},
+  reactivityKeys: runsKey,
+});
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },

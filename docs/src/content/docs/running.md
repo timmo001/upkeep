@@ -57,11 +57,17 @@ the user in.
 ## Dashboard
 
 The server serves the dashboard at its root, such as
-`http://127.0.0.1:7272/`. It lists the jobs with their last run and whether
-they're parked, then the latest runs, and shows each run with its heal record
-and its log, which follows the run as it goes. Jobs can be run or unparked,
-and runs cancelled, from there. It asks for an admin token the first time and
-keeps it in the browser.
+`http://127.0.0.1:7272/`. It opens with the last day in a line: how runs
+ended, how many commits they pushed and to how many repositories, the runs
+that left something for you, and the recent commits, each linked to GitHub
+and the run that pushed it. Below that are the jobs with their last run and
+whether they're parked, then the latest runs with what each did. Each run
+shows its summary, its commits, its heal record and its log, which follows
+the run as it goes. Jobs can be run or unparked, and runs cancelled, from
+there. It asks for an admin token the first time and keeps it in the browser.
+
+The same day is `GET /api/activity?hours=24`, and the `activity` tool in MCP
+and Code Mode.
 
 ## Tokens
 
@@ -211,9 +217,12 @@ model chooses what to do:
 - `fix` picks an agent from the worker's list to fix it. The worker checks
   out the target in `upkeep/heal` in the XDG cache directory, creates an
   OpenCode session with the agent's model and variant, checking OpenCode has
-  both, and opens it in a new Herdr workspace with the failure as its prompt.
-  The agent gets `sessionMinutes` (30 by default) to finish; anything it
-  pushes to the default branch is recorded as the heal's commit.
+  both, and opens it in a pane of the `Upkeep heals` Herdr workspace, named
+  for the job and repository, with the failure as its prompt.
+  The agent gets `sessionMinutes` (30 by default) to finish; every commit it
+  pushes to the default branch is recorded as the heal's changes, and what it
+  said last as its summary. A fix it finished and pushed has its pane closed;
+  anything else is left open and marked as needing you.
 - `park` parks the job, with the model's reason.
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
   works on it as for `fix`.
