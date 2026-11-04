@@ -30,6 +30,23 @@ export const reposOf = (entry: Domain.Entry, titles: Titles) => [
   ...new Set(entry.items.map((item) => titleOf(item.repo, titles))),
 ];
 
+/** The job that finds each kind of entry when no run of its own is kept. */
+const findingJobs: Record<Domain.EntryKind, string | null> = {
+  needs: null,
+  release: "releases",
+  commit: "watch",
+  update: "watch",
+  drift: "drift",
+  fix: "heal",
+};
+
+/**
+ * The job behind an entry, by ID: the job it holds up, its run's job, or the
+ * job that finds its kind.
+ */
+export const jobOf = (entry: Domain.Entry) =>
+  entry.job ?? entry.runJob ?? findingJobs[entry.kind];
+
 export const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 

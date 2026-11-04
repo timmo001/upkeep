@@ -320,6 +320,8 @@ export const Entry = Schema.Struct({
   job: Schema.NullOr(JobId),
   /** The latest run behind it. */
   run: Schema.NullOr(Schema.String),
+  /** The job of that run, while the run is kept. */
+  runJob: Schema.NullOr(JobId),
   /** Only routine changes, so it's folded away. */
   routine: Schema.Boolean,
   /** Pushed by the person Upkeep works for. */

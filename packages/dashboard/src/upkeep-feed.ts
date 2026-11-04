@@ -1,11 +1,12 @@
 /**
  * `upkeep-feed`: inbox entries by day, as one list windowed with TanStack
  * Virtual, so only the rows on screen are drawn however long it gets. Each
- * entry is a groundwork expansion panel saying what it did; its commits are
- * only drawn once it's opened, which also marks it read.
+ * entry is a groundwork expansion panel saying what it did; its commits, and
+ * links to the job and run behind it, are only drawn once it's opened, which
+ * also marks it read.
  */
 import { WindowVirtualizerController } from "@tanstack/lit-virtual";
-import type { Domain } from "@upkeep/api";
+import { Catalogue, type Domain } from "@upkeep/api";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -14,13 +15,14 @@ import {
   dayOf,
   describe,
   fixesOf,
+  jobOf,
   kinds,
   plural,
   titleOf,
   type Titles,
 } from "./entries.ts";
 import { externalLink, shared, time } from "./ui.ts";
-import { markRead } from "./upkeep.ts";
+import { jobHref, markRead, runHref } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/gw-dot.ts";
 import "@timmo001/groundwork-ui/gw-expansion.ts";
@@ -135,6 +137,25 @@ export class UpkeepFeed extends LitElement {
     this.requestUpdate();
   }
 
+  /** Links to the job behind an entry and, while it's kept, its run. */
+  #source(entry: Domain.Entry) {
+    const job = jobOf(entry);
+    const name = Catalogue.jobs.find((known) => known.id === job)?.name;
+
+    return html`${
+      job === null || name === undefined
+        ? nothing
+        : html`<span class="when"
+            >From <a href=${jobHref(job)}>${name}</a></span
+          >`
+    }
+    ${
+      entry.run === null
+        ? nothing
+        : html`<a href=${runHref(entry.run)}>The run</a>`
+    }`;
+  }
+
   #entry(entry: Domain.Entry) {
     const { heading, description } = describe(entry, this.titles);
     const kind = kinds[entry.kind];
@@ -175,6 +196,7 @@ export class UpkeepFeed extends LitElement {
                 }
                 <span class="when">${time(entry.lastAt)}</span>
                 ${entry.url === null ? nothing : externalLink(entry.url, "The release")}
+                ${this.#source(entry)}
               </gw-row>
               <ul class="items">
                 ${entry.items.toReversed().map(

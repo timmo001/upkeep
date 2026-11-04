@@ -1399,14 +1399,20 @@ export class Store extends Context.Service<
       );
     });
 
+    // A RETURNING clause only reads the table it changes, so the job of an
+    // entry's run is read separately, for the inbox
     const entryColumns = sql`
       id, kind, title, detail, url, job, run, routine, you, count, first_at,
-      last_at, read_at
+      last_at, read_at, NULL AS run_job
     `;
 
     const inbox = Effect.fn("Store.inbox")(function* (since: number) {
       const entries = yield* selectEntries(sql`
-        SELECT ${entryColumns} FROM entries
+        SELECT
+          id, kind, title, detail, url, job, run, routine, you, count,
+          first_at, last_at, read_at,
+          (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
+        FROM entries
         WHERE dismissed_at IS NULL AND (last_at >= ${since} OR read_at IS NULL)
         ORDER BY last_at DESC, id DESC
         LIMIT 500
