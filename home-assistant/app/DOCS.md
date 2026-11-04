@@ -17,6 +17,7 @@ The full documentation is at [upkeep.timmo.dev](https://upkeep.timmo.dev), inclu
    ```
 
 3. Give each worker the server's URL and its printed token in `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN`.
+4. Add the repositories Upkeep should work on with `upkeep repos add owner/name`. Until you do, the jobs that work on repositories do nothing.
 
 With 1Password, [`setup-1password.sh`](https://upkeep.timmo.dev/running#first-setup-with-1password) does the first two steps and keeps every token in it.
 

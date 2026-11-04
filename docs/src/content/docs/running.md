@@ -138,6 +138,27 @@ service monitor can show more than that the process is up. It's `warning`
 while anything needs a person and `degraded` while the server can't be
 reached.
 
+## Repositories
+
+Jobs that work on repositories (`releases`, `labels`, `bump`,
+`notifications`, `stalled-updates`, `drift` and `deps`) only touch the ones
+the server tracks for them. Every other repository is left alone, and with
+none tracked they do nothing.
+
+```bash
+upkeep repos add owner/name
+upkeep repos add owner/name --job bump --job labels
+upkeep repos list
+upkeep repos remove owner/name
+```
+
+`upkeep repos add` without `--job` opts a repository into every job that
+works on repositories; with it, only the jobs given. Adding a repository again
+replaces its jobs. A job added to Upkeep later stays off for repositories
+already tracked until they're opted into it. Only the releases of
+repositories tracked for `releases` count, and `bump` only rolls a release out
+to consumers tracked for `bump`.
+
 ## Runs
 
 ```bash
@@ -152,7 +173,9 @@ upkeep unpark <job>
 
 `upkeep run` queues a run for a worker; a run of the same job and release
 that's still waiting is reused instead. With `--local` it runs here instead,
-printing its log and reporting nothing to the server.
+printing its log and reporting nothing to the server. It still reads the
+repositories tracked for the job from the server, so it needs `--server` and
+an admin token.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.
@@ -257,17 +280,17 @@ by default.
 
 ## Jobs
 
-| Job               | Runs             | Does                                                                                                                                                                                                                                                                                               |
-| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `releases`        | Every 30 minutes | Reads the latest release of each repository I own, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                                                 |
-| `labels`          | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                  |
-| `bump`            | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched.                         |
-| `heal`            | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                                          |
-| `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                                            |
-| `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                              |
-| `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                            |
-| `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                        |
-| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet. `deps.repos` in the settings limits it to some repositories. |
+| Job               | Runs             | Does                                                                                                                                                                                                                                                                       |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releases`        | Every 30 minutes | Reads the latest release of each repository I own tracked for it, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                          |
+| `labels`          | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.          |
+| `bump`            | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. |
+| `heal`            | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                  |
+| `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                    |
+| `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                      |
+| `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                    |
+| `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                |
+| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                      |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
