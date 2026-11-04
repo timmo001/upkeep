@@ -1,6 +1,7 @@
 /**
  * `upkeep-runs`: the latest runs, of every job or the one in `job`, grouped
- * by day and kept up to date while it's on screen.
+ * by day and kept up to date while it's on screen. A run's whole row opens
+ * it, with its log.
  */
 import { mdiHistory } from "@mdi/js";
 import type {
@@ -9,7 +10,7 @@ import type {
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
-import { html, LitElement } from "lit";
+import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import {
   attentionBadge,
@@ -61,7 +62,16 @@ const dayLabel = (day: string) => {
 export class UpkeepRuns extends LitElement {
   static override properties = { job: {} };
 
-  static override styles = [shared];
+  static override styles = [
+    shared,
+    css`
+      /* Each run's row opens it, through the link on its state */
+      gw-table::part(row) {
+        position: relative;
+        cursor: pointer;
+      }
+    `,
+  ];
 
   /** The job to show the runs of, or every job's when empty. */
   declare job: string;
@@ -100,7 +110,12 @@ export class UpkeepRuns extends LitElement {
         header: "State",
         cell: draw(
           (run) =>
-            html`<a href=${runHref(run.id)}>${stateBadge(run.state)}</a>`,
+            html`<a
+              class="row-link"
+              href=${runHref(run.id)}
+              title="Open the run and its log"
+              >${stateBadge(run.state)}</a
+            >`,
         ),
       },
       ...(this.job === ""
