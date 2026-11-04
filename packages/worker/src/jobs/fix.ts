@@ -10,7 +10,7 @@ import type { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Option, Schema } from "effect";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
-import { checkout, run } from "./bump";
+import { checkout, run, usesMise } from "./bump";
 
 class FixFailed extends Schema.TaggedError<FixFailed>()("FixFailed", {
   message: Schema.String,
@@ -293,6 +293,12 @@ export const fix = Effect.fnUntraced(function* (
 
   yield* fs.makeDirectory(root, { recursive: true });
   yield* checkout(repo, branch, directory, root);
+
+  // The pane's shell asks before trusting a new checkout's mise config, and
+  // that prompt would swallow the command typed into it. Trusting it needs
+  // the cache root left out of the trusted paths, or mise has nothing to do.
+  if (yield* usesMise(directory))
+    yield* run("mise", ["trust"], { cwd: directory, trusted: "" });
 
   const before = yield* tip(branch, options);
   const session = yield* createSession(opencode, agent, options);
