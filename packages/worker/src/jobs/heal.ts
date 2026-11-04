@@ -277,10 +277,33 @@ const maxQuote = 3000;
  * than the run's summary of every failure, what Upkeep already tried, and the
  * step that's theirs.
  */
-const askPerson = (healing: Healing, tried: string, todo: string) => {
+const askPerson = (
+  healing: Healing,
+  tried: string,
+  todo: string,
+  said: string | null = null,
+) => {
   const { heal: record, run, log } = healing;
   const consumer = record.target.kind === "consumer";
   const target = consumer ? record.target.repo : "Upkeep";
+
+  // What the agent found says more than the raw log it started from.
+  if (said !== null)
+    return Inbox.send(
+      `Upkeep: ${target} needs you (${run.job})`,
+      [
+        ":::action",
+        todo,
+        "",
+        `${tried}.`,
+        ":::",
+        "",
+        `What the agent found (run ${run.id}):`,
+        "",
+        said.replace(/\n*Outcome:.*$/i, "").trim(),
+      ].join("\n"),
+      `upkeep-heal-${run.id}-${record.of}`,
+    );
 
   const lines = relevant(record, log)
     .filter(({ level }) => level !== "info" || consumer)
@@ -359,7 +382,8 @@ const handOff = Effect.fnUntraced(function* (
     yield* askPerson(
       healing,
       `${why}, so ${label(agent)} worked on it. ${result.action}`,
-      `Pick up where the agent stopped: its \`heal ${run.job}\` pane in Herdr, or \`opencode2 --session ${result.session}\`.`,
+      `Pick up where the agent stopped: its pane in the \`Upkeep heals\` Herdr workspace, or \`opencode2 --session ${result.session}\`.`,
+      result.said,
     );
 });
 

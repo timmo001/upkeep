@@ -106,7 +106,7 @@ const prompt = (
       : []),
     ...reach,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
-    `You have ${minutes} minutes. End with a short summary of what you did.`,
+    `You have ${minutes} minutes. End with a short summary of what you found and did, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`.`,
   ].join("\n");
 };
 
@@ -433,13 +433,20 @@ export const fix = Effect.fnUntraced(function* (
 
   const note = after !== before ? `, and pushed ${after.slice(0, 7)}` : "";
 
-  // Only a pushed fix that the agent finished is done with; anything else
-  // leaves the failure in place for a person to pick up from the session.
-  const attention = outcome !== "done" || after === before;
-
   const said = yield* lastWords(opencode, session, options).pipe(
     Effect.orElseSucceed(() => null),
   );
+
+  const verdict = /Outcome:\s*(fixed|nothing to fix|needs you)\s*$/i
+    .exec(said ?? "")?.[1]
+    ?.toLowerCase();
+
+  // A finished agent that pushed a fix, or found nothing to fix, is done
+  // with; one that stopped, ran out of time or asked for a person isn't.
+  const attention =
+    outcome !== "done" ||
+    verdict === "needs you" ||
+    (verdict === undefined && after === before);
 
   // A finished fix's pane has nothing left to look at.
   if (!attention)
