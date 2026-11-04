@@ -20,6 +20,7 @@ import {
   unparkJob,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
 import "./upkeep-runs.ts";
 
@@ -104,6 +105,10 @@ export class UpkeepOverview extends LitElement {
       .last {
         white-space: nowrap;
       }
+
+      gw-page-header {
+        margin-bottom: var(--gw-space-4);
+      }
     `,
   ];
 
@@ -111,7 +116,10 @@ export class UpkeepOverview extends LitElement {
 
   override render() {
     return html`
-      <gw-section-title>Jobs</gw-section-title>
+      <gw-page-header
+        heading="Jobs"
+        description="What Upkeep runs, when, and how each last went"
+      ></gw-page-header>
       ${view(
         this.#jobs.value,
         (list) =>

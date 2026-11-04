@@ -1,10 +1,10 @@
 /**
  * `upkeep-inbox`: the home page. A summary of what's new since the inbox was
  * last read, what needs a person with the button that settles it, then what
- * changed by day, with routine updates folded into one line.
+ * changed by day, each entry saying what it did, with routine updates folded
+ * into one panel. Built from groundwork's components.
  */
 import {
-  mdiAlertCircleOutline,
   mdiCheckAll,
   mdiCheckCircleOutline,
   mdiClose,
@@ -14,7 +14,7 @@ import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
-import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
+import { empty, externalLink, shared, time, view } from "./ui.ts";
 import {
   dismissEntry,
   inbox,
@@ -24,7 +24,15 @@ import {
   runHref,
   unparkJob,
 } from "./upkeep.ts";
+import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-card.ts";
+import "@timmo001/groundwork-ui/gw-chip.ts";
+import "@timmo001/groundwork-ui/gw-dot.ts";
+import "@timmo001/groundwork-ui/gw-expansion.ts";
+import "@timmo001/groundwork-ui/gw-page-header.ts";
+import "@timmo001/groundwork-ui/gw-section-title.ts";
+import "@timmo001/groundwork-ui/layout.ts";
 
 const short = (repo: string) => repo.split("/").at(-1) ?? repo;
 
@@ -42,13 +50,78 @@ const listed = (words: ReadonlyArray<string>) =>
     ? (words[0] ?? "")
     : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 
-const kindLabels: Record<Domain.EntryKind, string> = {
-  needs: "Needs you",
-  release: "First-party release",
-  update: "Update",
-  drift: "Drift",
-  fix: "Fixed by Upkeep",
-  commit: "Commits",
+/** Commits that say little on their own, left out of a summary. */
+const filler =
+  /^(Release |Merge |Bump version|Update (dependency |lockfile|\S+ (digest|action))|Format|Lint|wip$)/i;
+
+const fixes = (entry: Domain.Entry) =>
+  entry.items.filter((item) => item.text.startsWith("Fixed:"));
+
+/**
+ * What an entry did, as a heading and a line under it. Commits lead with
+ * their newest change worth reading and list the next few; a release says
+ * where it went; an update or drift move, which repositories it reached.
+ */
+const describe = (entry: Domain.Entry) => {
+  const repos = reposOf(entry);
+
+  switch (entry.kind) {
+    case "commit": {
+      const newest = entry.items.toReversed();
+      const worth = newest.filter((item) => !filler.test(item.text));
+      const shown = worth.length > 0 ? worth : newest;
+      const [lead, ...rest] = shown.map((item) => item.text);
+      const more = entry.items.length - 1 - Math.min(rest.length, 3);
+
+      return {
+        heading: `${repos[0] ?? "?"}: ${lead ?? entry.title}`,
+        description: [
+          ...rest.slice(0, 3),
+          ...(more > 0 ? [`${plural(more, "more commit")}`] : []),
+        ].join(" · "),
+      };
+    }
+
+    case "release": {
+      const fixed = fixes(entry);
+
+      return {
+        heading:
+          repos.length === 0
+            ? `${entry.title} released`
+            : `${entry.title} reached ${plural(repos.length, "repository", "repositories")}`,
+        description: [
+          listed(repos),
+          ...(fixed.length > 0
+            ? [`${plural(fixed.length, "fix", "fixes")} by Upkeep`]
+            : []),
+        ]
+          .filter((part) => part !== "")
+          .join(" · "),
+      };
+    }
+
+    default:
+      return {
+        heading: entry.title,
+        description:
+          repos.length > 4
+            ? plural(repos.length, "repository", "repositories")
+            : listed(repos),
+      };
+  }
+};
+
+const kinds: Record<
+  Domain.EntryKind,
+  { readonly label: string; readonly tone: string }
+> = {
+  needs: { label: "Needs you", tone: "warning" },
+  release: { label: "Release", tone: "accent" },
+  update: { label: "Update", tone: "info" },
+  drift: { label: "Drift", tone: "info" },
+  fix: { label: "Fixed by Upkeep", tone: "success" },
+  commit: { label: "Commits", tone: "neutral" },
 };
 
 /** The day an entry belongs to, as the feed's heading. */
@@ -69,27 +142,16 @@ const dayOf = (millis: number) => {
 };
 
 /**
- * A few sentences on what's new: releases and where they went, commits by
- * you and others, updates that needed a change, the routine count, and
+ * A few sentences on what's new: releases and where they went, what you
+ * changed and where, updates that needed a change, the routine count, and
  * whether anything needs you.
  */
 const summarise = (fresh: ReadonlyArray<Domain.Entry>, needs: number) => {
   const sentences: Array<string> = [];
-
   const releases = fresh.filter((entry) => entry.kind === "release");
 
   for (const release of releases.slice(0, 3)) {
-    const repos = reposOf(release);
-
-    const fixed = release.items.filter((item) =>
-      item.text.startsWith("Fixed:"),
-    );
-
-    sentences.push(
-      repos.length === 0
-        ? `${release.title} was released.`
-        : `${release.title} reached ${plural(repos.length, "repository", "repositories")}${fixed.length > 0 ? `, and ${plural(fixed.length, "fix", "fixes")} went in with it` : ""}.`,
-    );
+    sentences.push(`${describe(release).heading}.`);
   }
 
   if (releases.length > 3) {
@@ -99,11 +161,21 @@ const summarise = (fresh: ReadonlyArray<Domain.Entry>, needs: number) => {
   const yours = fresh.filter((entry) => entry.you && !entry.routine);
 
   if (yours.length > 0) {
-    const commits = yours.reduce((sum, entry) => sum + entry.items.length, 0);
-    const repos = [...new Set(yours.flatMap(reposOf))];
+    const byRepo = new Map<string, number>();
+
+    for (const entry of yours) {
+      for (const repo of reposOf(entry)) {
+        byRepo.set(repo, (byRepo.get(repo) ?? 0) + entry.items.length);
+      }
+    }
+
+    const busiest = [...byRepo]
+      .toSorted(([, a], [, b]) => b - a)
+      .slice(0, 4)
+      .map(([repo, count]) => `${repo} (${count})`);
 
     sentences.push(
-      `You pushed ${plural(commits, "commit")} to ${listed(repos.slice(0, 4))}${repos.length > 4 ? ` and ${repos.length - 4} more` : ""}.`,
+      `You pushed to ${listed(busiest)}${byRepo.size > 4 ? ` and ${byRepo.size - 4} more` : ""}.`,
     );
   }
 
@@ -128,10 +200,10 @@ const summarise = (fresh: ReadonlyArray<Domain.Entry>, needs: number) => {
     );
   }
 
-  const fixes = fresh.filter((entry) => entry.kind === "fix");
+  const fixed = fresh.filter((entry) => entry.kind === "fix");
 
-  if (fixes.length > 0) {
-    sentences.push(`Upkeep fixed ${listed(fixes.flatMap(reposOf))}.`);
+  if (fixed.length > 0) {
+    sentences.push(`Upkeep fixed ${listed(fixed.flatMap(reposOf))}.`);
   }
 
   const routine = fresh.filter((entry) => entry.routine);
@@ -155,223 +227,27 @@ export class UpkeepInbox extends LitElement {
   static override styles = [
     shared,
     css`
-      :host {
-        max-width: 56rem;
-        margin: 0 auto;
-      }
-
-      .title {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: var(--gw-space-3);
-        margin: var(--gw-space-2) 0 var(--gw-space-4);
-      }
-
-      h1 {
-        margin: 0;
-        font-size: 1.6rem;
-      }
-
-      .title gw-button {
-        margin-left: auto;
-      }
-
-      .tldr {
-        padding: var(--gw-space-4) var(--gw-space-5);
-        border: 1px solid var(--gw-color-border-quiet);
-        border-radius: var(--gw-space-3);
-        background: var(--gw-color-surface-low);
-      }
-
       .tldr p {
         margin: 0;
-        font-size: 1.1rem;
+        font-size: var(--gw-font-size-l);
         line-height: 1.6;
       }
 
-      .chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--gw-space-2);
+      .tldr gw-row {
         margin-top: var(--gw-space-3);
       }
 
-      .chip {
-        padding: 0 var(--gw-space-3);
-        border: 1px solid var(--gw-color-border-quiet);
-        border-radius: 999px;
-        color: var(--gw-color-text-secondary);
-        font-size: var(--gw-font-size-s);
+      gw-expansion + gw-expansion {
+        margin-top: var(--gw-space-2);
       }
 
-      .chip b {
-        color: var(--gw-color-text-primary);
-      }
-
-      section {
-        margin-top: var(--gw-space-6);
-      }
-
-      h2 {
-        margin: 0 0 var(--gw-space-3);
-        color: var(--gw-color-text-secondary);
-        font-size: var(--gw-font-size-s);
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .needs {
-        display: flex;
-        gap: var(--gw-space-4);
-        margin-bottom: var(--gw-space-3);
-        padding: var(--gw-space-4);
-        border: 1px solid
-          color-mix(in srgb, var(--gw-color-warning) 40%, transparent);
-        border-radius: var(--gw-space-3);
-        background: color-mix(in srgb, var(--gw-color-warning) 8%, transparent);
-      }
-
-      .needs > .icon {
-        flex: none;
-        width: 1.75rem;
-        height: 1.75rem;
-        color: var(--gw-color-warning);
-      }
-
-      .needs h3 {
-        margin: 0 0 var(--gw-space-1);
-        font-size: 1rem;
-      }
-
-      .needs p {
-        margin: 0;
-        color: var(--gw-color-text-secondary);
-        white-space: pre-line;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--gw-space-2);
-        margin-top: var(--gw-space-3);
-      }
-
-      .day {
-        margin: var(--gw-space-5) 0 var(--gw-space-2);
-        color: var(--gw-color-text-secondary);
-        font-size: var(--gw-font-size-s);
-        font-weight: var(--gw-font-weight-strong);
-      }
-
-      .list {
-        border: 1px solid var(--gw-color-border-quiet);
-        border-radius: var(--gw-space-3);
-        background: var(--gw-color-surface-low);
-        overflow: hidden;
-      }
-
-      .entry {
-        display: grid;
-        grid-template-columns: 0.5rem 1fr auto;
-        gap: var(--gw-space-3);
-        padding: var(--gw-space-3) var(--gw-space-4);
-        border-top: 1px solid var(--gw-color-border-quiet);
-      }
-
-      .entry:first-child {
-        border-top: 0;
-      }
-
-      .dot {
-        width: 0.5rem;
-        height: 0.5rem;
-        margin-top: 0.5rem;
-        border-radius: 50%;
-        background: var(--gw-color-link);
-      }
-
-      .read .dot {
-        background: transparent;
-      }
-
-      .read summary .name {
-        color: var(--gw-color-text-secondary);
-        font-weight: normal;
-      }
-
-      details summary {
-        cursor: pointer;
-        list-style: none;
-      }
-
-      details summary::-webkit-details-marker {
-        display: none;
-      }
-
-      .name {
-        font-weight: var(--gw-font-weight-strong);
-      }
-
-      .meta {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: var(--gw-space-1) var(--gw-space-2);
-        margin-top: var(--gw-space-1);
-      }
-
-      .tag {
-        padding: 0 var(--gw-space-2);
-        border-radius: var(--gw-space-1);
-        font-size: var(--gw-font-size-s);
-        font-weight: var(--gw-font-weight-strong);
-        background: color-mix(in srgb, var(--gw-color-link) 14%, transparent);
-        color: var(--gw-color-link);
-      }
-
-      .tag.you {
-        background: color-mix(in srgb, #b98cff 16%, transparent);
-        color: #b98cff;
-      }
-
-      .tag.fix,
-      .tag.fixed {
-        background: color-mix(
-          in srgb,
-          var(--gw-color-success, #5fcf8f) 14%,
-          transparent
-        );
-        color: var(--gw-color-success, #5fcf8f);
-      }
-
-      .tag.drift,
-      .tag.update {
-        background: color-mix(
-          in srgb,
-          var(--gw-color-warning) 14%,
-          transparent
-        );
-        color: var(--gw-color-warning);
-      }
-
-      .repo {
-        padding: 0 var(--gw-space-2);
-        border-radius: var(--gw-space-1);
-        background: var(--gw-color-surface-lower);
-        color: var(--gw-color-text-secondary);
-        font-family: var(--gw-font-mono);
-        font-size: var(--gw-font-size-s);
-      }
-
-      .when {
-        color: var(--gw-color-text-secondary);
-        font-size: var(--gw-font-size-s);
-        white-space: nowrap;
+      gw-button a {
+        color: inherit;
+        text-decoration: none;
       }
 
       .items {
-        margin: var(--gw-space-2) 0 0;
+        margin: 0;
         padding: 0;
         list-style: none;
         font-size: var(--gw-font-size-s);
@@ -379,36 +255,24 @@ export class UpkeepInbox extends LitElement {
 
       .items li {
         display: flex;
+        flex-wrap: wrap;
         gap: var(--gw-space-2);
+        align-items: baseline;
         padding: var(--gw-space-1) 0;
+      }
+
+      .items li + li {
         border-top: 1px dashed var(--gw-color-border-quiet);
       }
 
-      .items li:first-child {
-        border-top: 0;
-      }
-
-      .routine {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: var(--gw-space-3);
-        padding: var(--gw-space-3) var(--gw-space-4);
-        border: 1px dashed var(--gw-color-border-quiet);
-        border-radius: var(--gw-space-3);
+      .when {
         color: var(--gw-color-text-secondary);
+        font-size: var(--gw-font-size-s);
       }
 
-      .routine .icon {
-        color: var(--gw-color-success, #5fcf8f);
-      }
-
-      .routine gw-button {
-        margin-left: auto;
-      }
-
-      .routine-list {
-        margin-top: var(--gw-space-2);
+      .read::part(heading) {
+        font-weight: normal;
+        color: var(--gw-color-text-secondary);
       }
     `,
   ];
@@ -416,8 +280,6 @@ export class UpkeepInbox extends LitElement {
   readonly #inbox = new AtomController(this, () => inbox, always);
 
   readonly #jobs = new AtomController(this, () => jobs);
-
-  #showRoutine = false;
 
   /** The jobs that are parked, so a parked job's entry offers to unpark it. */
   #parked() {
@@ -433,109 +295,110 @@ export class UpkeepInbox extends LitElement {
   #needs(entry: Domain.Entry, parked: ReadonlySet<string>) {
     const job = entry.job;
 
-    return html`<div class="needs">
-      ${icon(mdiAlertCircleOutline)}
-      <div>
-        <h3>${entry.title}</h3>
-        ${entry.detail === null ? nothing : html`<p>${entry.detail}</p>`}
-        <div class="when">
-          ${entry.count > 1 ? `${entry.count} times, last ` : ""}${time(entry.lastAt)}
-        </div>
-        <div class="actions">
-          ${
-            job !== null && parked.has(job)
-              ? html`<gw-button
-                  size="small"
-                  appearance="filled"
-                  icon=${mdiPlayPause}
-                  @click=${() => registry.set(unparkJob, job)}
-                  >Unpark ${job}</gw-button
-                >`
-              : nothing
-          }
-          ${
-            entry.run === null
-              ? job === null
-                ? nothing
-                : html`<a href=${jobHref(job)}>See ${job}'s runs</a>`
-              : html`<a href=${runHref(entry.run)}>Open the run</a>`
-          }
-          <gw-button
-            size="small"
-            appearance="outlined"
-            variant="neutral"
-            icon=${mdiClose}
-            @click=${() => registry.set(dismissEntry, entry.id)}
-            >Dismiss</gw-button
-          >
-        </div>
+    return html`<gw-alert tone="warning" heading=${entry.title}>
+      ${entry.detail ?? ""}
+      <div class="when">
+        ${entry.count > 1 ? `${entry.count} times, last ` : ""}${time(entry.lastAt)}
       </div>
-    </div>`;
+      ${
+        job !== null && parked.has(job)
+          ? html`<gw-button
+              slot="actions"
+              size="small"
+              appearance="filled"
+              variant="warning"
+              icon=${mdiPlayPause}
+              @click=${() => registry.set(unparkJob, job)}
+              >Unpark ${job}</gw-button
+            >`
+          : nothing
+      }
+      ${
+        entry.run === null
+          ? job === null
+            ? nothing
+            : html`<gw-button
+                slot="actions"
+                size="small"
+                appearance="outlined"
+                variant="neutral"
+                ><a href=${jobHref(job)}>Runs</a></gw-button
+              >`
+          : html`<gw-button
+              slot="actions"
+              size="small"
+              appearance="outlined"
+              variant="neutral"
+              ><a href=${runHref(entry.run)}>Open the run</a></gw-button
+            >`
+      }
+      <gw-button
+        slot="actions"
+        size="small"
+        appearance="plain"
+        variant="neutral"
+        icon=${mdiClose}
+        @click=${() => registry.set(dismissEntry, entry.id)}
+        >Dismiss</gw-button
+      >
+    </gw-alert>`;
   }
 
   #entry(entry: Domain.Entry) {
-    const repos = reposOf(entry);
-    const fixed = entry.items.filter((item) => item.text.startsWith("Fixed:"));
+    const { heading, description } = describe(entry);
+    const kind = kinds[entry.you ? "commit" : entry.kind];
+    const unread = entry.readAt === null;
 
-    const open = (event: Event) => {
+    const opened = (event: Event) => {
+      const target = event.currentTarget;
+
       if (
-        event.target instanceof HTMLDetailsElement &&
-        event.target.open &&
-        entry.readAt === null
+        target instanceof HTMLElement &&
+        target.hasAttribute("open") &&
+        unread
       ) {
         registry.set(markRead, [entry.id]);
       }
     };
 
-    return html`<div class="entry ${entry.readAt === null ? "" : "read"}">
-      <span
-        class="dot"
-        aria-label=${entry.readAt === null ? "Unread" : "Read"}
-      ></span>
-      <details @toggle=${open}>
-        <summary>
-          <span class="name">${entry.title}</span>
-          <div class="meta">
-            <span class="tag ${entry.you ? "you" : entry.kind}"
-              >${entry.you ? "You" : kindLabels[entry.kind]}</span
-            >
-            ${
-              fixed.length > 0
-                ? html`<span class="tag fixed"
-                    >${plural(fixed.length, "fix", "fixes")} by Upkeep</span
-                  >`
-                : nothing
-            }
-            ${
-              repos.length > 4
-                ? html`<span class="repo"
-                    >${plural(repos.length, "repository", "repositories")}</span
-                  >`
-                : repos.map((repo) => html`<span class="repo">${repo}</span>`)
-            }
-          </div>
-        </summary>
-        <ul class="items">
-          ${
-            entry.url === null
-              ? nothing
-              : html`<li>${externalLink(entry.url, "The release")}</li>`
-          }
-          ${entry.items.map(
-            (item) =>
-              html`<li>
-                <span class="repo">${short(item.repo)}</span>
-                ${
-                  item.url === null
-                    ? item.text
-                    : externalLink(item.url, item.text)
-                }
-              </li>`,
-          )}
-        </ul>
-      </details>
-      <span class="when">${time(entry.lastAt)}</span>
-    </div>`;
+    return html`<gw-expansion
+      class=${unread ? "" : "read"}
+      heading=${heading}
+      description=${description}
+      @toggle=${opened}
+    >
+      <gw-dot
+        slot="icon"
+        tone=${unread ? "accent" : "neutral"}
+        label=${unread ? "Unread" : "Read"}
+      ></gw-dot>
+      <gw-row gap="s">
+        <gw-chip size="xs" tone=${entry.you ? "accent" : kind.tone}
+          >${entry.you ? "You" : kind.label}</gw-chip
+        >
+        ${
+          fixes(entry).length > 0
+            ? html`<gw-chip size="xs" tone="success"
+                >${plural(fixes(entry).length, "fix", "fixes")} by
+                Upkeep</gw-chip
+              >`
+            : nothing
+        }
+        ${entry.routine ? html`<gw-chip size="xs">Routine</gw-chip>` : nothing}
+        <span class="when">${time(entry.lastAt)}</span>
+        ${entry.url === null ? nothing : externalLink(entry.url, "The release")}
+      </gw-row>
+      <ul class="items">
+        ${entry.items.toReversed().map(
+          (item) =>
+            html`<li>
+              <gw-chip size="xs">${short(item.repo)}</gw-chip>
+              ${item.url === null ? item.text : externalLink(item.url, item.text)}
+              <span class="when">${time(item.at)}</span>
+            </li>`,
+        )}
+      </ul>
+    </gw-expansion>`;
   }
 
   #render(box: Domain.Inbox) {
@@ -545,7 +408,7 @@ export class UpkeepInbox extends LitElement {
     const worth = others.filter((entry) => !entry.routine);
     const routine = others.filter((entry) => entry.routine);
     const fresh = others.filter((entry) => entry.readAt === null);
-    const unread = box.entries.filter((entry) => entry.readAt === null);
+    const unread = worth.filter((entry) => entry.readAt === null).length;
 
     const days = new Map<string, Array<Domain.Entry>>();
 
@@ -558,109 +421,88 @@ export class UpkeepInbox extends LitElement {
     const routineRepos = new Set(routine.flatMap(reposOf)).size;
 
     return html`
-      <div class="title">
-        <h1>Inbox</h1>
-        <span class="muted"
-          >${
-            unread.length === 0
+      <gw-stack gap="l">
+        <gw-page-header
+          heading="Inbox"
+          description=${
+            unread === 0
               ? "You're up to date"
-              : `${plural(unread.length, "new entry", "new entries")}`
-          }</span
-        >
-        ${
-          unread.length === 0
-            ? nothing
-            : html`<gw-button
-                size="small"
-                appearance="outlined"
-                variant="neutral"
-                icon=${mdiCheckAll}
-                @click=${() => registry.set(markRead, undefined)}
-                >Mark all read</gw-button
-              >`
-        }
-      </div>
-
-      <div class="tldr">
-        <p>
-          ${
-            fresh.length === 0 && needs.length === 0
-              ? "Nothing new since you last looked."
-              : summarise(fresh, needs.length)
+              : `${plural(unread, "change")} to read since you last looked`
           }
-        </p>
-        <div class="chips">
-          <span class="chip"
-            ><b>${worth.length}</b> ${worth.length === 1 ? "change" : "changes"}
-            worth reading</span
-          >
-          <span class="chip"
-            ><b>${routine.length}</b> routine, no code changed</span
-          >
-          <span class="chip"
-            ><b>${new Set(others.flatMap(reposOf)).size}</b> repositories
-            touched</span
-          >
-        </div>
-      </div>
+        >
+          ${
+            fresh.length === 0
+              ? nothing
+              : html`<gw-button
+                  slot="actions"
+                  appearance="outlined"
+                  variant="neutral"
+                  icon=${mdiCheckAll}
+                  @click=${() => registry.set(markRead, undefined)}
+                  >Mark all read</gw-button
+                >`
+          }
+        </gw-page-header>
 
-      ${
-        needs.length === 0
-          ? nothing
-          : html`<section>
-              <h2>Needs you</h2>
-              ${needs.map((entry) => this.#needs(entry, parked))}
-            </section>`
-      }
+        <gw-card class="tldr">
+          <p>
+            ${
+              fresh.length === 0 && needs.length === 0
+                ? "Nothing new since you last looked."
+                : summarise(fresh, needs.length)
+            }
+          </p>
+          <gw-row gap="s">
+            <gw-chip size="small" tone="accent"
+              >${plural(worth.length, "change")} worth reading</gw-chip
+            >
+            <gw-chip size="small" tone="success"
+              >${routine.length} routine, no code changed</gw-chip
+            >
+            <gw-chip size="small"
+              >${plural(new Set(others.flatMap(reposOf)).size, "repository", "repositories")}</gw-chip
+            >
+          </gw-row>
+        </gw-card>
 
-      <section>
-        <h2>What changed</h2>
         ${
-          worth.length === 0
-            ? empty(mdiCheckCircleOutline, "Nothing worth reading lately.")
-            : [...days].map(
-                ([day, entries]) =>
-                  html`<div class="day">${day}</div>
-                    <div class="list">
-                      ${entries.map((entry) => this.#entry(entry))}
-                    </div>`,
-              )
+          needs.length === 0
+            ? nothing
+            : html`<gw-stack>
+                <gw-section-title>Needs you</gw-section-title>
+                ${needs.map((entry) => this.#needs(entry, parked))}
+              </gw-stack>`
         }
+
+        <gw-stack>
+          <gw-section-title>What changed</gw-section-title>
+          ${
+            worth.length === 0
+              ? empty(mdiCheckCircleOutline, "Nothing worth reading lately.")
+              : [...days].map(
+                  ([day, entries]) =>
+                    html`<gw-card heading=${day} level="3">
+                      ${entries.map((entry) => this.#entry(entry))}
+                    </gw-card>`,
+                )
+          }
+        </gw-stack>
+
         ${
           routine.length === 0
             ? nothing
-            : html`<div class="day">Routine</div>
-                <div class="routine">
-                  ${icon(mdiCheckCircleOutline)}
-                  <span
-                    >${plural(routine.length, "routine update")} across
-                    ${plural(routineRepos, "repository", "repositories")}. None
-                    needed a code change.</span
-                  >
-                  <gw-button
-                    size="small"
-                    appearance="outlined"
-                    variant="neutral"
-                    @click=${this.#toggleRoutine}
-                    >${this.#showRoutine ? "Hide" : "Show"}</gw-button
-                  >
-                </div>
-                ${
-                  this.#showRoutine
-                    ? html`<div class="list routine-list">
-                        ${routine.map((entry) => this.#entry(entry))}
-                      </div>`
-                    : nothing
-                }`
+            : html`<gw-card>
+                <gw-expansion
+                  heading=${`${plural(routine.length, "routine update")} across ${plural(routineRepos, "repository", "repositories")}`}
+                  description="Versions, lockfiles, pins and tool versions only. None needed a code change."
+                >
+                  ${routine.map((entry) => this.#entry(entry))}
+                </gw-expansion>
+              </gw-card>`
         }
-      </section>
+      </gw-stack>
     `;
   }
-
-  readonly #toggleRoutine = () => {
-    this.#showRoutine = !this.#showRoutine;
-    this.requestUpdate();
-  };
 
   override render() {
     return view(this.#inbox.value, (box) => this.#render(box));
