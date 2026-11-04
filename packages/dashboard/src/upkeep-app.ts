@@ -1,16 +1,22 @@
 /**
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
- * the menu and sign out, and the page the route picks.
+ * the nav, the light and dark mode picker and sign out, and the page the
+ * route picks.
  */
 import { mdiLogout } from "@mdi/js";
+import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
+import { ref } from "lit/directives/ref.js";
+import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
+import { bindModes, modeOptions } from "./theme.ts";
 import { shared } from "./ui.ts";
 import {
   homeHref,
   inbox,
   jobsHref,
+  reposHref,
   Route,
   route,
   serverVersion,
@@ -23,6 +29,8 @@ import "@timmo001/groundwork-ui/layout.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";
 import "./upkeep-overview.ts";
+import "./upkeep-repo.ts";
+import "./upkeep-repos.ts";
 import "./upkeep-run.ts";
 
 export class UpkeepApp extends LitElement {
@@ -30,18 +38,30 @@ export class UpkeepApp extends LitElement {
     shared,
     css`
       .brand {
-        display: flex;
-        align-items: baseline;
+        display: inline-flex;
+        align-items: center;
         gap: var(--gw-space-2);
-        color: inherit;
+        color: var(--gw-color-text-strong);
         font-weight: var(--gw-font-weight-strong);
         text-decoration: none;
         white-space: nowrap;
       }
 
+      .brand img {
+        width: 1.5rem;
+        height: 1.5rem;
+      }
+
       .brand .muted {
         font-weight: normal;
         font-size: var(--gw-font-size-s);
+      }
+
+      /* A phone's app bar has no room for the version */
+      @media (max-width: 30rem) {
+        .brand .muted {
+          display: none;
+        }
       }
 
       gw-app-bar gw-button a {
@@ -92,11 +112,12 @@ export class UpkeepApp extends LitElement {
   override render() {
     const current = this.#route.value;
     const onInbox = Route.$is("Inbox")(current);
+    const onRepos = Route.$is("Repos")(current) || Route.$is("Repo")(current);
 
     return html`
       <gw-app-bar menu-label="Pages">
         <a slot="brand" class="brand" href=${homeHref}
-          >Upkeep${
+          ><img src=${logo} alt="" width="24" height="24" />Upkeep${
             AsyncResult.isSuccess(this.#version.value)
               ? html`<span class="muted"
                   >${this.#version.value.value.version}</span
@@ -105,7 +126,16 @@ export class UpkeepApp extends LitElement {
           }</a
         >
         ${this.#link(homeHref, "Inbox", onInbox, this.#unread())}
-        ${this.#link(jobsHref, "Jobs", !onInbox)}
+        ${this.#link(reposHref, "Repositories", onRepos)}
+        ${this.#link(jobsHref, "Jobs", !onInbox && !onRepos)}
+        <gw-segmented
+          slot="actions"
+          size="small"
+          labels="hide"
+          label="Mode"
+          .options=${modeOptions}
+          ${ref(this.#bindModes)}
+        ></gw-segmented>
         ${
           this.#token.value === ""
             ? nothing
@@ -124,6 +154,8 @@ export class UpkeepApp extends LitElement {
         <gw-page>
           ${Route.$match(current, {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
+            Repos: () => html`<upkeep-repos></upkeep-repos>`,
+            Repo: ({ repo }) => html`<upkeep-repo .repo=${repo}></upkeep-repo>`,
             Jobs: () => html`<upkeep-overview></upkeep-overview>`,
             Job: ({ id }) => html`<upkeep-job .jobId=${id}></upkeep-job>`,
             Run: ({ id }) => html`<upkeep-run .runId=${id}></upkeep-run>`,
@@ -132,6 +164,16 @@ export class UpkeepApp extends LitElement {
       </main>
     `;
   }
+
+  #bound = false;
+
+  /** Ties the mode picker to the page's mode once, when it's first rendered. */
+  readonly #bindModes = (element: Element | undefined) => {
+    if (this.#bound || !(element instanceof GwSegmented)) return;
+
+    this.#bound = true;
+    bindModes(element);
+  };
 
   readonly #signOut = () => registry.set(token, "");
 }

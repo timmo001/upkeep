@@ -86,6 +86,11 @@ export const runs = Atom.family((job: string) =>
 
 const inboxKey = ["inbox"];
 
+/** The tracked repositories, with their titles and jobs. */
+export const repos = UpkeepApi.query("repos", "list", {
+  reactivityKeys: inboxKey,
+});
+
 /** The inbox: what changed lately, and what needs a person. */
 export const inbox = UpkeepApi.query("inbox", "get", {
   query: {},
@@ -198,6 +203,8 @@ export const cancelRun = UpkeepApi.runtime.fn((id: string) =>
 
 export type Route = Data.TaggedEnum<{
   Inbox: {};
+  Repos: {};
+  Repo: { readonly repo: string };
   Jobs: {};
   Job: { readonly id: string };
   Run: { readonly id: string };
@@ -210,6 +217,10 @@ const basePath = new URL(document.baseURI).pathname;
 
 const jobsPattern = new URLPattern({ pathname: "/jobs{/}?" });
 
+const reposPattern = new URLPattern({ pathname: "/repos{/}?" });
+
+const repoPattern = new URLPattern({ pathname: "/repos/:owner/:name" });
+
 const jobPattern = new URLPattern({ pathname: "/jobs/:id" });
 
 const runPattern = new URLPattern({ pathname: "/runs/:id" });
@@ -220,6 +231,16 @@ const parseRoute = (): Route => {
     : location.pathname;
 
   if (jobsPattern.test({ pathname: path })) return Route.Jobs();
+
+  if (reposPattern.test({ pathname: path })) return Route.Repos();
+
+  const repo = repoPattern.exec({ pathname: path })?.pathname.groups;
+
+  if (repo?.["owner"] !== undefined && repo["name"] !== undefined) {
+    return Route.Repo({
+      repo: `${decodeURIComponent(repo["owner"])}/${decodeURIComponent(repo["name"])}`,
+    });
+  }
 
   const job = jobPattern.exec({ pathname: path })?.pathname.groups["id"];
 
@@ -297,6 +318,12 @@ export const route = Atom.readable((get) => {
 export const homeHref = "./";
 
 export const jobsHref = "jobs";
+
+export const reposHref = "repos";
+
+/** A tracked repository's page, by `owner/name`. */
+export const repoHref = (repo: string) =>
+  `repos/${repo.split("/").map(encodeURIComponent).join("/")}`;
 
 export const jobHref = (id: string) => `jobs/${encodeURIComponent(id)}`;
 
