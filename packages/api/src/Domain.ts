@@ -163,6 +163,18 @@ export const Parked = Schema.Struct({
 
 export interface Parked extends Schema.Schema.Type<typeof Parked> {}
 
+/** A commit a run pushed, such as a bump, a drift update or a heal's fix. */
+export const Change = Schema.Struct({
+  repo: RepoName,
+  sha: Schema.String,
+  /** The commit message's first line. */
+  subject: Schema.String,
+  url: Schema.String,
+  at: Schema.Finite,
+});
+
+export interface Change extends Schema.Schema.Type<typeof Change> {}
+
 export const Run = Schema.Struct({
   id: Schema.String,
   job: JobId,
@@ -179,9 +191,44 @@ export const Run = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   /** What a heal run is healing and what it did, or null for other jobs. */
   heal: Schema.NullOr(Heal),
+  /** What the run did, in a line or a short paragraph. */
+  summary: Schema.NullOr(Schema.String),
+  /** The commits it pushed, oldest first. */
+  changes: Schema.Array(Change),
+  /** It left something for a person, such as a fix an agent couldn't finish. */
+  attention: Schema.Boolean,
 });
 
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/** A change with the run that made it. */
+export const RunChange = Schema.Struct({
+  ...Change.fields,
+  run: Schema.String,
+  job: JobId,
+});
+
+export interface RunChange extends Schema.Schema.Type<typeof RunChange> {}
+
+/**
+ * What happened over a while, for the overview: how the runs ended, the
+ * commits they pushed, newest first, and the runs that left something for a
+ * person.
+ */
+export const Activity = Schema.Struct({
+  since: Schema.Finite,
+  runs: Schema.Struct({
+    succeeded: Schema.Int,
+    skipped: Schema.Int,
+    failed: Schema.Int,
+    cancelled: Schema.Int,
+    heals: Schema.Int,
+  }),
+  changes: Schema.Array(RunChange),
+  attention: Schema.Array(Run),
+});
+
+export interface Activity extends Schema.Schema.Type<typeof Activity> {}
 
 /** A job with its latest run, for a status list. */
 export const JobStatus = Schema.Struct({

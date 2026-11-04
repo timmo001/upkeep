@@ -130,6 +130,13 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE runs ADD COLUMN requeued INTEGER NOT NULL DEFAULT 0`;
   }),
+  "0006_run_reports": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN summary TEXT`;
+    yield* sql`ALTER TABLE runs ADD COLUMN changes TEXT NOT NULL DEFAULT '[]'`;
+    yield* sql`ALTER TABLE runs ADD COLUMN attention INTEGER NOT NULL DEFAULT 0`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -158,6 +165,9 @@ const RunRow = Schema.Struct({
   healCommit: Schema.NullOr(Schema.String),
   healSession: Schema.NullOr(Schema.String),
   healIssue: Schema.NullOr(Schema.String),
+  summary: Schema.NullOr(Schema.String),
+  changes: Schema.fromJsonString(Schema.Array(Domain.Change)),
+  attention: Schema.Number,
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -184,9 +194,11 @@ const toRun = ({
   healCommit,
   healSession,
   healIssue,
+  attention,
   ...row
 }: typeof RunRow.Type): Domain.Run => ({
   ...row,
+  attention: attention !== 0,
   release:
     releaseRepo === null || releaseTag === null
       ? null
@@ -288,6 +300,14 @@ export class Store extends Context.Service<
       worker: string,
       update: Api.HealUpdate,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** Record a run's summary, a commit it pushed, or that it needs a person. */
+    report(
+      id: string,
+      worker: string,
+      report: Api.RunReport,
+    ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** What happened since `since`. */
+    activity(since: number): Effect.Effect<Domain.Activity, StoreError>;
     /** How many heals of a job's runs, for one target, were queued since `since`. */
     healsSince(
       job: string,
@@ -649,6 +669,81 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
+    const report = Effect.fn("Store.report")(
+      function* (id: string, worker: string, update: Api.RunReport) {
+        yield* claimed(id, worker);
+
+        const current = yield* run(id);
+
+        yield* sql`
+          UPDATE runs SET ${sql.update({
+            summary: update.summary ?? current.summary,
+            changes: JSON.stringify(
+              update.change === undefined
+                ? current.changes
+                : [...current.changes, update.change],
+            ),
+            attention: (update.attention ?? current.attention) ? 1 : 0,
+          })}
+          WHERE id = ${id}
+        `.pipe(Effect.mapError(storeError));
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const activity = Effect.fn("Store.activity")(function* (since: number) {
+      const counts = yield* sql<{
+        state: string;
+        heals: number;
+        count: number;
+      }>`
+        SELECT state, heal_of IS NOT NULL AS heals, count(*) AS count FROM runs
+        WHERE queued_at >= ${since}
+        GROUP BY state, heal_of IS NOT NULL
+      `;
+
+      const total = (state: string) =>
+        counts
+          .filter((row) => row.state === state)
+          .reduce((sum, row) => sum + row.count, 0);
+
+      const changed = yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE queued_at >= ${since} AND changes != '[]'
+        ORDER BY queued_at DESC, id DESC
+      `);
+
+      const attention = yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE queued_at >= ${since} AND attention = 1
+        ORDER BY queued_at DESC, id DESC
+      `);
+
+      return {
+        since,
+        runs: {
+          succeeded: total("succeeded"),
+          skipped: total("skipped"),
+          failed: total("failed"),
+          cancelled: total("cancelled"),
+          heals: counts
+            .filter((row) => row.heals !== 0)
+            .reduce((sum, row) => sum + row.count, 0),
+        },
+        changes: changed
+          .flatMap((item) =>
+            item.changes.map((change) => ({
+              ...change,
+              run: item.id,
+              job: item.job,
+            })),
+          )
+          .toSorted((a, b) => b.at - a.at),
+        attention,
+      };
+    }, Effect.mapError(storeError));
+
     const healsSince = Effect.fn("Store.healsSince")(function* (
       job: string,
       target: Domain.Target,
@@ -974,6 +1069,8 @@ export class Store extends Context.Service<
       appendLog,
       finish,
       updateHeal,
+      report,
+      activity,
       healsSince,
       heals,
       park,

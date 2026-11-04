@@ -332,6 +332,25 @@ const RunsHandlers = HttpApiBuilder.group(
   }),
 );
 
+const ActivityHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "activity",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      get: Effect.fn(function* ({ query }) {
+        const now = yield* Clock.currentTimeMillis;
+        const hours = Math.min(Math.max(query.hours ?? 24, 1), 24 * 30);
+
+        return yield* store
+          .activity(now - hours * 3_600_000)
+          .pipe(Effect.orDie);
+      }),
+    });
+  }),
+);
+
 const WorkHandlers = HttpApiBuilder.group(
   Api.Api,
   "work",
@@ -404,6 +423,13 @@ const WorkHandlers = HttpApiBuilder.group(
           Effect.provideService(Triage, triage),
           Effect.catchCause(Effect.logError),
         );
+      }),
+      report: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .report(params.id, worker.name, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
       }),
       heal: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
@@ -634,6 +660,7 @@ const apiRoutes = (
     Layer.provide([
       JobsHandlers,
       RunsHandlers,
+      ActivityHandlers,
       WorkHandlers,
       ReposHandlers,
       TokensHandlers,

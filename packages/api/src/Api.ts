@@ -15,6 +15,8 @@ import {
   OpenApi,
 } from "effect/http-api";
 import {
+  Activity,
+  Change,
   Heal,
   HealDecision,
   JobId,
@@ -134,6 +136,18 @@ export const HealUpdate = Schema.Struct({
 });
 
 export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}
+
+/**
+ * What a run reports as it goes: `summary` replaces its summary, `change` is
+ * added to its changes and `attention` marks it as needing a person.
+ */
+export const RunReport = Schema.Struct({
+  summary: Schema.optionalKey(Schema.String),
+  change: Schema.optionalKey(Change),
+  attention: Schema.optionalKey(Schema.Boolean),
+});
+
+export interface RunReport extends Schema.Schema.Type<typeof RunReport> {}
 
 /** What a token can do: an admin runs the server, a worker runs jobs. */
 export const TokenScope = Schema.Literals(["admin", "worker"]);
@@ -275,6 +289,24 @@ export class RunsGroup extends HttpApiGroup.make("runs")
     }),
   ) {}
 
+export class ActivityGroup extends HttpApiGroup.make("activity")
+  .add(
+    /** What happened in the last `hours`, 24 by default. */
+    HttpApiEndpoint.get("get", "/", {
+      query: { hours: Schema.optional(Schema.FiniteFromString) },
+      success: Activity,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/activity")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Activity",
+      description:
+        "What happened lately: how runs ended, the commits they pushed and what needs a person",
+    }),
+  ) {}
+
 export class WorkGroup extends HttpApiGroup.make("work")
   .add(
     /** Take the oldest waiting run of one of these jobs, if there is one. */
@@ -321,6 +353,13 @@ export class WorkGroup extends HttpApiGroup.make("work")
     HttpApiEndpoint.post("heal", "/runs/:id/heal", {
       params: { id: Schema.String },
       payload: HealUpdate,
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /** Report a run's summary, a commit it pushed, or that it needs a person. */
+    HttpApiEndpoint.post("report", "/runs/:id/report", {
+      params: { id: Schema.String },
+      payload: RunReport,
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
     }),
@@ -474,6 +513,7 @@ export class SystemGroup extends HttpApiGroup.make("system").add(
 export class Api extends HttpApi.make("upkeep")
   .add(JobsGroup)
   .add(RunsGroup)
+  .add(ActivityGroup)
   .add(WorkGroup)
   .add(ReposGroup)
   .add(TokensGroup)
