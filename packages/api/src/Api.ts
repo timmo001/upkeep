@@ -522,6 +522,13 @@ export class WorkGroup extends HttpApiGroup.make("work")
       }),
       success: HttpApiSchema.NoContent,
     }),
+    /**
+     * The inbox, as the dashboard reads it: entries unread or changed in the
+     * last 7 days, for the summary job to write up.
+     */
+    HttpApiEndpoint.get("inbox", "/inbox", {
+      success: Inbox,
+    }),
     /** Which of these commits the inbox already has, for the watch job. */
     HttpApiEndpoint.post("known", "/inbox/known", {
       payload: Schema.Struct({

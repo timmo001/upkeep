@@ -124,6 +124,17 @@ export const watch: Job = {
   tracked: false,
 };
 
+export const summary: Job = {
+  id: "summary",
+  name: "Summary",
+  description:
+    "Ask an agent for a longer write-up of what's in the inbox, on request from the dashboard",
+  schedule: null,
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   watch,
@@ -136,4 +147,5 @@ export const jobs: ReadonlyArray<Job> = [
   drift,
   deps,
   ci,
+  summary,
 ];

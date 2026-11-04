@@ -64,7 +64,10 @@ It opens on the inbox: what changed in the tracked repositories and what
 needs you, for when you haven't been watching. At the top, a few sentences
 sum up what's new since you last read it: first-party releases and where they
 went, your own commits, updates that needed a code change, how many routine
-updates there were, and whether anything needs you. Below that:
+updates there were, and whether anything needs you. Plain code writes them,
+with no agent; **Summarise in more detail** runs the `summary` job, which asks
+an agent for a longer write-up of what's unread and shows it in the same card.
+Below that:
 
 - **Needs you** holds only what won't settle without you: a parked job, or a
   heal that asked for you or left a fix unfinished. Each comes once however
@@ -77,6 +80,7 @@ updates there were, and whether anything needs you. Below that:
 - **Routine** folds every update that only moved versions, lockfiles, pins
   or tool versions into one line, which opens to the list.
 
+An opened entry links to the job behind it and, while it's kept, the run.
 An entry is unread until you open it or mark everything read, and comes back
 unread when something new joins it. Read and dismissed entries are deleted 30
 days after they last changed. The first time the server starts with the
@@ -84,7 +88,8 @@ inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 `watch` job adds the commits made outside Upkeep.
 
 **Jobs** lists the jobs with their last run and whether they're parked or
-paused, then the latest runs. Each run shows its summary, its commits, its
+paused, then the latest runs; press anywhere in a run's row to open it. Each
+run shows its summary, its commits, its
 heal record and its log, which follows the run as it goes. Jobs can be run,
 paused or unparked, and runs cancelled, from there.
 
@@ -360,6 +365,7 @@ by default.
 | `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
 | `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                                                                                                                                                                                                                      |
 | `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
+| `summary`         | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.

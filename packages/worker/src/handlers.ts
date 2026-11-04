@@ -9,6 +9,7 @@ import { labels } from "./jobs/labels";
 import { notifications } from "./jobs/notifications";
 import { releases } from "./jobs/releases";
 import { stalledUpdates } from "./jobs/stalled-updates";
+import { summary } from "./jobs/summary";
 import { watch } from "./jobs/watch";
 import type { Handlers } from "./Worker";
 
@@ -24,4 +25,5 @@ export const handlers: Handlers = {
   drift: () => drift(),
   deps: () => deps(),
   ci: () => ci(),
+  summary: () => summary(),
 };

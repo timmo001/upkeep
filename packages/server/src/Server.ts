@@ -597,6 +597,11 @@ const WorkHandlers = HttpApiBuilder.group(
       titles: ({ payload }) =>
         store.setTitles(payload.titles).pipe(Effect.orDie),
       names: ({ payload }) => store.setNames(payload.names).pipe(Effect.orDie),
+      inbox: Effect.fn(function* () {
+        const now = yield* Clock.currentTimeMillis;
+
+        return yield* store.inbox(now - 7 * 86_400_000).pipe(Effect.orDie);
+      }),
       known: ({ payload }) =>
         store.known(payload.commits).pipe(
           Effect.map((known) => ({ known })),

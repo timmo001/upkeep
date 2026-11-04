@@ -16,7 +16,7 @@ import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural, summarise, titlesOf, type Titles } from "./entries.ts";
-import { empty, shared, time, view } from "./ui.ts";
+import { empty, jobName, shared, time, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import {
   dismissEntry,
@@ -37,6 +37,7 @@ import "@timmo001/groundwork-ui/gw-section-title.ts";
 import "@timmo001/groundwork-ui/layout.ts";
 import "./upkeep-feed.ts";
 import "./upkeep-filters.ts";
+import "./upkeep-summary.ts";
 
 export class UpkeepInbox extends LitElement {
   static override styles = [
@@ -106,7 +107,7 @@ export class UpkeepInbox extends LitElement {
               variant="warning"
               icon=${mdiPlayPause}
               @click=${() => registry.set(unparkJob, job)}
-              >Unpark ${job}</gw-button
+              >Unpark ${jobName(job)}</gw-button
             >`
           : nothing
       }
@@ -202,6 +203,7 @@ export class UpkeepInbox extends LitElement {
               >${plural(touched.size, "repository", "repositories")}</gw-chip
             >
           </gw-row>
+          <upkeep-summary></upkeep-summary>
         </gw-card>
 
         ${

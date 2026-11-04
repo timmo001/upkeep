@@ -43,6 +43,8 @@ export class Reporter extends Context.Service<
     readonly repos: (
       job?: Domain.JobId,
     ) => Effect.Effect<ReadonlyArray<string>, unknown>;
+    /** The inbox, as the dashboard shows it, for the summary job. */
+    readonly inbox: () => Effect.Effect<Domain.Inbox, unknown>;
     /** Which of these commits the inbox already has. */
     readonly known: (
       commits: ReadonlyArray<Api.CommitRef>,
@@ -100,6 +102,7 @@ export class Reporter extends Context.Service<
           heals: (since) => client.work.heals({ query: { since } }),
           repos: (job) =>
             client.work.repos({ query: job === undefined ? {} : { job } }),
+          inbox: () => client.work.inbox(),
           known: Effect.fnUntraced(function* (commits) {
             const known: Array<Api.CommitRef> = [];
 
@@ -171,6 +174,7 @@ export class Reporter extends Context.Service<
         heal: () => Effect.void,
         heals: () => Effect.succeed([]),
         repos,
+        inbox: () => Effect.fail("The summary reads the inbox on a worker"),
         known: () => Effect.succeed([]),
         titles: () => Effect.void,
         names: (names) =>
