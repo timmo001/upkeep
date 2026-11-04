@@ -1,14 +1,17 @@
 /**
  * A heal's fix: check out the target, create an OpenCode session with the
  * chosen model and variant through OpenCode's API, checking both, and open it
- * in a new Herdr pane to work on the failed run. The agent has the session
- * limit to finish; whatever it pushed is recorded as the heal's commit.
+ * in a pane of the heals' Herdr workspace, named for the job and repository,
+ * to work on the failed run. The agent has the session limit to finish;
+ * whatever it pushed is recorded as the heal's commits, what it said last as
+ * its summary, and a finished fix's pane is closed.
  */
 import { Api } from "@timmo001/effect-gh";
 import { herdrSdkLayer, HerdrSdk, type PaneId } from "@timmo001/effect-herdr";
 import type { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Option, Schema } from "effect";
 import * as RunLog from "../RunLog";
+import { pushed } from "../Reporter";
 import * as Settings from "../settings";
 import { checkout, run, usesMise } from "./bump";
 
@@ -193,7 +196,13 @@ const createSession = Effect.fnUntraced(function* (
   return session.data.id;
 });
 
-/** Open the session in a new Herdr workspace and give it the prompt. */
+/** The Herdr workspace every heal's agent opens in, a pane each. */
+const healWorkspace = "Upkeep heals";
+
+/**
+ * Open the session in a pane named for the heal, in the heals' workspace,
+ * and give it the prompt. The first heal creates the workspace.
+ */
 const openPane = Effect.fnUntraced(function* (
   command: string,
   directory: string,
@@ -202,13 +211,32 @@ const openPane = Effect.fnUntraced(function* (
 ) {
   const herdr = yield* HerdrSdk;
 
-  const opened = yield* herdr.workspaces.createInDirectory(directory, {
-    label,
-    focus: false,
-  });
+  const existing = (yield* herdr.workspaces.list()).find(
+    (workspace) => workspace.label === healWorkspace,
+  );
 
-  const paneId: PaneId = opened.rootPane.id;
+  const paneId: PaneId =
+    existing === undefined
+      ? (yield* herdr.workspaces.createInDirectory(directory, {
+          label: healWorkspace,
+          focus: false,
+        })).rootPane.id
+      : yield* Effect.gen(function* () {
+          const panes = yield* herdr.panes.list({
+            workspaceId: existing.id,
+          });
 
+          const split = yield* herdr.panes.split(panes.at(-1)?.id, {
+            workspaceId: existing.id,
+            direction: panes.length % 2 === 1 ? "right" : "down",
+            cwd: directory,
+            focus: false,
+          });
+
+          return split.id;
+        });
+
+  yield* herdr.panes.rename(paneId, label);
   yield* herdr.panes.sendInput(paneId, { text: command, keys: ["enter"] });
 
   const agent = yield* herdr.agents
@@ -256,6 +284,77 @@ const tip = (
   run("git", ["ls-remote", "origin", `refs/heads/${branch}`], options).pipe(
     Effect.map((output) => output.split("\t")[0]?.trim() ?? ""),
   );
+
+const Comparison = Schema.Struct({
+  commits: Schema.Array(
+    Schema.Struct({
+      sha: Schema.String,
+      commit: Schema.Struct({ message: Schema.String }),
+    }),
+  ),
+});
+
+/** Record each commit pushed between two tips as the run's changes. */
+const recordCommits = Effect.fnUntraced(function* (
+  repo: string,
+  before: string,
+  after: string,
+) {
+  const { commits } = yield* Api.json(
+    { endpoint: `repos/${repo}/compare/${before}...${after}`, method: "GET" },
+    Comparison,
+  ).pipe(Effect.orElseSucceed(() => ({ commits: [] })));
+
+  for (const { sha, commit } of commits)
+    yield* pushed(repo, sha, commit.message.split("\n")[0] ?? "");
+});
+
+const Messages = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.String,
+      time: Schema.Struct({ created: Schema.Finite }),
+      content: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            type: Schema.String,
+            text: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+/** What the agent said last, which the prompt asks to be its summary. */
+const lastWords = Effect.fnUntraced(function* (
+  opencode: string,
+  session: string,
+  options: { readonly cwd: string; readonly trusted: string },
+) {
+  const { data } = yield* run(
+    opencode,
+    ["api", "get", `/api/session/${session}/message`],
+    options,
+  ).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Messages))),
+  );
+
+  const texts = data
+    .filter((message) => message.type === "assistant")
+    .toSorted((a, b) => b.time.created - a.time.created)
+    .map((message) =>
+      (message.content ?? [])
+        .filter((part) => part.type === "text")
+        .map((part) => part.text ?? "")
+        .join("")
+        .trim(),
+    );
+
+  const text = texts.find((said) => said !== "");
+
+  return text === undefined ? null : text.slice(0, 4000);
+});
 
 /**
  * Hand a fix to an agent. Returns what happened, for the heal's record, and
@@ -306,46 +405,70 @@ export const fix = Effect.fnUntraced(function* (
   yield* record({ session });
   yield* RunLog.info(`Created OpenCode session ${session} in ${directory}`);
 
-  const outcome = yield* Effect.gen(function* () {
+  const opened = yield* Effect.gen(function* () {
     const paneId = yield* openPane(
       `${opencode} --session ${session}`,
       directory,
-      `heal ${failed.job}`,
+      `${failed.job} ${repo.split("/").at(-1) ?? repo}`,
       prompt(heal, failed, log, precedents, repo, minutes),
     );
 
     yield* RunLog.info(`Opened it in Herdr pane ${paneId}`);
 
-    return yield* finished(paneId).pipe(
+    const ended = yield* finished(paneId).pipe(
       Effect.timeoutOption(`${minutes} minutes`),
       Effect.map(Option.getOrElse(() => "timeout" as const)),
     );
+
+    return { paneId, ended };
   }).pipe(Effect.provide(herdrSdkLayer));
 
+  const outcome = opened.ended;
   const after = yield* tip(branch, options);
 
-  if (after !== "" && after !== before) yield* record({ commit: after });
+  if (after !== "" && after !== before) {
+    yield* record({ commit: after });
+    yield* recordCommits(repo, before, after);
+  }
 
-  const pushed = after !== before ? `, and pushed ${after.slice(0, 7)}` : "";
+  const note = after !== before ? `, and pushed ${after.slice(0, 7)}` : "";
 
   // Only a pushed fix that the agent finished is done with; anything else
   // leaves the failure in place for a person to pick up from the session.
   const attention = outcome !== "done" || after === before;
 
+  const said = yield* lastWords(opencode, session, options).pipe(
+    Effect.orElseSucceed(() => null),
+  );
+
+  // A finished fix's pane has nothing left to look at.
+  if (!attention)
+    yield* HerdrSdk.use((herdr) => herdr.panes.close(opened.paneId)).pipe(
+      Effect.provide(herdrSdkLayer),
+      Effect.ignore,
+    );
+
   switch (outcome) {
     case "done":
-      return { action: `The agent finished${pushed}`, session, attention };
-    case "blocked":
       return {
-        action: `The agent needs a person${pushed}`,
+        action: `The agent finished${note}`,
         session,
         attention,
+        said,
+      };
+    case "blocked":
+      return {
+        action: `The agent needs a person${note}`,
+        session,
+        attention,
+        said,
       };
     case "timeout":
       return {
-        action: `The agent ran out of its ${minutes} minutes${pushed}; its session is left open`,
+        action: `The agent ran out of its ${minutes} minutes${note}; its session is left open`,
         session,
         attention,
+        said,
       };
   }
 });

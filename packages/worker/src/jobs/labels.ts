@@ -8,7 +8,7 @@ import { Graphql, Label } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Cause, Config, Data, Effect, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { trackedFor } from "../Reporter";
+import { listed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
 type Current = Label.Label;
@@ -210,6 +210,8 @@ const sync = Effect.fnUntraced(function* (entry: typeof Entry.Type) {
   for (const change of changes) yield* apply(entry.repo, change);
 
   if (changes.length === 0) yield* RunLog.info(`${entry.repo}: up to date`);
+
+  return changes.length;
 });
 
 class LabelsFailed extends Schema.TaggedError<LabelsFailed>()("LabelsFailed", {
@@ -229,10 +231,17 @@ export const labels = Effect.fnUntraced(function* () {
   const entries = (yield* manifest()).filter((entry) => tracked(entry.repo));
   const failed: Array<string> = [];
 
+  const changed: Array<string> = [];
+
   yield* RunLog.info(`Syncing the labels of ${entries.length} repositories`);
 
   for (const entry of entries) {
     yield* sync(entry).pipe(
+      Effect.tap((count) =>
+        Effect.sync(() => {
+          if (count > 0) changed.push(entry.repo);
+        }),
+      ),
       Effect.catchCause((cause) =>
         RunLog.warn(`${entry.repo}: ${Cause.pretty(cause)}`).pipe(
           Effect.andThen(Effect.sync(() => failed.push(entry.repo))),
@@ -240,6 +249,10 @@ export const labels = Effect.fnUntraced(function* () {
       ),
     );
   }
+
+  yield* summary(
+    `Changed labels in ${listed(changed)}, ${entries.length - changed.length - failed.length} already in line, ${listed(failed)} failed`,
+  );
 
   if (failed.length > 0) return yield* new LabelsFailed({ repos: failed });
 });

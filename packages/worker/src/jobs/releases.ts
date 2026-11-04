@@ -8,7 +8,7 @@ import { Graphql } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import { Effect, Schema } from "effect";
 import * as RunLog from "../RunLog";
-import { Reporter, trackedFor } from "../Reporter";
+import { Reporter, summary, trackedFor } from "../Reporter";
 
 const document = `
   query ($after: String) {
@@ -101,5 +101,9 @@ export const releases = Effect.fnUntraced(function* () {
     );
   }
 
-  if (queued.length === 0) yield* RunLog.info("Queued nothing");
+  yield* summary(
+    queued.length === 0
+      ? `No new releases in ${found.length} repositories`
+      : `New releases: ${[...new Set(queued.map((run) => `${run.release?.repo.split("/").at(-1)} ${run.release?.tag}`))].join(", ")}`,
+  );
 });

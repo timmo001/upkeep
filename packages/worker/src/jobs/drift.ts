@@ -15,7 +15,7 @@ import { Api, Search } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { Yaml } from "effect/encoding";
-import { trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed } from "../Worker";
 import { checkout, reason, run, watch } from "./bump";
@@ -434,6 +434,19 @@ const driftRepository = Effect.fnUntraced(function* (
 
       const sha = (yield* run("git", ["rev-parse", "HEAD"], options)).trim();
 
+      // Its commits are on top, one per tool, even after a rebase.
+      const log = yield* run(
+        "git",
+        ["log", `-${moved.length}`, "--reverse", "--format=%H%x09%s"],
+        options,
+      );
+
+      for (const line of log.trim().split("\n")) {
+        const [commit = "", subject = ""] = line.split("\t");
+
+        yield* pushed(repo, commit, subject);
+      }
+
       yield* RunLog.info(
         `${repo}: pushed ${sha.slice(0, 7)}, ${moved.join(", ")}, watching CI`,
       );
@@ -467,6 +480,7 @@ export const drift = Effect.fnUntraced(function* () {
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
   const failed: Array<string> = [];
+  const updated: Array<string> = [];
 
   const counts: Record<Outcome, number> = {
     updated: 0,
@@ -485,6 +499,8 @@ export const drift = Effect.fnUntraced(function* () {
         Effect.tap((outcome) =>
           Effect.sync(() => {
             counts[outcome] += 1;
+
+            if (outcome === "updated") updated.push(repo);
           }),
         ),
         Effect.catchCause((cause) =>
@@ -496,8 +512,8 @@ export const drift = Effect.fnUntraced(function* () {
     { concurrency: 2, discard: true },
   );
 
-  yield* RunLog.info(
-    `${counts.updated} ${dryRun ? "would update" : "updated"}, ${counts.current} reviewed, ${counts.skipped} skipped, ${failed.length} need attention`,
+  yield* summary(
+    `${dryRun ? "Would update" : "Updated"} ${listed(updated)}, ${counts.current} reviewed, ${counts.skipped} skipped, ${listed(failed)} need attention`,
   );
 
   if (failed.length > 0 && !dryRun)

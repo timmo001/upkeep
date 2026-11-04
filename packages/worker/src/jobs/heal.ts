@@ -26,7 +26,7 @@ import {
 } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import * as Inbox from "../Inbox";
-import { Reporter, type Healing } from "../Reporter";
+import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { run as exec } from "./bump";
@@ -339,13 +339,21 @@ const handOff = Effect.fnUntraced(function* (
       Effect.succeed({
         action: `Left for the digest: the agent couldn't start, ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
         session: null,
-        attention: false,
+        attention: true,
+        said: null,
       }),
     ),
   );
 
   yield* RunLog.info(result.action);
   yield* reporter.heal({ action: result.action });
+  yield* summary(
+    result.said === null
+      ? result.action
+      : `${result.action}.\n\n${result.said}`,
+  );
+
+  if (result.attention) yield* attention;
 
   if (result.attention && result.session !== null)
     yield* askPerson(
@@ -373,7 +381,7 @@ const act = Effect.fnUntraced(function* (
           ? `Didn't queue ${run.job} again: it's parked`
           : `Queued ${run.job} again as ${queued.id}`;
 
-      yield* RunLog.info(action);
+      yield* summary(action);
       yield* reporter.heal({ action });
 
       return;
@@ -386,6 +394,8 @@ const act = Effect.fnUntraced(function* (
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
+      yield* reporter.report({ summary: `${action}: ${chosen.reason}` });
+      yield* attention;
 
       yield* askPerson(
         healing,
@@ -404,6 +414,8 @@ const act = Effect.fnUntraced(function* (
 
         yield* RunLog.warn(action);
         yield* reporter.heal({ action });
+        yield* reporter.report({ summary: action });
+        yield* attention;
 
         return;
       }
@@ -424,6 +436,8 @@ const act = Effect.fnUntraced(function* (
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });
+      yield* reporter.report({ summary: `${action}: ${chosen.reason}` });
+      yield* attention;
     }
   }
 });

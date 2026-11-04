@@ -13,7 +13,7 @@ import * as Managers from "../deps/Managers";
 import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
-import { trackedFor } from "../Reporter";
+import { listed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -245,8 +245,8 @@ export const deps = Effect.fnUntraced(function* () {
     { concurrency: 2, discard: true },
   ).pipe(Effect.provide([Datasources.layer, Updaters.layer]));
 
-  yield* RunLog.info(
-    `${planned} repositories with an updater config, ${groups} groups, ${failed.length} failed`,
+  yield* summary(
+    `Planned updates for ${planned} repositories, ${groups} groups, ${listed(failed.toSorted())} failed`,
   );
 
   if (failed.length > 0)

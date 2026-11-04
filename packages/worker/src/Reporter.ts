@@ -4,7 +4,7 @@
  * or nowhere for one run by hand with `upkeep run --local`.
  */
 import { Api, Client, Domain } from "@upkeep/api";
-import { Array as Arr, Context, Effect, Layer } from "effect";
+import { Array as Arr, Clock, Context, Effect, Layer } from "effect";
 import * as RunLog from "./RunLog";
 
 export class Reporter extends Context.Service<
@@ -40,6 +40,11 @@ export class Reporter extends Context.Service<
     readonly repos: (
       job: Domain.JobId,
     ) => Effect.Effect<ReadonlyArray<string>, unknown>;
+    /**
+     * Report the run's summary, a commit it pushed, or that it needs a
+     * person. A report that can't be sent is logged rather than failing the run.
+     */
+    readonly report: (report: Api.RunReport) => Effect.Effect<void>;
   }
 >()("@upkeep/worker/Reporter") {
   /** Send findings to the server, for the run `runId`. */
@@ -75,6 +80,14 @@ export class Reporter extends Context.Service<
           heal: (update) => client.work.heal({ params, payload: update }),
           heals: (since) => client.work.heals({ query: { since } }),
           repos: (job) => client.work.repos({ query: { job } }),
+          report: (report) =>
+            client.work
+              .report({ params, payload: report })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Couldn't report on the run", cause),
+                ),
+              ),
         });
       }),
     );
@@ -100,9 +113,48 @@ export class Reporter extends Context.Service<
         heal: () => Effect.void,
         heals: () => Effect.succeed([]),
         repos,
+        report: () => Effect.void,
       }),
     );
 }
+
+/** Repositories by name for a summary, or `none`. */
+export const listed = (repos: ReadonlyArray<string>) =>
+  repos.length === 0
+    ? "none"
+    : repos.map((repo) => repo.split("/").at(-1) ?? repo).join(", ");
+
+/** Write the run's summary to its log and the run. */
+export const summary = (message: string) =>
+  RunLog.info(message).pipe(
+    Effect.andThen(
+      Reporter.use((reporter) => reporter.report({ summary: message })),
+    ),
+  );
+
+/** Record a commit the run pushed. */
+export const pushed = Effect.fnUntraced(function* (
+  repo: string,
+  sha: string,
+  subject: string,
+) {
+  const reporter = yield* Reporter;
+
+  yield* reporter.report({
+    change: {
+      repo,
+      sha,
+      subject,
+      url: `https://github.com/${repo}/commit/${sha}`,
+      at: yield* Clock.currentTimeMillis,
+    },
+  });
+});
+
+/** Mark the run as having left something for a person. */
+export const attention = Reporter.use((reporter) =>
+  reporter.report({ attention: true }),
+);
 
 /**
  * Whether a repository is tracked for a job, ignoring case as GitHub does.

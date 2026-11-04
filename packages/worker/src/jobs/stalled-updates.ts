@@ -12,7 +12,7 @@
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Config, Effect, Path, Schema } from "effect";
-import { trackedFor } from "../Reporter";
+import { attention, listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -272,6 +272,8 @@ const takeOver = Effect.fnUntraced(function* (
 
   const sha = yield* commitAndPush(message, branch, options);
 
+  yield* pushed(repo, sha, message);
+
   yield* close(
     pr,
     `Upkeep took this update over after its checks failed here, and pushed it to \`${branch}\` in ${sha}.`,
@@ -356,6 +358,12 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
       ),
     { concurrency: 4, discard: true },
   );
+
+  yield* summary(
+    `${found.length} open update pull requests: ${dryRun ? "would take over" : "took over"} ${taking - failed.length} in ${listed([...byRepo.keys()].filter((repo) => !failed.includes(repo)))}, left ${left}, ${listed(failed)} failed`,
+  );
+
+  if (failed.length > 0 && !dryRun) yield* attention;
 
   if (failed.length === 0) return;
 

@@ -9,7 +9,7 @@
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Cause, Effect, Path, Schema } from "effect";
-import { Reporter } from "../Reporter";
+import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -249,9 +249,13 @@ export const ci = Effect.fnUntraced(function* () {
     { concurrency: 4, discard: true },
   );
 
-  yield* RunLog.info(
-    `${repos.length - failed.length} of ${repos.length} repositories are green`,
+  yield* summary(
+    failed.length === 0
+      ? `All ${repos.length} repositories are green`
+      : `${repos.length - failed.length} of ${repos.length} repositories are green; red: ${listed(failed.toSorted())}`,
   );
+
+  if (failed.length > 0) yield* attention;
 
   if (failed.length > 0)
     return yield* new ConsumersFailed({

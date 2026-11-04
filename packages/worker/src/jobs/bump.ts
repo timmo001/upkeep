@@ -23,7 +23,7 @@ import {
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as RunLog from "../RunLog";
-import { trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as Settings from "../settings";
 import { ConsumersFailed, skipped } from "../Worker";
 
@@ -641,6 +641,8 @@ const bumpRepository = Effect.fnUntraced(function* (
 
   const sha = yield* commitAndPush(message, branch, options);
 
+  yield* pushed(repo, sha, message);
+
   yield* RunLog.info(
     `${repo}: pushed ${sha.slice(0, 7)} "${message}", watching CI`,
   );
@@ -681,14 +683,13 @@ export const bump = Effect.fnUntraced(function* (
   );
 
   if (consumers.size === 0) {
-    yield* RunLog.info(
-      `Nothing uses ${release.repo}, so there's nothing to bump`,
-    );
+    yield* summary(`Nothing uses ${release.repo}, so there's nothing to bump`);
 
     return skipped;
   }
 
   const failed: Array<string> = [];
+  const updated: Array<string> = [];
 
   const counts: Record<Outcome, number> = {
     updated: 0,
@@ -707,6 +708,8 @@ export const bump = Effect.fnUntraced(function* (
         Effect.tap((outcome) =>
           Effect.sync(() => {
             counts[outcome] += 1;
+
+            if (outcome === "updated") updated.push(repo);
           }),
         ),
         Effect.catchCause((cause) =>
@@ -718,8 +721,13 @@ export const bump = Effect.fnUntraced(function* (
     { concurrency: 4, discard: true },
   );
 
-  yield* RunLog.info(
-    `${counts.updated} ${dryRun ? "would update" : "updated"}, ${counts.current} already up to date, ${counts.skipped} skipped, ${failed.length} failed`,
+  yield* summary(
+    [
+      `${release.repo} ${release.tag}:`,
+      `${dryRun ? "would update" : "updated"} ${listed(updated)},`,
+      `${counts.current} already up to date, ${counts.skipped} skipped,`,
+      `${listed(failed)} failed`,
+    ].join(" "),
   );
 
   if (failed.length > 0)

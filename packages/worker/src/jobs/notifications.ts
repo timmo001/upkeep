@@ -8,7 +8,7 @@
 import { Api } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Cause, Effect, Schema } from "effect";
-import { trackedFor } from "../Reporter";
+import { summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
 const Thread = Schema.Struct({
@@ -130,8 +130,8 @@ export const notifications = Effect.fnUntraced(function* () {
     if (outcome === "unchecked") unchecked += 1;
   }
 
-  yield* RunLog.info(
-    `Dismissed ${dismissed} of ${threads.length} unread pull request notifications`,
+  yield* summary(
+    `Dismissed ${dismissed} of ${threads.length} unread pull request notifications${unchecked > 0 ? `, ${unchecked} couldn't be checked` : ""}`,
   );
 
   if (unchecked > 0)
