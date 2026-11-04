@@ -47,11 +47,9 @@ export const report = (state: State) => {
       : [`${state.asking} heal${state.asking === 1 ? "" : "s"} asking`]),
   ];
 
-  const health: "ok" | "warning" | "degraded" = !state.reachable
-    ? "degraded"
-    : state.parked.length > 0 || state.asking > 0 || state.last?.failed
-      ? "warning"
-      : "ok";
+  // Parked jobs, asking heals and failed runs are the dashboard's to show;
+  // the worker itself is only unwell when it can't reach the server.
+  const health: "ok" | "degraded" = state.reachable ? "ok" : "degraded";
 
   return { health, summary: parts.join(" · ") };
 };
