@@ -330,7 +330,7 @@ const handOff = Effect.fnUntraced(function* (
   const result = yield* fix(
     healing.heal,
     run,
-    healing.log,
+    relevant(healing.heal, healing.log),
     healing.precedents,
     agent,
     (update) => reporter.heal(update),
