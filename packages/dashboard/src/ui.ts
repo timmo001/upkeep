@@ -13,7 +13,7 @@ import {
   mdiPlayCircleOutline,
   mdiProgressClock,
 } from "@mdi/js";
-import type { Api, Domain } from "@upkeep/api";
+import { type Api, Catalogue, type Domain } from "@upkeep/api";
 import { type Cause, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, svg, type TemplateResult } from "lit";
@@ -191,12 +191,20 @@ const states: Record<
   cancelled: { path: mdiCancel, tone: "warning" },
 };
 
+/** Text with its first letter in capitals, for an ID shown as a label. */
+export const capitalise = (text: string) =>
+  `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
+/** A job's name, such as `Stalled updates`, from its ID. */
+export const jobName = (id: string) =>
+  Catalogue.jobs.find((job) => job.id === id)?.name ?? capitalise(id);
+
 export const stateBadge = (state: Domain.RunState) =>
   html`<gw-badge
     size="small"
     icon=${states[state].path}
     tone=${states[state].tone}
-    >${state}</gw-badge
+    >${capitalise(state)}</gw-badge
   >`;
 
 const signOut = () => registry.set(token, "");

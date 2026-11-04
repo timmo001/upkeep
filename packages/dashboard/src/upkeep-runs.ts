@@ -14,9 +14,11 @@ import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import {
   attentionBadge,
+  capitalise,
   duration,
   empty,
   externalLink,
+  jobName,
   shared,
   stateBadge,
   time,
@@ -125,7 +127,7 @@ export class UpkeepRuns extends LitElement {
               header: "Job",
               cell: draw(
                 (run: Domain.Run) =>
-                  html`<a href=${jobHref(run.job)}>${run.job}</a>`,
+                  html`<a href=${jobHref(run.job)}>${jobName(run.job)}</a>`,
               ),
             },
           ]
@@ -135,10 +137,13 @@ export class UpkeepRuns extends LitElement {
         header: "Trigger",
         cell: draw(
           (run) =>
-            html`${run.trigger}${
+            html`${capitalise(run.trigger)}${
               run.heal === null
                 ? ""
-                : html` of <a href=${runHref(run.heal.of)}>${run.heal.job}</a>`
+                : html` of
+                    <a href=${runHref(run.heal.of)}
+                      >${jobName(run.heal.job)}</a
+                    >`
             }`,
         ),
       },
@@ -197,9 +202,11 @@ export class UpkeepRuns extends LitElement {
       .rows=${list.map((run) => ({
         id: run.id,
         state: run.state,
-        job: run.job,
+        job: jobName(run.job),
         trigger:
-          run.heal === null ? run.trigger : `${run.trigger} ${run.heal.job}`,
+          run.heal === null
+            ? run.trigger
+            : `${run.trigger} ${jobName(run.heal.job)}`,
         summary: run.summary?.split("\n")[0] ?? "",
         release:
           run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,

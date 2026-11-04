@@ -9,10 +9,12 @@ import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import {
   attentionBadge,
+  capitalise,
   commit,
   duration,
   externalLink,
   formatTime,
+  jobName,
   shared,
   stateBadge,
   time,
@@ -43,9 +45,9 @@ const target = (heal: Domain.Heal) =>
   heal.target.kind === "upkeep" ? "Upkeep" : heal.target.repo;
 
 const healFacts = (heal: Domain.Heal) => html`
-  ${fact("Heals", html`<a href=${runHref(heal.of)}>${heal.job}</a>`)}
+  ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
-  ${heal.decision === null ? null : fact("Decision", heal.decision)}
+  ${heal.decision === null ? null : fact("Decision", capitalise(heal.decision))}
   ${heal.reason === null ? null : fact("Why", heal.reason)}
   ${
     heal.model === null
@@ -88,9 +90,11 @@ export class UpkeepRun extends LitElement {
   static override styles = [
     shared,
     css`
+      /* Each label lines up with the text or badge beside it */
       dl {
         display: grid;
         grid-template-columns: max-content 1fr;
+        align-items: baseline;
         gap: var(--gw-space-2) var(--gw-space-4);
         margin: var(--gw-space-4) 0;
       }
@@ -198,7 +202,7 @@ export class UpkeepRun extends LitElement {
     ).length;
 
     return html`
-      ${fact("Lane", lane)}
+      ${fact("Lane", capitalise(lane))}
       ${fact(
         "Waiting for",
         running.length === 0
@@ -206,7 +210,7 @@ export class UpkeepRun extends LitElement {
           : html`${running.map(
               (item, index) =>
                 html`${index === 0 ? null : ", "}<a href=${runHref(item.id)}
-                    >${item.job}</a
+                    >${jobName(item.job)}</a
                   >
                   on ${item.worker ?? "a worker"}`,
             )}${ahead === 0 ? null : html`, then ${ahead} queued before it`}`,
@@ -218,7 +222,7 @@ export class UpkeepRun extends LitElement {
     return view(
       this.#run.value,
       (current) => html`
-        <gw-page-header heading=${current.job}>
+        <gw-page-header heading=${jobName(current.job)}>
           <gw-button
             slot="start"
             href=${jobHref(current.job)}
@@ -248,7 +252,7 @@ export class UpkeepRun extends LitElement {
             html`${stateBadge(current.state)}
             ${current.attention ? attentionBadge : null}`,
           )}
-          ${fact("Trigger", current.trigger)}
+          ${fact("Trigger", capitalise(current.trigger))}
           ${
             current.release === null
               ? null

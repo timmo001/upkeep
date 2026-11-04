@@ -5,7 +5,7 @@ import { mdiArrowLeft } from "@mdi/js";
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { empty, shared, time, view } from "./ui.ts";
-import { homeHref, jobs } from "./upkeep.ts";
+import { jobs, jobsHref } from "./upkeep.ts";
 import { jobActions } from "./upkeep-overview.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
@@ -43,7 +43,7 @@ export class UpkeepJob extends LitElement {
         <gw-page-header heading=${job.name} description=${job.description}>
           <gw-button
             slot="start"
-            href=${homeHref}
+            href=${jobsHref}
             appearance="plain"
             variant="neutral"
             icon=${mdiArrowLeft}
