@@ -113,8 +113,20 @@ export const ci: Job = {
   tracked: true,
 };
 
+export const watch: Job = {
+  id: "watch",
+  name: "Watch",
+  description:
+    "Read what landed on each tracked repository's default branch, by anyone, for the inbox: your commits, merged updates and anything else outside Upkeep's own runs",
+  schedule: "*/15 * * * *",
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
+  watch,
   labels,
   bump,
   heal,

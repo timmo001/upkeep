@@ -36,10 +36,21 @@ export class Reporter extends Context.Service<
     readonly heals: (
       since: number,
     ) => Effect.Effect<ReadonlyArray<Domain.Run>, unknown>;
-    /** The repositories the server tracks for a job, the only ones it works on. */
+    /**
+     * The repositories the server tracks for a job, the only ones it works
+     * on, or every tracked repository without one.
+     */
     readonly repos: (
-      job: Domain.JobId,
+      job?: Domain.JobId,
     ) => Effect.Effect<ReadonlyArray<string>, unknown>;
+    /** Which of these commits the inbox already has. */
+    readonly known: (
+      commits: ReadonlyArray<Api.CommitRef>,
+    ) => Effect.Effect<ReadonlyArray<Api.CommitRef>, unknown>;
+    /** Add commits found outside Upkeep's runs to the inbox. Returns how many were new. */
+    readonly seen: (
+      commits: ReadonlyArray<Domain.Change>,
+    ) => Effect.Effect<number, unknown>;
     /**
      * Report the run's summary, a commit it pushed, or that it needs a
      * person. A report that can't be sent is logged rather than failing the run.
@@ -79,7 +90,34 @@ export class Reporter extends Context.Service<
             }),
           heal: (update) => client.work.heal({ params, payload: update }),
           heals: (since) => client.work.heals({ query: { since } }),
-          repos: (job) => client.work.repos({ query: { job } }),
+          repos: (job) =>
+            client.work.repos({ query: job === undefined ? {} : { job } }),
+          known: Effect.fnUntraced(function* (commits) {
+            const known: Array<Api.CommitRef> = [];
+
+            for (const batch of Arr.chunksOf(commits, Api.maxCommits)) {
+              const result = yield* client.work.known({
+                payload: { commits: batch },
+              });
+
+              known.push(...result.known);
+            }
+
+            return known;
+          }),
+          seen: Effect.fnUntraced(function* (commits) {
+            let added = 0;
+
+            for (const batch of Arr.chunksOf(commits, Api.maxCommits)) {
+              const result = yield* client.work.seen({
+                payload: { commits: batch },
+              });
+
+              added += result.added;
+            }
+
+            return added;
+          }),
           report: (report) =>
             client.work
               .report({ params, payload: report })
@@ -98,7 +136,9 @@ export class Reporter extends Context.Service<
    * repositories come from `repos`, as an admin reads them.
    */
   static readonly local = (
-    repos: (job: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
+    repos: (
+      job?: Domain.JobId,
+    ) => Effect.Effect<ReadonlyArray<string>, unknown>,
   ) =>
     Layer.succeed(
       Reporter,
@@ -113,6 +153,12 @@ export class Reporter extends Context.Service<
         heal: () => Effect.void,
         heals: () => Effect.succeed([]),
         repos,
+        known: () => Effect.succeed([]),
+        seen: (commits) =>
+          RunLog.info(`Would add ${commits.length} commits to the inbox`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+            Effect.as(commits.length),
+          ),
         report: () => Effect.void,
       }),
     );

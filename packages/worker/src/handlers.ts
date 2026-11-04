@@ -9,10 +9,12 @@ import { labels } from "./jobs/labels";
 import { notifications } from "./jobs/notifications";
 import { releases } from "./jobs/releases";
 import { stalledUpdates } from "./jobs/stalled-updates";
+import { watch } from "./jobs/watch";
 import type { Handlers } from "./Worker";
 
 export const handlers: Handlers = {
   releases: () => releases(),
+  watch: () => watch(),
   labels: () => labels(),
   bump: (release) => bump(release),
   heal: () => heal(),

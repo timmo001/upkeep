@@ -249,7 +249,7 @@ export const work = Effect.fn("Worker.work")(function* (
 export const runLocal = (
   handler: Handler,
   release: Domain.Release | null,
-  repos: (job: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
+  repos: (job?: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
 ) =>
   handler(release).pipe(
     Effect.provide([Reporter.local(repos), RunLog.console]),

@@ -217,7 +217,10 @@ const run = Command.make(
                 const all = yield* client.repos.list();
 
                 return all
-                  .filter((tracked) => tracked.jobs.includes(job))
+                  .filter(
+                    (tracked) =>
+                      job === undefined || tracked.jobs.includes(job),
+                  )
                   .map((tracked) => tracked.repo);
               }).pipe(Effect.provide(adminClient(url))),
           }),
