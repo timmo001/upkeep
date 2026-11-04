@@ -44,6 +44,30 @@ test("a pin move in a Python requirements file is routine", () => {
   ).toBeTrue();
 });
 
+test("a submodule move and any lockfile are routine", () => {
+  expect(
+    routine([
+      {
+        filename: "omarchy/plugins/agent-checks",
+        patch: "@@ -1 +1 @@\n-Subproject commit aaa\n+Subproject commit bbb",
+      },
+      { filename: "herdr/plugins/plugins.lock" },
+      { filename: ".mise/locks/npm-skills/1.7.6/aube-lock.yaml" },
+    ]),
+  ).toBeTrue();
+});
+
+test("a bot's commit is routine unless it touches source code", () => {
+  const mirrored = [
+    { filename: "upkeep/config.yaml" },
+    { filename: "upkeep/CHANGELOG.md" },
+  ];
+
+  expect(routine(mirrored)).toBeFalse();
+  expect(routine(mirrored, true)).toBeTrue();
+  expect(routine([{ filename: "src/index.ts" }], true)).toBeFalse();
+});
+
 test("a script change in package.json is not routine", () => {
   expect(
     routine([

@@ -191,6 +191,14 @@ const migrations = SqliteMigrator.fromRecord({
       WHERE sha IS NOT NULL
     `;
   }),
+  // The first watch runs marked bots' and lockfile-only commits worth reading,
+  // and the watch job skips commits the inbox has, so start it again.
+  "0009_inbox_refill": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`DELETE FROM entry_items`;
+    yield* sql`DELETE FROM entries`;
+  }),
 });
 
 const RunRow = Schema.Struct({

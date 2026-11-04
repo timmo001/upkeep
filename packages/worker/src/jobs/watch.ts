@@ -47,10 +47,18 @@ export interface Touched {
 }
 
 const lockfile =
-  /(^|\/)(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|go\.sum|uv\.lock|poetry\.lock|Gemfile\.lock|composer\.lock|flake\.lock|mise\.lock)$/;
+  /(^|\/)(bun\.lockb|package-lock\.json|npm-shrinkwrap\.json|go\.sum)$|\.lock$|-lock\.ya?ml$|(^|\/)\.mise\/locks\//;
 
 const toolFile =
-  /(^|\/)(\.?mise\.toml|\.tool-versions|tooling\.ya?ml|renovate\.json5?|\.renovaterc(\.json)?)$/;
+  /(^|\/)(\.?mise\.toml|mise\/config\.toml|\.tool-versions|tooling\.ya?ml|renovate\.json5?|\.renovaterc(\.json)?)$/;
+
+/** Source code, which a bot's update never needs to touch. */
+const sourceFile =
+  /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|c|h|cc|cpp|cs|rb|php|qml|lua|sh|bash|zsh|fish|vue|svelte|astro|css|scss)$/;
+
+/** A diff that only moves a submodule to another commit. */
+const submoduleMove = (patch: string) =>
+  changedLines(patch).every((line) => line.startsWith("Subproject commit "));
 
 const workflow = /(^\.github\/workflows\/.+|(^|\/)action)\.ya?ml$/;
 
@@ -88,12 +96,19 @@ const changedLines = (patch: string) =>
 
 /**
  * Whether a commit is routine: every file it touched is a lockfile, a tool or
- * updater config, or a manifest or workflow whose diff only moves versions.
+ * updater config, a submodule moved, or a manifest or workflow whose diff only
+ * moves versions. A bot's commit, such as Renovate's or a release mirrored to
+ * another repository, is routine unless it touches source code, since a code
+ * change an update needs comes as a commit of its own.
  */
-export const routine = (files: ReadonlyArray<Touched>) =>
+export const routine = (files: ReadonlyArray<Touched>, bot = false) =>
   files.length > 0 &&
   files.every(({ filename, patch }) => {
+    if (bot) return !sourceFile.test(filename);
+
     if (lockfile.test(filename) || toolFile.test(filename)) return true;
+
+    if (patch !== undefined && submoduleMove(patch)) return true;
 
     if (!workflow.test(filename) && !manifest.test(filename)) return false;
 
@@ -122,6 +137,7 @@ export const place = (
   const at = Date.parse(commit.commit.committer?.date ?? "") || 0;
   const name = repo.split("/").at(-1) ?? repo;
   const day = new Date(at).toISOString().slice(0, 10);
+  const bot = bots.test(login);
 
   const base = {
     repo,
@@ -129,10 +145,10 @@ export const place = (
     subject,
     url: commit.html_url,
     at,
-    routine: routine(touched),
+    routine: routine(touched, bot),
   };
 
-  if (bots.test(login)) {
+  if (bot) {
     const update = withoutNumber(subject);
 
     return {
