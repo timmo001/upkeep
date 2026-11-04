@@ -286,6 +286,9 @@ const askPerson = (
   const { heal: record, run, log } = healing;
   const consumer = record.target.kind === "consumer";
   const target = consumer ? record.target.repo : "Upkeep";
+  // One failed run gets a heal per repository, so the key needs the target
+  // too, or the Inbox turns every message after the first away as a replay.
+  const key = `upkeep-heal-${run.id}-${target}`;
 
   // What the agent found says more than the raw log it started from.
   if (said !== null)
@@ -302,7 +305,7 @@ const askPerson = (
         "",
         said.replace(/\n*Outcome:.*$/i, "").trim(),
       ].join("\n"),
-      `upkeep-heal-${run.id}-${record.of}`,
+      key,
     );
 
   const lines = relevant(record, log)
@@ -333,7 +336,7 @@ const askPerson = (
       quote,
       "```",
     ].join("\n"),
-    `upkeep-heal-${run.id}-${record.of}`,
+    key,
   );
 };
 
