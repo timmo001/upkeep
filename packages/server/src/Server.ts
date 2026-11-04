@@ -256,6 +256,7 @@ const JobsHandlers = HttpApiBuilder.group(
           schedule: job.schedule,
           onRelease: job.onRelease,
           lane: job.lane,
+          tracked: job.tracked,
           lastRun: latest.get(job.id) ?? null,
           parked: parked.get(job.id) ?? null,
         }));
@@ -486,9 +487,30 @@ const WorkHandlers = HttpApiBuilder.group(
           Effect.annotateLogs({ worker: worker.name, reason: payload.reason }),
         );
       }),
+      repos: ({ query }) =>
+        store.repos().pipe(
+          Effect.map((all) =>
+            all
+              .filter((tracked) => tracked.jobs.includes(query.job))
+              .map((tracked) => tracked.repo),
+          ),
+          Effect.orDie,
+        ),
       releases: Effect.fn(function* ({ payload }) {
+        // Only the releases of repositories tracked for it count, whatever a
+        // worker sends.
+        const tracked = new Set(
+          (yield* store.repos().pipe(Effect.orDie))
+            .filter((repo) => repo.jobs.includes(Catalogue.releases.id))
+            .map((repo) => repo.repo.toLowerCase()),
+        );
+
         const changed = yield* store
-          .recordReleases(payload.releases)
+          .recordReleases(
+            payload.releases.filter((release) =>
+              tracked.has(release.repo.toLowerCase()),
+            ),
+          )
           .pipe(Effect.orDie);
 
         const onRelease = Catalogue.jobs.filter((job) => job.onRelease);
@@ -505,6 +527,55 @@ const WorkHandlers = HttpApiBuilder.group(
         ).pipe(Effect.provideService(Store, store), Effect.orDie);
 
         return { queued: queued.flatMap(Option.toArray) };
+      }),
+    });
+  }),
+);
+
+const ReposHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "repos",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      list: () => store.repos().pipe(Effect.orDie),
+      track: Effect.fn(function* ({ params, payload }) {
+        const admin = yield* Api.CurrentAdmin;
+        const repo = `${params.owner}/${params.name}`;
+        const tracked = Catalogue.jobs.filter((job) => job.tracked);
+
+        const unknown = (payload.jobs ?? []).filter(
+          (id) => !tracked.some((job) => job.id === id),
+        );
+
+        if (unknown.length > 0) {
+          return yield* new Api.UntrackedJobs({ jobs: unknown });
+        }
+
+        const jobs = [
+          ...new Set(payload.jobs ?? tracked.map((job) => job.id)),
+        ].toSorted();
+
+        const saved = yield* store.track(repo, jobs).pipe(Effect.orDie);
+
+        yield* Effect.logInfo(`Tracked ${saved.repo}`).pipe(
+          Effect.annotateLogs({ admin: admin.name, jobs: jobs.join(",") }),
+        );
+
+        return saved;
+      }),
+      untrack: Effect.fn(function* ({ params }) {
+        const admin = yield* Api.CurrentAdmin;
+        const repo = `${params.owner}/${params.name}`;
+
+        if (!(yield* store.untrack(repo).pipe(Effect.orDie))) {
+          return yield* new Api.RepoNotTracked({ repo });
+        }
+
+        yield* Effect.logInfo(`Stopped tracking ${repo}`).pipe(
+          Effect.annotateLogs({ admin: admin.name }),
+        );
       }),
     });
   }),
@@ -550,6 +621,7 @@ const apiRoutes = (
       JobsHandlers,
       RunsHandlers,
       WorkHandlers,
+      ReposHandlers,
       TokensHandlers,
       SystemHandlers,
     ]),

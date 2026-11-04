@@ -263,3 +263,23 @@ test("a repository's first release is only recorded", () =>
       expect(yield* store.recordReleases([v2])).toEqual([v2]);
     }),
   ));
+
+test("tracking a repository again replaces its jobs, ignoring case", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.track("timmo001/a", ["bump", "labels"]);
+
+      const again = yield* store.track("Timmo001/A", ["drift"]);
+
+      expect(again.repo).toBe("Timmo001/A");
+      expect(again.jobs).toEqual(["drift"]);
+      expect((yield* store.repos()).map((repo) => repo.repo)).toEqual([
+        "Timmo001/A",
+      ]);
+      expect(yield* store.untrack("timmo001/a")).toBe(true);
+      expect(yield* store.untrack("timmo001/a")).toBe(false);
+      expect(yield* store.repos()).toEqual([]);
+    }),
+  ));

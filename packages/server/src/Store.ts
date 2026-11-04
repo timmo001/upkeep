@@ -1,6 +1,7 @@
 /**
  * The server's state in SQLite: runs and their logs, the latest release seen
- * of each repository, and the hashes of the tokens it's issued.
+ * of each repository, the repositories it tracks, and the hashes of the
+ * tokens it's issued.
  */
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun";
 import { Api, Domain } from "@upkeep/api";
@@ -113,6 +114,17 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE runs ADD COLUMN heal_issue TEXT`;
     yield* sql`ALTER TABLE parked ADD COLUMN issue TEXT`;
   }),
+  "0004_tracked_repos": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE repos (
+        repo TEXT PRIMARY KEY COLLATE NOCASE,
+        jobs TEXT NOT NULL,
+        added_at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -200,6 +212,15 @@ const decodeReleases = Schema.decodeUnknownEffect(Schema.Array(Domain.Release));
 
 const decodeParked = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Parked.fields })),
+);
+
+const decodeRepos = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      ...Domain.TrackedRepo.fields,
+      jobs: Schema.fromJsonString(Domain.TrackedRepo.fields.jobs),
+    }),
+  ),
 );
 
 /** A run to queue, and what started it. */
@@ -331,6 +352,18 @@ export class Store extends Context.Service<
     recordReleases(
       releases: ReadonlyArray<Domain.Release>,
     ): Effect.Effect<ReadonlyArray<Domain.Release>, StoreError>;
+    /** Every tracked repository, by name. */
+    repos(): Effect.Effect<ReadonlyArray<Domain.TrackedRepo>, StoreError>;
+    /**
+     * Track a repository with the jobs it's opted into, replacing them when
+     * it's already tracked. Names are matched ignoring case.
+     */
+    track(
+      repo: string,
+      jobs: ReadonlyArray<string>,
+    ): Effect.Effect<Domain.TrackedRepo, StoreError>;
+    /** Stop tracking a repository, returning whether it was tracked. */
+    untrack(repo: string): Effect.Effect<boolean, StoreError>;
     addToken(
       scope: Api.TokenScope,
       name: string,
@@ -785,6 +818,45 @@ export class Store extends Context.Service<
       Effect.mapError(storeError),
     );
 
+    const selectRepos = (
+      statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
+    ) => statement.pipe(Effect.flatMap(decodeRepos));
+
+    const repos = Effect.fn("Store.repos")(function* () {
+      return yield* selectRepos(sql`
+        SELECT repo, jobs, added_at FROM repos ORDER BY repo COLLATE NOCASE
+      `);
+    }, Effect.mapError(storeError));
+
+    const track = Effect.fn("Store.track")(function* (
+      repo: string,
+      jobs: ReadonlyArray<string>,
+    ) {
+      const [tracked] = yield* selectRepos(sql`
+        INSERT INTO repos ${sql.insert({
+          repo,
+          jobs: JSON.stringify(jobs),
+          addedAt: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (repo) DO UPDATE
+        SET repo = excluded.repo, jobs = excluded.jobs
+        RETURNING repo, jobs, added_at
+      `);
+
+      if (tracked === undefined) {
+        return yield* Effect.die(new Error("The tracked repo wasn't returned"));
+      }
+
+      return tracked;
+    }, Effect.mapError(storeError));
+
+    const untrack = Effect.fn("Store.untrack")(function* (repo: string) {
+      const rows =
+        yield* sql`DELETE FROM repos WHERE repo = ${repo} RETURNING repo`;
+
+      return rows.length > 0;
+    }, Effect.mapError(storeError));
+
     const addToken = Effect.fn("Store.addToken")(function* (
       scope: Api.TokenScope,
       name: string,
@@ -857,6 +929,9 @@ export class Store extends Context.Service<
       prune,
       failLost,
       recordReleases,
+      repos,
+      track,
+      untrack,
       addToken,
       tokenName,
       tokens,

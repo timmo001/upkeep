@@ -1,7 +1,8 @@
 /**
  * The server's HTTP API, shared by the server, its workers and the CLI so each
  * side encodes and decodes the same shapes. Admins read jobs and runs, start
- * runs and manage tokens; workers take runs and report on them.
+ * runs and manage tracked repositories and tokens; workers take runs and
+ * report on them.
  */
 import { Context, Schema } from "effect";
 import {
@@ -27,6 +28,7 @@ import {
   RepoName,
   Run,
   RunState,
+  TrackedRepo,
 } from "./Domain";
 
 /** The admin a request was authenticated as. */
@@ -86,6 +88,28 @@ export class RunFinished extends Schema.TaggedError<RunFinished>()(
 ) {
   override get message() {
     return `Run ${this.id} has already ${this.state}`;
+  }
+}
+
+/** A repository the server doesn't track. */
+export class RepoNotTracked extends Schema.TaggedError<RepoNotTracked>()(
+  "RepoNotTracked",
+  { repo: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `${this.repo} isn't tracked`;
+  }
+}
+
+/** Jobs a repository can't be opted into: unknown, or not working on repositories. */
+export class UntrackedJobs extends Schema.TaggedError<UntrackedJobs>()(
+  "UntrackedJobs",
+  { jobs: Schema.Array(Schema.String) },
+  { httpApiStatus: 400 },
+) {
+  override get message() {
+    return `A repository can't be opted into ${this.jobs.join(", ")}: only jobs that work on repositories`;
   }
 }
 
@@ -340,6 +364,11 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: HttpApiSchema.NoContent,
       error: JobNotFound,
     }),
+    /** The repositories opted into a job, which are all it works on. */
+    HttpApiEndpoint.get("repos", "/repos", {
+      query: { job: JobId },
+      success: Schema.Array(RepoName),
+    }),
     /**
      * The latest release of each repository. The server queues every job
      * that runs on releases for each one that changed, and only records a
@@ -361,6 +390,38 @@ export class WorkGroup extends HttpApiGroup.make("work")
       title: "Work",
       description:
         "Runs for workers to take, their logs and outcomes, and the releases they find",
+    }),
+  ) {}
+
+export class ReposGroup extends HttpApiGroup.make("repos")
+  .add(
+    HttpApiEndpoint.get("list", "/", {
+      success: Schema.Array(TrackedRepo),
+    }),
+    /**
+     * Track a repository, or change the jobs it's opted into. Without `jobs`
+     * it's opted into every job that works on repositories.
+     */
+    HttpApiEndpoint.put("track", "/:owner/:name", {
+      params: { owner: Schema.String, name: Schema.String },
+      payload: Schema.Struct({ jobs: Schema.optionalKey(Schema.Array(JobId)) }),
+      success: TrackedRepo,
+      error: UntrackedJobs,
+    }),
+    /** Stop tracking a repository, so no job works on it. */
+    HttpApiEndpoint.delete("untrack", "/:owner/:name", {
+      params: { owner: Schema.String, name: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: RepoNotTracked,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/repos")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Repositories",
+      description:
+        "The repositories Upkeep looks after and the jobs each is opted into",
     }),
   ) {}
 
@@ -409,6 +470,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(JobsGroup)
   .add(RunsGroup)
   .add(WorkGroup)
+  .add(ReposGroup)
   .add(TokensGroup)
   .add(SystemGroup)
   .annotateMerge(OpenApi.annotations({ title: "Upkeep" })) {}

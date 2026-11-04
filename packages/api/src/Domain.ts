@@ -32,6 +32,11 @@ export const Job = Schema.Struct({
   /** Whether a new release of one of the repositories starts it. */
   onRelease: Schema.Boolean,
   lane: Lane,
+  /**
+   * Whether it works on repositories, and so only on the ones tracked on the
+   * server and opted into it.
+   */
+  tracked: Schema.Boolean,
 });
 
 export interface Job extends Schema.Schema.Type<typeof Job> {}
@@ -81,6 +86,18 @@ export type Outcome = typeof Outcome.Type;
 export const RepoName = Schema.String.check(
   Schema.isPattern(/^[\w.-]+\/[\w.-]+$/),
 );
+
+/**
+ * A repository Upkeep looks after, and the jobs it's opted into. A job that
+ * works on repositories leaves every other one alone.
+ */
+export const TrackedRepo = Schema.Struct({
+  repo: RepoName,
+  jobs: Schema.Array(JobId),
+  addedAt: Schema.Finite,
+});
+
+export interface TrackedRepo extends Schema.Schema.Type<typeof TrackedRepo> {}
 
 /**
  * What a heal works on: Upkeep itself, or a consumer whose checks failed

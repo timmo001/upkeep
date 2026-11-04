@@ -12,6 +12,7 @@ export const releases: Job = {
   schedule: "*/30 * * * *",
   onRelease: false,
   lane: "quick",
+  tracked: true,
 };
 
 export const labels: Job = {
@@ -22,6 +23,7 @@ export const labels: Job = {
   schedule: "0 4 * * *",
   onRelease: false,
   lane: "quick",
+  tracked: true,
 };
 
 export const bump: Job = {
@@ -32,6 +34,7 @@ export const bump: Job = {
   schedule: null,
   onRelease: true,
   lane: "repos",
+  tracked: true,
 };
 
 export const heal: Job = {
@@ -42,6 +45,7 @@ export const heal: Job = {
   schedule: null,
   onRelease: false,
   lane: "heal",
+  tracked: false,
 };
 
 export const digest: Job = {
@@ -51,6 +55,7 @@ export const digest: Job = {
   schedule: "0 20 * * *",
   onRelease: false,
   lane: "quick",
+  tracked: false,
 };
 
 export const notifications: Job = {
@@ -61,6 +66,7 @@ export const notifications: Job = {
   schedule: "*/15 * * * *",
   onRelease: false,
   lane: "quick",
+  tracked: true,
 };
 
 export const stalledUpdates: Job = {
@@ -71,6 +77,7 @@ export const stalledUpdates: Job = {
   schedule: "0 * * * *",
   onRelease: false,
   lane: "repos",
+  tracked: true,
 };
 
 export const drift: Job = {
@@ -81,6 +88,7 @@ export const drift: Job = {
   schedule: "0 */6 * * *",
   onRelease: false,
   lane: "repos",
+  tracked: true,
 };
 
 export const deps: Job = {
@@ -91,6 +99,7 @@ export const deps: Job = {
   schedule: "0 */6 * * *",
   onRelease: false,
   lane: "repos",
+  tracked: true,
 };
 
 export const jobs: ReadonlyArray<Job> = [
