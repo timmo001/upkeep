@@ -25,7 +25,7 @@ The server speaks plain HTTP on port 7272, so tokens are only as private as your
 
 ## Dashboard
 
-Open **Upkeep** in the sidebar for the dashboard: the jobs with their last run, the latest runs, and each run's log as it goes. Home Assistant has already signed you in, so it needs no token there. It's also at `http://homeassistant.local:7272/`, where it asks for an admin token.
+Open **Upkeep** in the sidebar for the dashboard: an inbox of what changed in your repositories and what needs you, then the jobs with their last run, the latest runs, and each run's log as it goes. Home Assistant has already signed you in, so it needs no token there. It's also at `http://homeassistant.local:7272/`, where it asks for an admin token.
 
 ## Options
 

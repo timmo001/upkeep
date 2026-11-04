@@ -84,11 +84,29 @@ export const runs = Atom.family((job: string) =>
   }),
 );
 
-/** What happened in the last day, for the overview's summary. */
-export const activity = UpkeepApi.query("activity", "get", {
+const inboxKey = ["inbox"];
+
+/** The inbox: what changed lately, and what needs a person. */
+export const inbox = UpkeepApi.query("inbox", "get", {
   query: {},
-  reactivityKeys: runsKey,
+  reactivityKeys: [...inboxKey, ...runsKey],
 });
+
+/** Mark entries read, or every unread one without `ids`. */
+export const markRead = UpkeepApi.runtime.fn(
+  (ids: ReadonlyArray<string> | undefined) =>
+    UpkeepApi.use((client) =>
+      client.inbox.read({ payload: ids === undefined ? {} : { ids } }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(inboxKey))),
+);
+
+/** Take an entry out of the inbox until something new joins it. */
+export const dismissEntry = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.inbox.dismiss({ params: { id } })).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate(inboxKey)),
+  ),
+);
 
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
@@ -153,7 +171,7 @@ export const runJob = UpkeepApi.runtime.fn((job: string) =>
 export const unparkJob = UpkeepApi.runtime.fn((job: string) =>
   UpkeepApi.use((client) => client.jobs.unpark({ params: { id: job } })).pipe(
     asDefects,
-    Effect.ensuring(Reactivity.invalidate(runsKey)),
+    Effect.ensuring(Reactivity.invalidate([...runsKey, ...inboxKey])),
   ),
 );
 
@@ -179,7 +197,8 @@ export const cancelRun = UpkeepApi.runtime.fn((id: string) =>
 );
 
 export type Route = Data.TaggedEnum<{
-  Overview: {};
+  Inbox: {};
+  Jobs: {};
   Job: { readonly id: string };
   Run: { readonly id: string };
 }>;
@@ -188,6 +207,8 @@ export const Route = Data.taggedEnum<Route>();
 
 /** Where the dashboard lives, from the page's `<base>`. */
 const basePath = new URL(document.baseURI).pathname;
+
+const jobsPattern = new URLPattern({ pathname: "/jobs{/}?" });
 
 const jobPattern = new URLPattern({ pathname: "/jobs/:id" });
 
@@ -198,6 +219,8 @@ const parseRoute = (): Route => {
     ? `/${location.pathname.slice(basePath.length)}`
     : location.pathname;
 
+  if (jobsPattern.test({ pathname: path })) return Route.Jobs();
+
   const job = jobPattern.exec({ pathname: path })?.pathname.groups["id"];
 
   if (job !== undefined) return Route.Job({ id: decodeURIComponent(job) });
@@ -205,7 +228,7 @@ const parseRoute = (): Route => {
   const id = runPattern.exec({ pathname: path })?.pathname.groups["id"];
 
   return id === undefined
-    ? Route.Overview()
+    ? Route.Inbox()
     : Route.Run({ id: decodeURIComponent(id) });
 };
 
@@ -272,6 +295,8 @@ export const route = Atom.readable((get) => {
 
 /** Links resolve against the page's base, so they work under any prefix. */
 export const homeHref = "./";
+
+export const jobsHref = "jobs";
 
 export const jobHref = (id: string) => `jobs/${encodeURIComponent(id)}`;
 

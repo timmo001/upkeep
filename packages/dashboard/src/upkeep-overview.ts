@@ -1,8 +1,7 @@
 /**
- * `upkeep-overview`: a summary of the last day, with what needs a person and
- * the commits pushed; every job with its latest run, a button to run it and,
- * for a parked job, why and a button to unpark it, and a switch to pause or
- * resume it; then the latest runs.
+ * `upkeep-overview`: the Jobs page. Every job with its latest run, a button
+ * to run it and, for a parked job, why and a button to unpark it, and a
+ * switch to pause or resume it; then the latest runs.
  */
 import { mdiPause, mdiPlay, mdiPlayPause } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
@@ -10,9 +9,8 @@ import cronstrue from "cronstrue";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
-import { commit, shared, stateBadge, time, view } from "./ui.ts";
+import { shared, stateBadge, time, view } from "./ui.ts";
 import {
-  activity,
   jobHref,
   jobs,
   pauseJob,
@@ -106,103 +104,14 @@ export class UpkeepOverview extends LitElement {
       .last {
         white-space: nowrap;
       }
-
-      .tldr {
-        margin-block: var(--gw-space-3);
-      }
-
-      .attention li {
-        color: var(--gw-color-warning);
-      }
-
-      .changes,
-      .attention {
-        padding-left: 1.25em;
-      }
-
-      .changes li {
-        margin-block: var(--gw-space-1);
-      }
-
-      .commits {
-        display: block;
-        margin-top: var(--gw-space-4);
-      }
     `,
   ];
 
   readonly #jobs = new AtomController(this, () => jobs, always);
 
-  readonly #activity = new AtomController(this, () => activity, always);
-
-  #tldr(day: Domain.Activity) {
-    const { runs } = day;
-
-    const counts = [
-      `${runs.succeeded} succeeded`,
-      runs.failed === 0 ? null : `${runs.failed} failed`,
-      runs.heals === 0 ? null : `${runs.heals} heals`,
-      runs.skipped === 0 ? null : `${runs.skipped} skipped`,
-      runs.cancelled === 0 ? null : `${runs.cancelled} cancelled`,
-    ].filter((count) => count !== null);
-
-    const repos = new Set(day.changes.map((change) => change.repo)).size;
-
-    return html`
-      <p class="tldr">
-        In the last day: ${counts.join(", ")};
-        ${
-          day.changes.length === 0
-            ? "no commits pushed"
-            : `${day.changes.length} ${day.changes.length === 1 ? "commit" : "commits"} pushed to ${repos} ${repos === 1 ? "repository" : "repositories"}`
-        }${
-          day.attention.length === 0
-            ? ", nothing needs you."
-            : html`, and ${day.attention.length} need you.`
-        }
-      </p>
-      ${
-        day.attention.length === 0
-          ? null
-          : html`<ul class="attention">
-              ${day.attention.map(
-                (item) =>
-                  html`<li>
-                    <a href=${runHref(item.id)}>${item.job}</a>
-                    ${time(item.finishedAt ?? item.queuedAt)}:
-                    ${item.summary ?? item.error ?? "see its log"}
-                  </li>`,
-              )}
-            </ul>`
-      }
-      ${
-        day.changes.length === 0
-          ? null
-          : html`<gw-section-title class="commits"
-                >Recent commits</gw-section-title
-              >
-              <ul class="changes">
-                ${day.changes.slice(0, 20).map(
-                  (change) =>
-                    html`<li>
-                      ${commit(change)}
-                      <span class="muted"
-                        >by
-                        <a href=${runHref(change.run)}>${change.job}</a>
-                        ${time(change.at)}</span
-                      >
-                    </li>`,
-                )}
-              </ul>`
-      }
-    `;
-  }
-
   override render() {
     return html`
-      <gw-section-title>Today</gw-section-title>
-      ${view(this.#activity.value, (day) => this.#tldr(day))}
-      <gw-section-title class="runs">Jobs</gw-section-title>
+      <gw-section-title>Jobs</gw-section-title>
       ${view(
         this.#jobs.value,
         (list) =>
