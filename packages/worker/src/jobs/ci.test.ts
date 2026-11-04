@@ -21,28 +21,45 @@ const run = (
   ...extra,
 });
 
+const active = new Set(["Build", "Lint", "Docs"]);
+
 test("only the latest finished run of each workflow counts", () => {
-  const { failed, passing } = latest([
-    run("Build", "success"),
-    run("Build", "failure"),
-    run("Lint", "failure"),
-    run("Docs", null, { status: "in_progress" }),
-    run("Docs", "success"),
-  ]);
+  const { failed, passing } = latest(
+    [
+      run("Build", "success"),
+      run("Build", "failure"),
+      run("Lint", "failure"),
+      run("Docs", null, { status: "in_progress" }),
+      run("Docs", "success"),
+    ],
+    active,
+  );
 
   expect(failed.map((item) => item.workflowName)).toEqual(["Lint"]);
   expect([...passing].toSorted()).toEqual(["Build", "Docs"]);
 });
 
 test("cancelled and pull request runs say nothing about the branch", () => {
-  const { failed, passing } = latest([
-    run("Build", "cancelled"),
-    run("Build", "failure", { event: "pull_request" }),
-    run("Build", "failure"),
-  ]);
+  const { failed, passing } = latest(
+    [
+      run("Build", "cancelled"),
+      run("Build", "failure", { event: "pull_request" }),
+      run("Build", "failure"),
+    ],
+    active,
+  );
 
   expect(failed).toHaveLength(1);
   expect(passing.size).toBe(0);
+});
+
+test("a workflow since removed or turned off doesn't count", () => {
+  const { failed } = latest(
+    [run("Build", "success"), run("Tooling drift", "failure")],
+    active,
+  );
+
+  expect(failed).toHaveLength(0);
 });
 
 test("a failure notification names its workflow and branch", () => {

@@ -28,6 +28,12 @@ const RepositoryInfo = Schema.Struct({
   default_branch: Schema.String,
 });
 
+const Workflows = Schema.Struct({
+  workflows: Schema.Array(
+    Schema.Struct({ name: Schema.String, state: Schema.String }),
+  ),
+});
+
 const Thread = Schema.Struct({
   id: Schema.String,
   unread: Schema.Boolean,
@@ -39,8 +45,14 @@ type Thread = typeof Thread.Type;
 
 const passed = new Set(["success", "skipped", "neutral"]);
 
-/** How the branch stands: the latest finished run of each workflow. */
-export const latest = (runs: ReadonlyArray<Workflow.Run>) => {
+/**
+ * How the branch stands: the latest finished run of each workflow that's
+ * still active, so one since removed or turned off doesn't count.
+ */
+export const latest = (
+  runs: ReadonlyArray<Workflow.Run>,
+  active: ReadonlySet<string>,
+) => {
   const seen = new Set<string>();
   const failed: Array<Workflow.Run> = [];
   const passing = new Set<string>();
@@ -54,6 +66,7 @@ export const latest = (runs: ReadonlyArray<Workflow.Run>) => {
       item.event.startsWith("pull_request") ||
       item.status !== "completed" ||
       item.conclusion === "cancelled" ||
+      !active.has(workflow) ||
       seen.has(workflow)
     )
       continue;
@@ -78,6 +91,12 @@ export const failureOf = (title: string) => {
     : { workflow: match[1] ?? "", branch: match[2] ?? "" };
 };
 
+/**
+ * The steps that only tidy up after a job, such as `Post Run
+ * actions/checkout`, whose lines would push out the failure itself.
+ */
+const tidyStep = /^(Post |Complete job$|Set up job$)/;
+
 /** The end of a failed run's failed steps, for the heal. */
 const failedLog = (repo: string, item: Workflow.Run) =>
   Workflow.logs({ repo, runId: item.databaseId, failedOnly: true }).pipe(
@@ -85,6 +104,7 @@ const failedLog = (repo: string, item: Workflow.Run) =>
       log
         .trim()
         .split("\n")
+        .filter((line) => !tidyStep.test(line.split("\t")[1] ?? ""))
         .slice(-30)
         .map((line) => line.split("\t").slice(2).join("\t") || line)
         .join("\n"),
@@ -191,8 +211,22 @@ const ciRepository = Effect.fnUntraced(function* (
 
   const branch = info.default_branch;
 
+  const { workflows } = yield* Api.json(
+    {
+      endpoint: `repos/${repo}/actions/workflows`,
+      method: "GET",
+      query: { per_page: 100 },
+    },
+    Workflows,
+  );
+
   const { failed, passing } = latest(
     yield* Workflow.list({ repo, branch, limit: 50 }),
+    new Set(
+      workflows
+        .filter((workflow) => workflow.state === "active")
+        .map((workflow) => workflow.name),
+    ),
   );
 
   yield* dismiss(repo, branch, passing, context.threads);
