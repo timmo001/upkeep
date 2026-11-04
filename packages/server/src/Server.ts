@@ -372,6 +372,20 @@ const WorkHandlers = HttpApiBuilder.group(
       finish: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
 
+        if (payload.interrupted === true) {
+          const requeued = yield* store
+            .requeue(params.id, worker.name)
+            .pipe(Effect.catchTag("StoreError", Effect.die));
+
+          if (Option.isSome(requeued)) {
+            yield* Effect.logInfo(
+              `Requeued ${requeued.value.job}: ${worker.name} stopped mid-run`,
+            ).pipe(Effect.annotateLogs({ run: params.id }));
+
+            return;
+          }
+        }
+
         const ended = yield* store
           .finish(
             params.id,
@@ -782,7 +796,10 @@ export const scheduler = Layer.effectDiscard(
   }),
 );
 
-/** Fail runs whose worker stopped sending heartbeats, once a minute. */
+/**
+ * Requeue runs whose worker stopped sending heartbeats, or fail them when
+ * it's happened to them before, once a minute.
+ */
 export const lostRuns = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* Store;
@@ -792,7 +809,13 @@ export const lostRuns = Layer.effectDiscard(
       const now = yield* Clock.currentTimeMillis;
       const lost = yield* store.failLost(now - Duration.toMillis(lostAfter));
 
-      for (const run of lost) {
+      for (const run of lost.requeued) {
+        yield* Effect.logWarning(`Requeued ${run.job}, lost once`).pipe(
+          Effect.annotateLogs({ run: run.id }),
+        );
+      }
+
+      for (const run of lost.failed) {
         yield* Effect.logWarning(`Lost ${run.job} on ${run.worker}`).pipe(
           Effect.annotateLogs({ run: run.id }),
         );

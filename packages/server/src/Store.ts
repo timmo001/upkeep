@@ -125,6 +125,11 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  "0005_requeued_runs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN requeued INTEGER NOT NULL DEFAULT 0`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -341,10 +346,29 @@ export class Store extends Context.Service<
      * latest `keep` of each job. Returns how many runs went.
      */
     prune(before: number, keep: number): Effect.Effect<number, StoreError>;
-    /** Fail every running run with no heartbeat since `before`. */
-    failLost(
-      before: number,
-    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /**
+     * Put a run its worker was stopped in back in the queue, the first time
+     * that happens to it. Returns it requeued, or none when it's been cut
+     * off before, so a run that brings its worker down can't loop.
+     */
+    requeue(
+      id: string,
+      worker: string,
+    ): Effect.Effect<
+      Option.Option<Domain.Run>,
+      Api.RunNotFound | Api.RunNotClaimed | StoreError
+    >;
+    /**
+     * Deal with every running run with no heartbeat since `before`: requeue
+     * it the first time, as for `requeue`, and fail it after that.
+     */
+    failLost(before: number): Effect.Effect<
+      {
+        readonly requeued: ReadonlyArray<Domain.Run>;
+        readonly failed: ReadonlyArray<Domain.Run>;
+      },
+      StoreError
+    >;
     /**
      * Record the latest releases, returning those that changed. A repository
      * seen for the first time is only recorded.
@@ -749,15 +773,48 @@ export class Store extends Context.Service<
       `.pipe(Effect.flatMap(decodeLog), Effect.mapError(storeError));
     });
 
-    const failLost = Effect.fn("Store.failLost")(function* (before: number) {
-      return yield* selectRuns(sql`
+    const requeued = sql`
+      state = 'queued', worker = NULL, started_at = NULL, heartbeat_at = NULL,
+        requeued = requeued + 1
+    `;
+
+    const requeue = Effect.fn("Store.requeue")(
+      function* (id: string, worker: string) {
+        yield* claimed(id, worker);
+
+        const rows = yield* selectRuns(sql`
+          UPDATE runs SET ${requeued}
+          WHERE id = ${id} AND requeued = 0
+          RETURNING *
+        `).pipe(Effect.mapError(storeError));
+
+        return Option.fromNullishOr(rows[0]);
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const failLost = Effect.fn("Store.failLost")(
+      function* (before: number) {
+        const failed = yield* selectRuns(sql`
           UPDATE runs
           SET state = 'failed', finished_at = ${yield* Clock.currentTimeMillis},
-            error = 'Lost: the worker stopped sending heartbeats'
+            error = 'Lost: the worker stopped sending heartbeats, again'
+          WHERE state = 'running' AND heartbeat_at < ${before} AND requeued > 0
+          RETURNING *
+        `);
+
+        const requeuedRuns = yield* selectRuns(sql`
+          UPDATE runs SET ${requeued}
           WHERE state = 'running' AND heartbeat_at < ${before}
           RETURNING *
         `);
-    }, Effect.mapError(storeError));
+
+        return { requeued: requeuedRuns, failed };
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const prune = Effect.fn("Store.prune")(
       function* (before: number, keep: number) {
@@ -927,6 +984,7 @@ export class Store extends Context.Service<
       logTail,
       claimed,
       prune,
+      requeue,
       failLost,
       recordReleases,
       repos,

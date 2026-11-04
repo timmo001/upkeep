@@ -73,21 +73,63 @@ test("only the worker running a run can report on it", () =>
     }),
   ));
 
-test("a running run with no recent heartbeat fails as lost", () =>
+test("a lost or interrupted run is requeued once, then fails", () =>
   run(
     Effect.gen(function* () {
       const store = yield* Store;
 
-      yield* store.queueRun({
+      const queued = yield* store.queueRun({
         job: "releases",
         trigger: "manual",
         release: null,
       });
+
       yield* store.claim(["releases"], "desktop");
 
       const lost = yield* store.failLost(Date.now() + 1);
 
-      expect(lost.map((run) => run.state)).toEqual(["failed"]);
+      expect(lost.requeued.map((run) => run.state)).toEqual(["queued"]);
+      expect(lost.failed).toEqual([]);
+
+      yield* store.claim(["releases"], "laptop");
+
+      expect(Option.isNone(yield* store.requeue(queued.id, "laptop"))).toBe(
+        true,
+      );
+
+      const again = yield* store.failLost(Date.now() + 1);
+
+      expect(again.requeued).toEqual([]);
+      expect(again.failed.map((run) => run.state)).toEqual(["failed"]);
+    }),
+  ));
+
+test("an interrupted run goes back to the front of the queue", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const first = yield* store.queueRun({
+        job: "releases",
+        trigger: "manual",
+        release: null,
+      });
+
+      yield* store.claim(["releases"], "desktop");
+
+      yield* store.queueRun({
+        job: "labels",
+        trigger: "manual",
+        release: null,
+      });
+
+      const requeued = yield* store.requeue(first.id, "desktop");
+
+      expect(Option.getOrThrow(requeued).worker).toBeNull();
+
+      const next = yield* store.claim(["releases", "labels"], "laptop");
+
+      expect(Option.getOrThrow(next).id).toBe(first.id);
     }),
   ));
 

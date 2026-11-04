@@ -114,10 +114,11 @@ UPKEEP_WORKER_TOKEN=... upkeep worker
 ```
 
 A worker asks for work every 30 seconds, sends a heartbeat every minute while
-a run goes and sends its log as it's written. The server fails a run as lost
-when its worker has been quiet for 10 minutes, and a worker that's stopped
-fails its run straight away. A worker reads GitHub through `gh`, logged in as
-whoever runs it.
+a run goes and sends its log as it's written. When a worker is stopped mid-run,
+such as by a restart after an upgrade, or goes quiet for 10 minutes, the server
+puts its run back at the front of the queue. That happens once per run: the
+second time, the run fails as lost, so a run that brings its worker down can't
+loop. A worker reads GitHub through `gh`, logged in as whoever runs it.
 
 A worker runs jobs in three lanes at once, one run per lane, so a long job
 doesn't hold up the others: heals in one, the quick API-only jobs

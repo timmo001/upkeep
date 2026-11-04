@@ -90,11 +90,14 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
     Option.filter(Schema.is(ConsumersFailed)),
   );
 
+  const interrupted = Cause.hasInterruptsOnly(exit.cause);
+
   return {
     outcome: "failed" as const,
-    error: Cause.hasInterruptsOnly(exit.cause)
+    error: interrupted
       ? "The worker stopped before the run finished"
       : Cause.pretty(exit.cause),
+    interrupted,
     ...Option.match(failed, {
       onNone: () => ({}),
       onSome: (error) => ({ consumers: error.repos }),

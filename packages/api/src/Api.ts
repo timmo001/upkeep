@@ -308,6 +308,11 @@ export class WorkGroup extends HttpApiGroup.make("work")
          * without any, a failure heals Upkeep itself.
          */
         consumers: Schema.optionalKey(Schema.Array(RepoName)),
+        /**
+         * The worker was stopped mid-run, such as by a restart. The server
+         * puts the run back in the queue the first time, rather than failing it.
+         */
+        interrupted: Schema.optionalKey(Schema.Boolean),
       }),
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
