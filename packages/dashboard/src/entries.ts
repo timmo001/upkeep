@@ -8,12 +8,17 @@ import type { Domain } from "@upkeep/api";
 /** Repository titles by `owner/name`, lower-cased. */
 export type Titles = ReadonlyMap<string, string>;
 
-/** Titles from the tracked repositories, by lower-cased `owner/name`. */
+/**
+ * What each tracked repository shows by, by lower-cased `owner/name`: its
+ * name, set by hand or by a worker, or else its README title.
+ */
 export const titlesOf = (repos: ReadonlyArray<Domain.TrackedRepo>): Titles =>
   new Map(
-    repos.flatMap((repo) =>
-      repo.title === null ? [] : [[repo.repo.toLowerCase(), repo.title]],
-    ),
+    repos.flatMap((repo) => {
+      const shown = repo.name ?? repo.title;
+
+      return shown === null ? [] : [[repo.repo.toLowerCase(), shown]];
+    }),
   );
 
 /** A repository's title, or its name when it has none. */

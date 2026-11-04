@@ -1,16 +1,19 @@
 /**
- * `upkeep-repo`: one tracked repository's page. Its title and GitHub link,
- * the jobs it's opted into, and what changed in it from the inbox, with the
- * same kind tabs, filters and windowed feed as the inbox.
+ * `upkeep-repo`: one tracked repository's page. Its name, a way to rename
+ * it, its GitHub link, the jobs it's opted into, and what changed in it from
+ * the inbox, with the same kind tabs, filters and windowed feed as the inbox.
  */
-import { mdiCheckCircleOutline, mdiGithub } from "@mdi/js";
+import { mdiCheckCircleOutline, mdiGithub, mdiPencil } from "@mdi/js";
+import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { Catalogue, type Domain } from "@upkeep/api";
-import { css, html, LitElement } from "lit";
-import { always, AtomController } from "./AtomController.ts";
+import { css, html, LitElement, nothing } from "lit";
+import { ref } from "lit/directives/ref.js";
+import { always, AtomController, registry } from "./AtomController.ts";
 import { titleOf, titlesOf } from "./entries.ts";
 import { empty, shared, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
-import { inbox, jobHref, repos } from "./upkeep.ts";
+import { inbox, jobHref, renameRepo, repos } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
@@ -44,9 +47,95 @@ export class UpkeepRepo extends LitElement {
 
   #filters: Filters = noFilters;
 
+  #rename: GwPopover | undefined;
+
+  #name: GwInput | undefined;
+
   constructor() {
     super();
     this.repo = "";
+  }
+
+  /** Save the name typed, clear it, or do nothing, as the popover closed. */
+  #renamed(found: Domain.TrackedRepo) {
+    const action = this.#rename?.returnValue ?? "";
+
+    if (action === "save") {
+      const name = this.#name?.value.trim() ?? "";
+
+      registry.set(renameRepo, {
+        repo: found.repo,
+        name: name === "" ? null : name,
+      });
+    }
+
+    if (action === "reset") {
+      registry.set(renameRepo, { repo: found.repo, name: null });
+    }
+  }
+
+  /** The Rename button, in the page header's actions, opening on the current name. */
+  #renameButton(found: Domain.TrackedRepo) {
+    return html`<gw-button
+      slot="actions"
+      appearance="outlined"
+      variant="neutral"
+      icon=${mdiPencil}
+      @click=${(event: Event) => {
+        if (this.#name !== undefined) {
+          this.#name.value = found.name ?? found.title ?? "";
+        }
+
+        this.#rename?.show(
+          event.currentTarget instanceof Element
+            ? event.currentTarget
+            : undefined,
+        );
+      }}
+      >Rename</gw-button
+    >`;
+  }
+
+  /**
+   * The popover Rename opens, outside the page header, whose unslotted
+   * children never show.
+   */
+  #renamePopover(found: Domain.TrackedRepo) {
+    const hint =
+      found.namedBy === "worker"
+        ? "Named by a worker from its names setting. A name you set here stays."
+        : "Leave it empty to show the README's title.";
+
+    return html`<gw-popover
+      heading="Rename repository"
+      ${ref((element) => {
+        this.#rename = element instanceof GwPopover ? element : undefined;
+      })}
+      @close=${() => this.#renamed(found)}
+    >
+      <gw-input
+        label="Name"
+        hint=${hint}
+        ${ref((element) => {
+          this.#name = element instanceof GwInput ? element : undefined;
+        })}
+      ></gw-input>
+      ${
+        found.namedBy === "you"
+          ? html`<gw-button
+              slot="actions"
+              size="small"
+              appearance="plain"
+              variant="neutral"
+              value="reset"
+              >Reset</gw-button
+            >`
+          : nothing
+      }
+      <gw-button slot="actions" size="small" value="save" data-needs-changes
+        >Save</gw-button
+      >
+    </gw-popover>`;
   }
 
   #render(tracked: ReadonlyArray<Domain.TrackedRepo>, box: Domain.Inbox) {
@@ -71,6 +160,7 @@ export class UpkeepRepo extends LitElement {
             found === undefined ? `${this.repo}, not tracked` : this.repo
           }
         >
+          ${found === undefined ? nothing : this.#renameButton(found)}
           <gw-button
             slot="actions"
             appearance="outlined"
@@ -121,6 +211,7 @@ export class UpkeepRepo extends LitElement {
           }
         </gw-stack>
       </gw-stack>
+      ${found === undefined ? nothing : this.#renamePopover(found)}
     `;
   }
 

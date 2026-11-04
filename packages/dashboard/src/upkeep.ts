@@ -113,6 +113,20 @@ export const dismissEntry = UpkeepApi.runtime.fn((id: string) =>
   ),
 );
 
+/**
+ * Name a tracked repository by hand, or clear its name with null so a
+ * worker's name or its README title shows again.
+ */
+export const renameRepo = UpkeepApi.runtime.fn(
+  ({ repo, name }: { readonly repo: string; readonly name: string | null }) => {
+    const [owner = "", rest = ""] = repo.split("/");
+
+    return UpkeepApi.use((client) =>
+      client.repos.rename({ params: { owner, name: rest }, payload: { name } }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(inboxKey)));
+  },
+);
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },
