@@ -120,11 +120,36 @@ const collect = (stream: Stream.Stream<Uint8Array, unknown>) =>
   stream.pipe(Stream.decodeText(), Stream.mkString);
 
 /**
+ * How GitHub fails for a moment: SSH refusing a key it accepts a minute
+ * later, a remote that can't be read, a 5xx or a lazy fetch of a missing
+ * object. Worth retrying rather than failing the repository over.
+ */
+const transient =
+  /Permission denied \(publickey\)|Could not read from remote repository|Internal Server Error|fatal error in commit_refs|could not fetch [0-9a-f]+ from promisor remote|Connection (?:reset|timed out|closed)|returned error: 5\d\d/;
+
+/**
  * Run a command to the end and return its stdout, failing with its output on
  * a non-zero exit. Clones live under the cache root, which mise is told to
- * trust, and nothing may prompt.
+ * trust, and nothing may prompt. A git command that fails on a GitHub blip
+ * is tried again, up to four more times over about two minutes.
  */
-export const run = Effect.fnUntraced(function* (
+export const run = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: { readonly cwd: string; readonly trusted: string },
+) =>
+  runOnce(command, args, options).pipe(
+    Effect.retry({
+      while: (error) =>
+        error instanceof CommandFailed &&
+        error.command.startsWith("git ") &&
+        transient.test(error.output),
+      schedule: Schedule.exponential("5 seconds"),
+      times: 4,
+    }),
+  );
+
+const runOnce = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: { readonly cwd: string; readonly trusted: string },
