@@ -15,7 +15,7 @@
         "@astrojs/cloudflare": "14.4.3",
         "@fontsource-variable/geist-mono": "5.3.0",
         "@fontsource-variable/mona-sans": "5.3.0",
-        "@timmo001/docs-kit": "0.9.33",
+        "@timmo001/docs-kit": "0.9.35",
         "blume": "2.2.6",
         "sharp": "0.35.5",
       },
@@ -922,7 +922,7 @@
 
     "@tanstack/virtual-core": ["@tanstack/virtual-core@3.19.10", "", {}, "sha512-/ltpH0qUCs5XQYE7fIhgA+aqgC5NzSfLTDQkC+N1wOOdvIYx1FH/kz2LGfSeanNbekqy3WBu6mNIbqXhxE/pew=="],
 
-    "@timmo001/docs-kit": ["@timmo001/docs-kit@0.9.33", "", { "dependencies": { "@timmo001/groundwork-tokens": "0.9.33", "@timmo001/groundwork-ui": "0.9.33", "sharp": "0.35.5" }, "peerDependencies": { "blume": "2.2.6" } }, "sha512-92fevWYg9IQ7ObTc6+enWNl+Bpm5hvdFzGH9c5KNPxVafO5NDBKaw8mfmzygtXNuxu2yn1bmyqtoZ+QYVPLuWQ=="],
+    "@timmo001/docs-kit": ["@timmo001/docs-kit@0.9.35", "", { "dependencies": { "@timmo001/groundwork-tokens": "0.9.35", "@timmo001/groundwork-ui": "0.9.35", "sharp": "0.35.5" }, "peerDependencies": { "blume": "2.2.6" } }, "sha512-bsNZXhGweqSidbucwU9uJlqKy9XhSnQVB8v9mMYQlBhjyGbqfGD8TqGuAHdXFgl+qBDiyVvb7laH1xiQ1NXo6Q=="],
 
     "@timmo001/effect-gh": ["@timmo001/effect-gh@0.10.0", "", { "dependencies": { "graphql": "17.0.2" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-5qiA+g9BT7YPxB7co/rrL4O70t+p0i1DLqldCJv6fJ/4guBbeEGr8EGYn/nuYvGYoG18yTvimZp7qVJEHajtZA=="],
 
@@ -2483,10 +2483,6 @@
     "@tailwindcss/oxide-wasm32-wasi/@tybys/wasm-util": ["@tybys/wasm-util@0.10.4", "", { "dependencies": { "tslib": "^2.4.0" }, "bundled": true }, "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A=="],
 
     "@tailwindcss/oxide-wasm32-wasi/tslib": ["tslib@2.9.1", "", { "bundled": true }, "sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA=="],
-
-    "@timmo001/docs-kit/@timmo001/groundwork-tokens": ["@timmo001/groundwork-tokens@0.9.33", "", { "dependencies": { "@types/culori": "4.0.1", "culori": "4.0.2", "effect": "4.1.2" } }, "sha512-ooruER7dfIgzfkDTmM2sar/X4diIsntt3sZ2hRFq2VgcThZpFFjCOA3BCsreuxEf2PSKnHREeHLDH7qrebt9pA=="],
-
-    "@timmo001/docs-kit/@timmo001/groundwork-ui": ["@timmo001/groundwork-ui@0.9.33", "", {}, "sha512-lWClwPvA9kZsHOVK8kV+Ce6D68E36CwyPB3CuSlCYrMpUUBP1PCp3U1DhH12Q4CUSM2VtFN1gdv7wLVu3/r6Lg=="],
 
     "@types/node/undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
 
