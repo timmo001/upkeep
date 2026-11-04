@@ -6,7 +6,7 @@
  * which repositories. Each filter that's on shows as a chip that takes it
  * off. Fires `filters-change` with the new filters.
  */
-import { mdiClose, mdiFilterVariant, mdiSourceRepository } from "@mdi/js";
+import { mdiClose, mdiFilterVariant } from "@mdi/js";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
@@ -338,7 +338,6 @@ export class UpkeepFilters extends LitElement {
         ></gw-filter>
         <gw-filter
           label="Repositories"
-          icon=${mdiSourceRepository}
           search-label="Search repositories"
           .options=${this.#repoOptions()}
           .value=${this.filters.repos}
