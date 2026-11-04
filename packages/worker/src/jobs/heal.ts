@@ -470,7 +470,9 @@ export const heal = Effect.fnUntraced(function* () {
             Effect.catchCause((cause) =>
               RunLog.warn(
                 `The decision model couldn't choose: ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
-              ).pipe(Effect.as(fallback(run))),
+              ).pipe(
+                Effect.as(fallback(run, "the decision model couldn't choose")),
+              ),
             ),
           );
 
