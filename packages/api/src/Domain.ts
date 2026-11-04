@@ -1,7 +1,7 @@
 /**
  * What the server and workers pass between them: jobs, their runs, each run's
- * log and the releases that start them. Times are milliseconds since the Unix
- * epoch.
+ * log, the releases that start them and the inbox of what changed. Times are
+ * milliseconds since the Unix epoch.
  */
 import { Schema } from "effect";
 
@@ -176,7 +176,26 @@ export const Paused = Schema.Struct({
 
 export interface Paused extends Schema.Schema.Type<typeof Paused> {}
 
-/** A commit a run pushed, such as a bump, a drift update or a heal's fix. */
+/**
+ * What an inbox entry is about: something that needs a person, a
+ * first-party release reaching its consumers, a dependency update, a tool
+ * moved by drift, a fix Upkeep pushed, or commits pushed outside Upkeep.
+ */
+export const EntryKind = Schema.Literals([
+  "needs",
+  "release",
+  "update",
+  "drift",
+  "fix",
+  "commit",
+]);
+
+export type EntryKind = typeof EntryKind.Type;
+
+/**
+ * A commit a run pushed, such as a bump, a drift update or a heal's fix, or
+ * one the watch job found. The optional fields place it in the inbox.
+ */
 export const Change = Schema.Struct({
   repo: RepoName,
   sha: Schema.String,
@@ -184,6 +203,21 @@ export const Change = Schema.Struct({
   subject: Schema.String,
   url: Schema.String,
   at: Schema.Finite,
+  /**
+   * Groups it with the same change in other repositories, such as
+   * `release:timmo001/groundwork@0.9.33`. Without it, it's an entry of its own.
+   */
+  group: Schema.optionalKey(Schema.String),
+  /** The group's title, such as `groundwork 0.9.33`. */
+  title: Schema.optionalKey(Schema.String),
+  kind: Schema.optionalKey(EntryKind),
+  /**
+   * It only moved versions, lockfiles, pins or tool versions, with no code or
+   * config change, so the inbox folds it away.
+   */
+  routine: Schema.optionalKey(Schema.Boolean),
+  /** Pushed by the person Upkeep works for, rather than a bot. */
+  you: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Change extends Schema.Schema.Type<typeof Change> {}
@@ -242,6 +276,59 @@ export const Activity = Schema.Struct({
 });
 
 export interface Activity extends Schema.Schema.Type<typeof Activity> {}
+
+/** One repository's part in an inbox entry, usually a commit. */
+export const EntryItem = Schema.Struct({
+  repo: RepoName,
+  /** What happened there, such as the commit's subject. */
+  text: Schema.String,
+  sha: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String),
+  at: Schema.Finite,
+});
+
+export interface EntryItem extends Schema.Schema.Type<typeof EntryItem> {}
+
+/**
+ * One thing in the inbox: the same change across every repository it
+ * reached, or something that needs a person. It's unread until it's read,
+ * and comes back unread when something is added to it.
+ */
+export const Entry = Schema.Struct({
+  id: Schema.String,
+  kind: EntryKind,
+  title: Schema.String,
+  detail: Schema.NullOr(Schema.String),
+  /** Where it points, such as a release's page. */
+  url: Schema.NullOr(Schema.String),
+  /** For something that needs a person: the job it holds up. */
+  job: Schema.NullOr(JobId),
+  /** The latest run behind it. */
+  run: Schema.NullOr(Schema.String),
+  /** Only routine changes, so it's folded away. */
+  routine: Schema.Boolean,
+  /** Pushed by the person Upkeep works for. */
+  you: Schema.Boolean,
+  /** How many times it happened, such as how often a job was parked. */
+  count: Schema.Int,
+  items: Schema.Array(EntryItem),
+  firstAt: Schema.Finite,
+  lastAt: Schema.Finite,
+  readAt: Schema.NullOr(Schema.Finite),
+});
+
+export interface Entry extends Schema.Schema.Type<typeof Entry> {}
+
+/**
+ * The inbox: every entry that's unread or changed since `since`, newest
+ * first. Dismissed and settled entries are left out.
+ */
+export const Inbox = Schema.Struct({
+  since: Schema.Finite,
+  entries: Schema.Array(Entry),
+});
+
+export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
 
 /** A job with its latest run, for a status list. */
 export const JobStatus = Schema.Struct({

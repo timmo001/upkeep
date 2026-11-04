@@ -17,8 +17,10 @@ import {
 import {
   Activity,
   Change,
+  Entry,
   Heal,
   HealDecision,
+  Inbox,
   JobId,
   JobStatus,
   LogEntry,
@@ -68,6 +70,16 @@ export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
 ) {
   override get message() {
     return `There's no run ${this.id}`;
+  }
+}
+
+export class EntryNotFound extends Schema.TaggedError<EntryNotFound>()(
+  "EntryNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no inbox entry ${this.id}`;
   }
 }
 
@@ -217,6 +229,14 @@ export const healLogLines = 200;
 /** The most releases one report carries. */
 export const maxReleases = 1000;
 
+/** The most commits one request to the inbox carries, either way. */
+export const maxCommits = 500;
+
+/** A commit by its repository and SHA. */
+export const CommitRef = Schema.Struct({ repo: RepoName, sha: Schema.String });
+
+export interface CommitRef extends Schema.Schema.Type<typeof CommitRef> {}
+
 export class JobsGroup extends HttpApiGroup.make("jobs")
   .add(
     HttpApiEndpoint.get("list", "/", {
@@ -322,6 +342,40 @@ export class ActivityGroup extends HttpApiGroup.make("activity")
     }),
   ) {}
 
+export class InboxGroup extends HttpApiGroup.make("inbox")
+  .add(
+    /**
+     * Every entry that's unread or changed in the last `days`, 7 by default,
+     * newest first.
+     */
+    HttpApiEndpoint.get("get", "/", {
+      query: { days: Schema.optional(Schema.FiniteFromString) },
+      success: Inbox,
+    }),
+    /** Mark entries read, or every unread one without `ids`. */
+    HttpApiEndpoint.post("read", "/read", {
+      payload: Schema.Struct({
+        ids: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
+      success: HttpApiSchema.NoContent,
+    }),
+    /** Take an entry out of the inbox until something new is added to it. */
+    HttpApiEndpoint.post("dismiss", "/:id/dismiss", {
+      params: { id: Schema.String },
+      success: Entry,
+      error: EntryNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/inbox")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Inbox",
+      description:
+        "What changed in the tracked repositories and what needs a person, grouped by change",
+    }),
+  ) {}
+
 export class WorkGroup extends HttpApiGroup.make("work")
   .add(
     /** Take the oldest waiting run of one of these jobs, if there is one. */
@@ -423,10 +477,34 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: HttpApiSchema.NoContent,
       error: JobNotFound,
     }),
-    /** The repositories opted into a job, which are all it works on. */
+    /**
+     * The repositories opted into a job, which are all it works on, or every
+     * tracked repository without `job`.
+     */
     HttpApiEndpoint.get("repos", "/repos", {
-      query: { job: JobId },
+      query: { job: Schema.optional(JobId) },
       success: Schema.Array(RepoName),
+    }),
+    /** Which of these commits the inbox already has, for the watch job. */
+    HttpApiEndpoint.post("known", "/inbox/known", {
+      payload: Schema.Struct({
+        commits: Schema.Array(CommitRef).pipe(
+          Schema.check(Schema.isMaxLength(maxCommits)),
+        ),
+      }),
+      success: Schema.Struct({ known: Schema.Array(CommitRef) }),
+    }),
+    /**
+     * Commits the watch job found, made outside Upkeep's own runs. One the
+     * inbox already has is skipped. `added` is how many were new.
+     */
+    HttpApiEndpoint.post("seen", "/inbox/seen", {
+      payload: Schema.Struct({
+        commits: Schema.Array(Change).pipe(
+          Schema.check(Schema.isMaxLength(maxCommits)),
+        ),
+      }),
+      success: Schema.Struct({ added: Schema.Int }),
     }),
     /**
      * The latest release of each repository. The server queues every job
@@ -529,6 +607,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(JobsGroup)
   .add(RunsGroup)
   .add(ActivityGroup)
+  .add(InboxGroup)
   .add(WorkGroup)
   .add(ReposGroup)
   .add(TokensGroup)

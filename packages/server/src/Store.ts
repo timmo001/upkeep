@@ -1,10 +1,10 @@
 /**
  * The server's state in SQLite: runs and their logs, the latest release seen
- * of each repository, the repositories it tracks, and the hashes of the
- * tokens it's issued.
+ * of each repository, the repositories it tracks, the inbox of what changed,
+ * and the hashes of the tokens it's issued.
  */
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun";
-import { Api, Domain } from "@upkeep/api";
+import { Api, Catalogue, Domain } from "@upkeep/api";
 import {
   Array as Arr,
   Clock,
@@ -20,6 +20,7 @@ import {
 } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { SqlClient } from "effect/sql";
+import * as Entries from "./Entries";
 
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   cause: Schema.Defect(),
@@ -148,6 +149,48 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  "0008_inbox": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT,
+        url TEXT,
+        job TEXT,
+        run TEXT,
+        routine INTEGER NOT NULL,
+        you INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        first_at INTEGER NOT NULL,
+        last_at INTEGER NOT NULL,
+        read_at INTEGER,
+        dismissed_at INTEGER
+      )
+    `;
+
+    yield* sql`CREATE INDEX entries_last_at ON entries (last_at)`;
+
+    yield* sql`
+      CREATE TABLE entry_items (
+        entry_id TEXT NOT NULL REFERENCES entries (id) ON DELETE CASCADE,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        sha TEXT,
+        text TEXT NOT NULL,
+        url TEXT,
+        at INTEGER NOT NULL
+      )
+    `;
+
+    yield* sql`CREATE INDEX entry_items_entry ON entry_items (entry_id, at)`;
+    yield* sql`
+      CREATE UNIQUE INDEX entry_items_commit ON entry_items (repo, sha)
+      WHERE sha IS NOT NULL
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -245,6 +288,40 @@ const decodeParked = Schema.decodeUnknownEffect(
 const decodePaused = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Paused.fields })),
 );
+
+const EntryRow = Schema.Struct({
+  ...Domain.Entry.fields,
+  routine: Schema.Number,
+  you: Schema.Number,
+  items: Schema.optionalKey(Schema.Unknown),
+});
+
+const decodeEntries = Schema.decodeUnknownEffect(Schema.Array(EntryRow));
+
+const ItemRow = Schema.Struct({
+  entryId: Schema.String,
+  ...Domain.EntryItem.fields,
+});
+
+const decodeItems = Schema.decodeUnknownEffect(Schema.Array(ItemRow));
+
+/** How far back the inbox is filled from runs the first time it starts. */
+const backfillHours = 48;
+
+const jobName = (id: string) =>
+  Catalogue.jobs.find((job) => job.id === id)?.name ?? id;
+
+/** The entry of a parked job. */
+const parkedKey = (job: string) => `needs:parked:${job}`;
+
+/** An entry for something that needs a person, by its key. */
+export interface Needs {
+  readonly key: string;
+  readonly title: string;
+  readonly detail: string | null;
+  readonly job: string | null;
+  readonly run: string | null;
+}
 
 const decodeRepos = Schema.decodeUnknownEffect(
   Schema.Array(
@@ -417,6 +494,36 @@ export class Store extends Context.Service<
     recordReleases(
       releases: ReadonlyArray<Domain.Release>,
     ): Effect.Effect<ReadonlyArray<Domain.Release>, StoreError>;
+    /**
+     * The inbox: entries unread or changed since `since`, newest first,
+     * leaving out dismissed ones.
+     */
+    inbox(since: number): Effect.Effect<Domain.Inbox, StoreError>;
+    /** Mark entries read, or every unread one when `ids` is undefined. */
+    markRead(
+      ids: ReadonlyArray<string> | undefined,
+    ): Effect.Effect<void, StoreError>;
+    /** Dismiss an entry until something new joins it. */
+    dismiss(
+      id: string,
+    ): Effect.Effect<Domain.Entry, Api.EntryNotFound | StoreError>;
+    /** Which of these commits are already in the inbox. */
+    known(
+      commits: ReadonlyArray<Api.CommitRef>,
+    ): Effect.Effect<ReadonlyArray<Api.CommitRef>, StoreError>;
+    /**
+     * Add commits found outside Upkeep's runs to the inbox, skipping ones it
+     * has. Returns how many were added.
+     */
+    seen(
+      commits: ReadonlyArray<Domain.Change>,
+    ): Effect.Effect<number, StoreError>;
+    /** Raise or update an entry that needs a person. */
+    needs(needs: Needs): Effect.Effect<void, StoreError>;
+    /** Settle an entry that needed a person, so it leaves the inbox. */
+    settle(key: string): Effect.Effect<void, StoreError>;
+    /** Delete read or dismissed entries last changed before `before`. */
+    pruneInbox(before: number): Effect.Effect<number, StoreError>;
     /** Every tracked repository, by name. */
     repos(): Effect.Effect<ReadonlyArray<Domain.TrackedRepo>, StoreError>;
     /**
@@ -710,6 +817,35 @@ export class Store extends Context.Service<
           })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));
+
+        if (update.change !== undefined) {
+          yield* placeChange(update.change, current).pipe(
+            Effect.mapError(storeError),
+          );
+        }
+
+        // A heal that leaves something for a person needs them, unless it
+        // parked the job, which raises its own entry.
+        const healing = current.heal;
+
+        if (
+          update.attention === true &&
+          healing !== null &&
+          healing.decision !== "park"
+        ) {
+          const job = jobName(healing.job);
+
+          yield* needs({
+            key: `needs:heal:${healing.job}:${healing.decision ?? "ask"}`,
+            title:
+              healing.decision === "fix"
+                ? `A fix for ${job} needs you`
+                : `Heal asks you about ${job}`,
+            detail: update.summary ?? current.summary,
+            job: healing.job,
+            run: id,
+          });
+        }
       },
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
@@ -805,12 +941,22 @@ export class Store extends Context.Service<
         SET reason = excluded.reason, parked_at = excluded.parked_at,
           issue = excluded.issue
       `;
+
+      yield* needs({
+        key: parkedKey(job),
+        title: `${jobName(job)} is parked`,
+        detail: reason,
+        job,
+        run: null,
+      });
     }, Effect.mapError(storeError));
 
     const unpark = Effect.fn("Store.unpark")(function* (job: string) {
       const rows = yield* sql`
         DELETE FROM parked WHERE job = ${job} RETURNING job
       `;
+
+      yield* settle(parkedKey(job));
 
       return rows.length > 0;
     }, Effect.mapError(storeError));
@@ -1013,7 +1159,25 @@ export class Store extends Context.Service<
             SET tag = excluded.tag, url = excluded.url, seen_at = excluded.seen_at
           `;
 
-          if (previous !== undefined) changed.push(release);
+          if (previous === undefined) continue;
+
+          changed.push(release);
+
+          yield* upsertEntry(
+            {
+              key: Entries.releaseKey(release),
+              kind: "release",
+              title: Entries.releaseTitle(release),
+              detail: null,
+              url: release.url,
+              job: null,
+              run: null,
+              routine: false,
+              you: false,
+              at: now,
+            },
+            false,
+          );
         }
 
         return changed;
@@ -1021,6 +1185,309 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.mapError(storeError),
     );
+
+    /**
+     * Add to an entry, or start it. Joining an existing entry brings it back
+     * unread and undismissed; `replace` also takes the new title and detail,
+     * for an entry that says what's happening now.
+     */
+    const upsertEntry = Effect.fnUntraced(function* (
+      entry: {
+        readonly key: string;
+        readonly kind: Domain.EntryKind;
+        readonly title: string;
+        readonly detail: string | null;
+        readonly url: string | null;
+        readonly job: string | null;
+        readonly run: string | null;
+        readonly routine: boolean;
+        readonly you: boolean;
+        readonly at: number;
+      },
+      replace: boolean,
+    ) {
+      const rows = yield* sql<{ id: string }>`
+        INSERT INTO entries ${sql.insert({
+          id: yield* random.ulid,
+          key: entry.key,
+          kind: entry.kind,
+          title: entry.title,
+          detail: entry.detail,
+          url: entry.url,
+          job: entry.job,
+          run: entry.run,
+          routine: entry.routine ? 1 : 0,
+          you: entry.you ? 1 : 0,
+          count: 1,
+          firstAt: entry.at,
+          lastAt: entry.at,
+        })}
+        ON CONFLICT (key) DO UPDATE SET
+          title = ${replace ? sql`excluded.title` : sql`entries.title`},
+          detail = ${replace ? sql`excluded.detail` : sql`coalesce(entries.detail, excluded.detail)`},
+          url = coalesce(entries.url, excluded.url),
+          job = coalesce(excluded.job, entries.job),
+          run = coalesce(excluded.run, entries.run),
+          routine = entries.routine AND excluded.routine,
+          you = entries.you OR excluded.you,
+          count = entries.count + 1,
+          last_at = max(entries.last_at, excluded.last_at),
+          read_at = NULL,
+          dismissed_at = NULL
+        RETURNING id
+      `;
+
+      const id = rows[0]?.id;
+
+      if (id === undefined) {
+        return yield* Effect.die(new Error("The inbox entry wasn't returned"));
+      }
+
+      return id;
+    });
+
+    /**
+     * Put a commit in the inbox. A run's own commit takes the place of the
+     * same commit the watch job found first; one from the watch job is
+     * skipped when the inbox has it. Returns whether it was added.
+     */
+    const placeChange = Effect.fnUntraced(function* (
+      change: Domain.Change,
+      from: Domain.Run | null,
+    ) {
+      const existing = yield* sql<{ entryId: string }>`
+        SELECT entry_id FROM entry_items
+        WHERE repo = ${change.repo} AND sha = ${change.sha}
+      `;
+
+      if (existing.length > 0) {
+        if (from === null) return false;
+
+        yield* sql`
+          DELETE FROM entry_items WHERE repo = ${change.repo} AND sha = ${change.sha}
+        `;
+        yield* sql`
+          DELETE FROM entries
+          WHERE ${sql.in(
+            "id",
+            existing.map((row) => row.entryId),
+          )}
+            AND kind IN ('commit', 'update')
+            AND NOT EXISTS (
+              SELECT 1 FROM entry_items WHERE entry_id = entries.id
+            )
+        `;
+      }
+
+      const place = Entries.placement(change, from);
+
+      const id = yield* upsertEntry(
+        {
+          key: place.key,
+          kind: place.kind,
+          title: place.title,
+          detail: null,
+          url: null,
+          job: null,
+          run: from?.id ?? null,
+          routine: place.routine,
+          you: place.you,
+          at: change.at,
+        },
+        false,
+      );
+
+      yield* sql`
+        INSERT INTO entry_items ${sql.insert({
+          entryId: id,
+          repo: change.repo,
+          sha: change.sha,
+          text: place.text,
+          url: change.url,
+          at: change.at,
+        })}
+      `;
+
+      return true;
+    });
+
+    const needs = Effect.fn("Store.needs")(function* (raised: Needs) {
+      yield* upsertEntry(
+        {
+          ...raised,
+          kind: "needs",
+          url: null,
+          routine: false,
+          you: false,
+          at: yield* Clock.currentTimeMillis,
+        },
+        true,
+      );
+    }, Effect.mapError(storeError));
+
+    const settle = Effect.fn("Store.settle")(function* (key: string) {
+      yield* sql`
+        UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+        WHERE key = ${key} AND dismissed_at IS NULL
+      `;
+    }, Effect.mapError(storeError));
+
+    const selectEntries = Effect.fnUntraced(function* (
+      statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
+    ) {
+      const rows = yield* statement.pipe(Effect.flatMap(decodeEntries));
+
+      if (rows.length === 0) return [];
+
+      const items = yield* sql`
+        SELECT entry_id, repo, sha, text, url, at FROM entry_items
+        WHERE ${sql.in(
+          "entry_id",
+          rows.map((row) => row.id),
+        )}
+        ORDER BY at, repo
+      `.pipe(Effect.flatMap(decodeItems));
+
+      const byEntry = Arr.groupBy(items, (item) => item.entryId);
+
+      return rows.map(
+        ({ routine, you, items: _items, ...row }): Domain.Entry => ({
+          ...row,
+          routine: routine !== 0,
+          you: you !== 0,
+          items: (byEntry[row.id] ?? []).map(
+            ({ entryId: _entryId, ...item }) => item,
+          ),
+        }),
+      );
+    });
+
+    const entryColumns = sql`
+      id, kind, title, detail, url, job, run, routine, you, count, first_at,
+      last_at, read_at
+    `;
+
+    const inbox = Effect.fn("Store.inbox")(function* (since: number) {
+      const entries = yield* selectEntries(sql`
+        SELECT ${entryColumns} FROM entries
+        WHERE dismissed_at IS NULL AND (last_at >= ${since} OR read_at IS NULL)
+        ORDER BY last_at DESC, id DESC
+        LIMIT 500
+      `);
+
+      return { since, entries };
+    }, Effect.mapError(storeError));
+
+    const markRead = Effect.fn("Store.markRead")(function* (
+      ids: ReadonlyArray<string> | undefined,
+    ) {
+      const now = yield* Clock.currentTimeMillis;
+
+      if (ids === undefined) {
+        yield* sql`UPDATE entries SET read_at = ${now} WHERE read_at IS NULL`;
+
+        return;
+      }
+
+      if (ids.length === 0) return;
+
+      yield* sql`
+        UPDATE entries SET read_at = ${now}
+        WHERE read_at IS NULL AND ${sql.in("id", ids)}
+      `;
+    }, Effect.mapError(storeError));
+
+    const dismiss = Effect.fn("Store.dismiss")(function* (id: string) {
+      const now = yield* Clock.currentTimeMillis;
+
+      const [entry] = yield* selectEntries(sql`
+        UPDATE entries SET dismissed_at = ${now}, read_at = coalesce(read_at, ${now})
+        WHERE id = ${id}
+        RETURNING ${entryColumns}
+      `).pipe(Effect.mapError(storeError));
+
+      if (entry === undefined) return yield* new Api.EntryNotFound({ id });
+
+      return entry;
+    });
+
+    const known = Effect.fn("Store.known")(function* (
+      commits: ReadonlyArray<Api.CommitRef>,
+    ) {
+      if (commits.length === 0) return [];
+
+      const rows = yield* sql<{ repo: string; sha: string }>`
+        SELECT repo, sha FROM entry_items
+        WHERE ${sql.in(
+          "sha",
+          commits.map((commit) => commit.sha),
+        )}
+      `;
+
+      const found = new Set(
+        rows.map((row) => `${row.repo.toLowerCase()}@${row.sha}`),
+      );
+
+      return commits.filter((commit) =>
+        found.has(`${commit.repo.toLowerCase()}@${commit.sha}`),
+      );
+    }, Effect.mapError(storeError));
+
+    const seen = Effect.fn("Store.seen")(
+      function* (commits: ReadonlyArray<Domain.Change>) {
+        let added = 0;
+
+        for (const commit of commits) {
+          if (yield* placeChange(commit, null)) added += 1;
+        }
+
+        return added;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const pruneInbox = Effect.fn("Store.pruneInbox")(function* (
+      before: number,
+    ) {
+      const rows = yield* sql`
+        DELETE FROM entries
+        WHERE last_at < ${before}
+          AND (read_at IS NOT NULL OR dismissed_at IS NOT NULL)
+        RETURNING id
+      `;
+
+      return rows.length;
+    }, Effect.mapError(storeError));
+
+    /**
+     * Fill an empty inbox from the commits runs pushed in the last
+     * `backfillHours`, so it starts with what happened lately. The watch
+     * job fills in the commits made outside Upkeep.
+     */
+    const backfill = Effect.gen(function* () {
+      const [count] = yield* sql<{ count: number }>`
+        SELECT count(*) AS count FROM entries
+      `;
+
+      if ((count?.count ?? 0) > 0) return;
+
+      const now = yield* Clock.currentTimeMillis;
+
+      const pushed = yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE queued_at >= ${now - backfillHours * 3_600_000} AND changes != '[]'
+        ORDER BY queued_at, id
+      `);
+
+      for (const from of pushed) {
+        for (const change of from.changes) yield* placeChange(change, from);
+      }
+
+      if (pushed.length > 0) {
+        yield* Effect.logInfo(`Filled the inbox from ${pushed.length} runs`);
+      }
+    }).pipe(sql.withTransaction, Effect.mapError(storeError));
 
     const selectRepos = (
       statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
@@ -1111,6 +1578,8 @@ export class Store extends Context.Service<
       return rows.length > 0;
     }, Effect.mapError(storeError));
 
+    yield* backfill.pipe(Effect.catchCause(Effect.logError));
+
     return Store.of({
       queueRun,
       runs,
@@ -1139,6 +1608,14 @@ export class Store extends Context.Service<
       requeue,
       failLost,
       recordReleases,
+      inbox,
+      markRead,
+      dismiss,
+      known,
+      seen,
+      needs,
+      settle,
+      pruneInbox,
       repos,
       track,
       untrack,

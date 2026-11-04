@@ -384,6 +384,28 @@ const ActivityHandlers = HttpApiBuilder.group(
   }),
 );
 
+const InboxHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "inbox",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      get: Effect.fn(function* ({ query }) {
+        const now = yield* Clock.currentTimeMillis;
+        const days = Math.min(Math.max(query.days ?? 7, 1), 30);
+
+        return yield* store.inbox(now - days * 86_400_000).pipe(Effect.orDie);
+      }),
+      read: ({ payload }) => store.markRead(payload.ids).pipe(Effect.orDie),
+      dismiss: ({ params }) =>
+        store
+          .dismiss(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+    });
+  }),
+);
+
 const WorkHandlers = HttpApiBuilder.group(
   Api.Api,
   "work",
@@ -564,11 +586,32 @@ const WorkHandlers = HttpApiBuilder.group(
         store.repos().pipe(
           Effect.map((all) =>
             all
-              .filter((tracked) => tracked.jobs.includes(query.job))
+              .filter(
+                (tracked) =>
+                  query.job === undefined || tracked.jobs.includes(query.job),
+              )
               .map((tracked) => tracked.repo),
           ),
           Effect.orDie,
         ),
+      known: ({ payload }) =>
+        store.known(payload.commits).pipe(
+          Effect.map((known) => ({ known })),
+          Effect.orDie,
+        ),
+      seen: Effect.fn(function* ({ payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        const added = yield* store.seen(payload.commits).pipe(Effect.orDie);
+
+        if (added > 0) {
+          yield* Effect.logInfo(`Added ${added} commits to the inbox`).pipe(
+            Effect.annotateLogs({ worker: worker.name }),
+          );
+        }
+
+        return { added };
+      }),
       releases: Effect.fn(function* ({ payload }) {
         // Only the releases of repositories tracked for it count, whatever a
         // worker sends.
@@ -694,6 +737,7 @@ const apiRoutes = (
       JobsHandlers,
       RunsHandlers,
       ActivityHandlers,
+      InboxHandlers,
       WorkHandlers,
       ReposHandlers,
       TokensHandlers,
@@ -898,9 +942,13 @@ const retention = Config.all({
   runs: Config.Int("UPKEEP_KEEP_RUNS").pipe(Config.withDefault(20)),
 });
 
+/** How long a read or dismissed inbox entry is kept after its last change. */
+const entryDays = 30;
+
 /**
  * Delete finished runs and their logs past the retention window, once an
- * hour, keeping the latest runs of each job however old they are.
+ * hour, keeping the latest runs of each job however old they are, and old
+ * inbox entries that were read or dismissed.
  */
 export const pruneRuns = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -916,6 +964,14 @@ export const pruneRuns = Layer.effectDiscard(
       );
 
       if (pruned > 0) yield* Effect.logInfo(`Pruned ${pruned} old runs`);
+
+      const entries = yield* store.pruneInbox(
+        now - Duration.toMillis(Duration.days(entryDays)),
+      );
+
+      if (entries > 0) {
+        yield* Effect.logInfo(`Pruned ${entries} old inbox entries`);
+      }
     }).pipe(
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.hours(1))),

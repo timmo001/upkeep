@@ -306,6 +306,110 @@ test("a repository's first release is only recorded", () =>
     }),
   ));
 
+test("a release's bumps across repositories land in one inbox entry", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const v1 = { repo: "timmo001/lib", tag: "v1", url: "" };
+      const v2 = { ...v1, tag: "v2", url: "https://example.com/v2" };
+
+      yield* store.recordReleases([v1]);
+      yield* store.recordReleases([v2]);
+
+      yield* store.queueRun({ job: "bump", trigger: "release", release: v2 });
+
+      const id = Option.getOrThrow(yield* store.claim(["bump"], "desktop")).id;
+
+      for (const repo of ["timmo001/a", "timmo001/b"]) {
+        yield* store.report(id, "desktop", {
+          change: {
+            repo,
+            sha: `${repo}-sha`,
+            subject: "Update timmo001/lib to v2",
+            url: "",
+            at: 1,
+          },
+        });
+      }
+
+      const { entries } = yield* store.inbox(0);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.kind).toBe("release");
+      expect(entries[0]?.title).toBe("lib v2");
+      expect(entries[0]?.url).toBe(v2.url);
+      expect(entries[0]?.items.map((item) => item.repo)).toEqual([
+        "timmo001/a",
+        "timmo001/b",
+      ]);
+    }),
+  ));
+
+test("a run's commit replaces the same commit the watch job found", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const commit = { repo: "timmo001/a", sha: "abc", url: "", at: 1 };
+
+      expect(
+        yield* store.seen([
+          {
+            ...commit,
+            subject: "Update hk",
+            group: "you:timmo001/a:2026-11-04",
+            title: "Your commits to a",
+            kind: "commit",
+            you: true,
+          },
+        ]),
+      ).toBe(1);
+      expect(
+        yield* store.known([
+          { repo: "Timmo001/A", sha: "abc" },
+          { repo: "timmo001/a", sha: "def" },
+        ]),
+      ).toEqual([{ repo: "Timmo001/A", sha: "abc" }]);
+
+      yield* store.queueRun({ job: "drift", trigger: "manual", release: null });
+
+      const id = Option.getOrThrow(yield* store.claim(["drift"], "desktop")).id;
+
+      yield* store.report(id, "desktop", {
+        change: { ...commit, subject: "Update jdx/hk to v1" },
+      });
+
+      const { entries } = yield* store.inbox(0);
+
+      expect(entries.map((entry) => [entry.kind, entry.routine])).toEqual([
+        ["drift", true],
+      ]);
+    }),
+  ));
+
+test("parking needs a person until the job is unparked", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.park("bump", "It keeps failing", null);
+      yield* store.park("bump", "It keeps failing", null);
+
+      const [parked] = (yield* store.inbox(0)).entries;
+
+      expect(parked?.kind).toBe("needs");
+      expect(parked?.count).toBe(2);
+      expect(parked?.job).toBe("bump");
+
+      yield* store.markRead(undefined);
+
+      expect((yield* store.inbox(Date.now() + 1)).entries).toEqual([]);
+
+      yield* store.unpark("bump");
+
+      expect((yield* store.inbox(0)).entries).toEqual([]);
+    }),
+  ));
+
 test("tracking a repository again replaces its jobs, ignoring case", () =>
   run(
     Effect.gen(function* () {
