@@ -99,6 +99,16 @@ export const shared = css`
   .table {
     overflow-x: auto;
   }
+
+  .actions {
+    display: flex;
+    gap: var(--gw-space-2);
+    justify-content: end;
+  }
+
+  .parked {
+    color: var(--gw-color-warning);
+  }
 `;
 
 /** A Material Design icon, from one of `@mdi/js`'s paths. */

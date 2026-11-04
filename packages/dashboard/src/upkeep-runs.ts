@@ -1,11 +1,15 @@
 /**
- * `upkeep-runs`: the latest runs, of every job or the one in `job`, kept up
- * to date while it's on screen.
+ * `upkeep-runs`: the latest runs, of every job or the one in `job`, grouped
+ * by day and kept up to date while it's on screen.
  */
 import { mdiHistory } from "@mdi/js";
+import type {
+  TableColumn,
+  TableRow,
+} from "@timmo001/groundwork-ui/gw-table.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
-import { css, html, LitElement } from "lit";
+import { html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import {
   attentionBadge,
@@ -17,24 +21,47 @@ import {
   time,
   view,
 } from "./ui.ts";
+import { type CellContent, cell } from "./upkeep-cell.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
+import "@timmo001/groundwork-ui/gw-table.ts";
 
 const release = (run: Domain.Run) =>
   run.release === null
     ? ""
     : externalLink(run.release.url, `${run.release.repo}@${run.release.tag}`);
 
+/** The local day a time falls on, as `YYYY-MM-DD`, which groups runs. */
+const dayOf = (millis: number) => {
+  const date = new Date(millis);
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+};
+
+const dayFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+});
+
+/** A day's heading: Today, Yesterday, or its date. */
+const dayLabel = (day: string) => {
+  if (day === dayOf(Date.now())) return "Today";
+
+  if (day === dayOf(Date.now() - 24 * 60 * 60 * 1000)) return "Yesterday";
+
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+
+  return dayFormat.format(new Date(year, month - 1, date));
+};
+
 export class UpkeepRuns extends LitElement {
   static override properties = { job: {} };
 
-  static override styles = [
-    shared,
-    css`
-      td.summary {
-        min-width: 16em;
-      }
-    `,
-  ];
+  static override styles = [shared];
 
   /** The job to show the runs of, or every job's when empty. */
   declare job: string;
@@ -56,6 +83,118 @@ export class UpkeepRuns extends LitElement {
     return known.find((item) => item.id === job)?.lane ?? "repos";
   }
 
+  /** The runs as a table, newest first, grouped by the day each was queued. */
+  #table(list: ReadonlyArray<Domain.Run>) {
+    const byId = new Map(list.map((run) => [run.id, run]));
+
+    const draw =
+      (content: (run: Domain.Run) => CellContent) => (row: TableRow) => {
+        const run = byId.get(String(row.id));
+
+        return cell(run === undefined ? "" : content(run));
+      };
+
+    const columns: TableColumn[] = [
+      {
+        id: "state",
+        header: "State",
+        cell: draw(
+          (run) =>
+            html`<a href=${runHref(run.id)}>${stateBadge(run.state)}</a>`,
+        ),
+      },
+      ...(this.job === ""
+        ? [
+            {
+              id: "job",
+              header: "Job",
+              cell: draw(
+                (run: Domain.Run) =>
+                  html`<a href=${jobHref(run.job)}>${run.job}</a>`,
+              ),
+            },
+          ]
+        : []),
+      {
+        id: "trigger",
+        header: "Trigger",
+        cell: draw(
+          (run) =>
+            html`${run.trigger}${
+              run.heal === null
+                ? ""
+                : html` of <a href=${runHref(run.heal.of)}>${run.heal.job}</a>`
+            }`,
+        ),
+      },
+      {
+        id: "summary",
+        header: "What it did",
+        wide: true,
+        cell: draw(
+          (run) =>
+            html`${run.attention ? attentionBadge : null}
+            ${run.summary?.split("\n")[0] ?? ""}`,
+        ),
+      },
+      {
+        id: "release",
+        header: "Release",
+        cell: draw((run) => release(run)),
+      },
+      {
+        id: "worker",
+        header: "Worker",
+        cell: draw((run) =>
+          run.state === "queued"
+            ? html`<span class="muted"
+                >waiting in the ${this.#laneOf(run.job)} lane</span
+              >`
+            : (run.worker ?? ""),
+        ),
+      },
+      {
+        id: "day",
+        header: "Day",
+        groupLabel: (value) => dayLabel(String(value)),
+      },
+      {
+        id: "queued",
+        header: "Queued",
+        searchable: false,
+        cell: draw((run) => time(run.queuedAt)),
+      },
+      {
+        id: "took",
+        header: "Took",
+        sortable: false,
+        searchable: false,
+        cell: draw((run) => duration(run)),
+      },
+    ];
+
+    return html`<gw-table
+      label="Runs"
+      group="day"
+      row-key="id"
+      search-label="Search runs"
+      .columns=${columns}
+      .rows=${list.map((run) => ({
+        id: run.id,
+        state: run.state,
+        job: run.job,
+        trigger:
+          run.heal === null ? run.trigger : `${run.trigger} ${run.heal.job}`,
+        summary: run.summary?.split("\n")[0] ?? "",
+        release:
+          run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,
+        worker: run.worker ?? "",
+        day: dayOf(run.queuedAt),
+        queued: run.queuedAt,
+      }))}
+    ></gw-table>`;
+  }
+
   override render() {
     return view(this.#runs.value, (all) => {
       // Every job's runs leave out the ones that found nothing to do, which
@@ -65,66 +204,7 @@ export class UpkeepRuns extends LitElement {
 
       return list.length === 0
         ? empty(mdiHistory, "No runs yet.")
-        : html`<div class="table">
-            <table>
-              <thead>
-                <tr>
-                  <th>State</th>
-                  ${this.job === "" ? html`<th>Job</th>` : null}
-                  <th>Trigger</th>
-                  <th>What it did</th>
-                  <th>Release</th>
-                  <th>Worker</th>
-                  <th>Queued</th>
-                  <th>Took</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${list.map(
-                  (run) =>
-                    html`<tr>
-                      <td>
-                        <a href=${runHref(run.id)}>${stateBadge(run.state)}</a>
-                      </td>
-                      ${
-                        this.job === ""
-                          ? html`<td>
-                              <a href=${jobHref(run.job)}>${run.job}</a>
-                            </td>`
-                          : null
-                      }
-                      <td>
-                        ${run.trigger}${
-                          run.heal === null
-                            ? ""
-                            : html` of
-                                <a href=${runHref(run.heal.of)}
-                                  >${run.heal.job}</a
-                                >`
-                        }
-                      </td>
-                      <td class="summary">
-                        ${run.attention ? attentionBadge : null}
-                        ${run.summary?.split("\n")[0] ?? ""}
-                      </td>
-                      <td>${release(run)}</td>
-                      <td>
-                        ${
-                          run.state === "queued"
-                            ? html`<span class="muted"
-                                >waiting in the ${this.#laneOf(run.job)}
-                                lane</span
-                              >`
-                            : (run.worker ?? "")
-                        }
-                      </td>
-                      <td>${time(run.queuedAt)}</td>
-                      <td>${duration(run)}</td>
-                    </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`;
+        : this.#table(list);
     });
   }
 }
