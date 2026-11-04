@@ -48,6 +48,17 @@ const Agent = Schema.Struct({
 export type Agent = typeof Agent.Type;
 
 export const Settings = Schema.Struct({
+  /**
+   * Opt in to naming tracked repositories from your own list, over their
+   * README titles. The watch job runs `command` each time and reads the JSON
+   * array it prints, of objects with `github` (`owner/name`) and `name`, such
+   * as `["dot", "repo", "list", "--json"]`. A name set by hand is kept.
+   */
+  names: Schema.optionalKey(
+    Schema.Struct({
+      command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    }),
+  ),
   deps: Schema.optionalKey(
     Schema.Struct({
       /**

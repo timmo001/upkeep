@@ -24,6 +24,7 @@ export const access = {
   resume: "write",
   repos: "read",
   track: "write",
+  rename: "write",
   untrack: "write",
 } satisfies { readonly [Name in ToolName]: Access };
 

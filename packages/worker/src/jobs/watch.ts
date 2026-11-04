@@ -5,14 +5,17 @@
  * commits are dependency updates, grouped by update across repositories; the
  * rest are grouped by repository and day. A commit is routine when it only
  * moves versions, lockfiles, pins or tool versions. It also reads each
- * repository's title from its README, for the dashboard.
+ * repository's title from its README, and, when the worker opts in with its
+ * `names` setting, the names to show them by, for the dashboard.
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
+import { homedir } from "node:os";
 import { Clock, Effect, Schema } from "effect";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
-import { reason } from "./bump";
+import * as Settings from "../settings";
+import { reason, run } from "./bump";
 
 /** How far back each run looks; commits the inbox has are skipped. */
 const lookbackHours = 48;
@@ -222,6 +225,45 @@ const readTitle = (repo: string) =>
     Effect.catchCause(() => Effect.succeed({ repo, title: null })),
   );
 
+/** What a `names` command prints: repositories by `owner/name`, with a name. */
+const Named = Schema.Array(
+  Schema.Struct({
+    github: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    name: Schema.String,
+  }),
+);
+
+/**
+ * The names the `names` command gives the tracked repositories, matched
+ * ignoring case. None without the setting, or when the command fails.
+ */
+const namesOf = Effect.fnUntraced(function* (repos: ReadonlyArray<string>) {
+  const command = (yield* Settings.load()).names?.command ?? [];
+  const [program, ...args] = command;
+
+  if (program === undefined) return [];
+
+  const tracked = new Map(repos.map((repo) => [repo.toLowerCase(), repo]));
+
+  return yield* run(program, args, { cwd: homedir(), trusted: homedir() }).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Named))),
+    Effect.map((named) =>
+      named.flatMap(({ github, name }) => {
+        const repo = tracked.get(github?.toLowerCase() ?? "");
+
+        return repo === undefined || name.trim() === ""
+          ? []
+          : [{ repo, name: name.trim() }];
+      }),
+    ),
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `Couldn't read names from ${command.join(" ")}: ${reason(cause)}`,
+      ).pipe(Effect.as([])),
+    ),
+  );
+});
+
 export const watch = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos();
@@ -288,6 +330,10 @@ export const watch = Effect.fnUntraced(function* () {
   yield* reporter.titles(
     yield* Effect.forEach(repos, readTitle, { concurrency: 4 }),
   );
+
+  const names = yield* namesOf(repos);
+
+  if (names.length > 0) yield* reporter.names(names);
 
   yield* summary(
     `Added ${added} of ${found.length} commits to the inbox${failed.length > 0 ? `, couldn't read ${failed.length} repositories` : ""}`,

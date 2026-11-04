@@ -204,6 +204,14 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE repos ADD COLUMN title TEXT`;
   }),
+  // The name a repository shows by, set by hand or by a worker's `names`
+  // command, and who set it
+  "0011_repo_names": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE repos ADD COLUMN name TEXT`;
+    yield* sql`ALTER TABLE repos ADD COLUMN named_by TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -553,6 +561,18 @@ export class Store extends Context.Service<
     setTitles(
       titles: ReadonlyArray<Api.RepoTitle>,
     ): Effect.Effect<void, StoreError>;
+    /** Record names from a worker, leaving any name set by hand. */
+    setNames(
+      names: ReadonlyArray<Api.RepoLabel>,
+    ): Effect.Effect<void, StoreError>;
+    /**
+     * Set a repository's name by hand, or clear it with null. None when it
+     * isn't tracked.
+     */
+    rename(
+      repo: string,
+      name: string | null,
+    ): Effect.Effect<Option.Option<Domain.TrackedRepo>, StoreError>;
     addToken(
       scope: Api.TokenScope,
       name: string,
@@ -1510,9 +1530,13 @@ export class Store extends Context.Service<
       statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
     ) => statement.pipe(Effect.flatMap(decodeRepos));
 
+    const repoColumns = sql.literal(
+      "repo, jobs, added_at, title, name, named_by",
+    );
+
     const repos = Effect.fn("Store.repos")(function* () {
       return yield* selectRepos(sql`
-        SELECT repo, jobs, added_at, title FROM repos ORDER BY repo COLLATE NOCASE
+        SELECT ${repoColumns} FROM repos ORDER BY repo COLLATE NOCASE
       `);
     }, Effect.mapError(storeError));
 
@@ -1528,7 +1552,7 @@ export class Store extends Context.Service<
         })}
         ON CONFLICT (repo) DO UPDATE
         SET repo = excluded.repo, jobs = excluded.jobs
-        RETURNING repo, jobs, added_at, title
+        RETURNING ${repoColumns}
       `);
 
       if (tracked === undefined) {
@@ -1554,6 +1578,32 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.mapError(storeError),
     );
+
+    const setNames = Effect.fn("Store.setNames")(
+      function* (names: ReadonlyArray<Api.RepoLabel>) {
+        for (const { repo, name } of names) {
+          yield* sql`
+            UPDATE repos SET name = ${name}, named_by = 'worker'
+            WHERE repo = ${repo} AND (named_by IS NULL OR named_by = 'worker')
+          `;
+        }
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const rename = Effect.fn("Store.rename")(function* (
+      repo: string,
+      name: string | null,
+    ) {
+      const [renamed] = yield* selectRepos(sql`
+        UPDATE repos SET name = ${name}, named_by = ${name === null ? null : "you"}
+        WHERE repo = ${repo}
+        RETURNING ${repoColumns}
+      `);
+
+      return Option.fromUndefinedOr(renamed);
+    }, Effect.mapError(storeError));
 
     const addToken = Effect.fn("Store.addToken")(function* (
       scope: Api.TokenScope,
@@ -1647,6 +1697,8 @@ export class Store extends Context.Service<
       track,
       untrack,
       setTitles,
+      setNames,
+      rename,
       addToken,
       tokenName,
       tokens,

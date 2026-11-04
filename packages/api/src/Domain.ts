@@ -100,6 +100,16 @@ export const TrackedRepo = Schema.Struct({
    * first heading. Null until the watch job has read it.
    */
   title: Schema.NullOr(Schema.String),
+  /**
+   * The name to show it by, over its title, such as `[HA] Card Energy
+   * Breakdown`. Null to show the title.
+   */
+  name: Schema.NullOr(Schema.String),
+  /**
+   * Who set `name`: `you`, from the dashboard or CLI, or a `worker`, from
+   * the command in its `names` setting. A worker never replaces your name.
+   */
+  namedBy: Schema.NullOr(Schema.Literals(["you", "worker"])),
 });
 
 export interface TrackedRepo extends Schema.Schema.Type<typeof TrackedRepo> {}

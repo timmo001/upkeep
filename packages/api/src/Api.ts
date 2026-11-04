@@ -240,6 +240,14 @@ export const RepoTitle = Schema.Struct({
 
 export interface RepoTitle extends Schema.Schema.Type<typeof RepoTitle> {}
 
+/** A name to show a tracked repository by, from a worker's `names` command. */
+export const RepoLabel = Schema.Struct({
+  repo: RepoName,
+  name: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+});
+
+export interface RepoLabel extends Schema.Schema.Type<typeof RepoLabel> {}
+
 /** A commit by its repository and SHA. */
 export const CommitRef = Schema.Struct({ repo: RepoName, sha: Schema.String });
 
@@ -502,6 +510,18 @@ export class WorkGroup extends HttpApiGroup.make("work")
       }),
       success: HttpApiSchema.NoContent,
     }),
+    /**
+     * Record the names to show tracked repositories by, from a worker's
+     * `names` command. A name set by hand is kept.
+     */
+    HttpApiEndpoint.post("names", "/repos/names", {
+      payload: Schema.Struct({
+        names: Schema.Array(RepoLabel).pipe(
+          Schema.check(Schema.isMaxLength(maxCommits)),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
+    }),
     /** Which of these commits the inbox already has, for the watch job. */
     HttpApiEndpoint.post("known", "/inbox/known", {
       payload: Schema.Struct({
@@ -561,6 +581,20 @@ export class ReposGroup extends HttpApiGroup.make("repos")
       payload: Schema.Struct({ jobs: Schema.optionalKey(Schema.Array(JobId)) }),
       success: TrackedRepo,
       error: UntrackedJobs,
+    }),
+    /**
+     * Set the name a repository shows by, over its title and any name a
+     * worker gives it. Null clears it, so a worker's name or the title shows.
+     */
+    HttpApiEndpoint.patch("rename", "/:owner/:name", {
+      params: { owner: Schema.String, name: Schema.String },
+      payload: Schema.Struct({
+        name: Schema.NullOr(
+          Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+        ),
+      }),
+      success: TrackedRepo,
+      error: RepoNotTracked,
     }),
     /** Stop tracking a repository, so no job works on it. */
     HttpApiEndpoint.delete("untrack", "/:owner/:name", {

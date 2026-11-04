@@ -179,6 +179,7 @@ whatever it's opted into.
 upkeep repos add owner/name
 upkeep repos add owner/name --job bump --job labels
 upkeep repos list
+upkeep repos rename owner/name "System Bridge"
 upkeep repos remove owner/name
 ```
 
@@ -188,6 +189,29 @@ replaces its jobs. A job added to Upkeep later stays off for repositories
 already tracked until they're opted into it. Only the releases of
 repositories tracked for `releases` count, and `bump` only rolls a release out
 to consumers tracked for `bump`.
+
+### Names
+
+The dashboard shows each repository by its README's first heading, or its
+own name when the README has none. Give one a name of your own with
+`upkeep repos rename`, or Rename on its page in the dashboard, and leave the
+name out to clear it again.
+
+A worker can name them from your own list instead. Opt in with `names` in its
+config file, a command that prints a JSON array of objects with `github`
+(`owner/name`) and `name`:
+
+```json
+{
+  "names": {
+    "command": ["dot", "repo", "list", "--json"]
+  }
+}
+```
+
+The `watch` job runs it each time and names the tracked repositories it
+lists. Give the command's full path when the worker runs as a service. A
+name set by hand always stays; clear it and the worker's name shows again.
 
 ## Runs
 
@@ -323,19 +347,19 @@ by default.
 
 ## Jobs
 
-| Job               | Runs             | Does                                                                                                                                                                                                                                                                                                                                                                                |
-| ----------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `releases`        | Every 30 minutes | Reads the latest release of each repository I own tracked for it, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                                                                                                                   |
-| `watch`           | Every 15 minutes | Reads the last 48 hours of commits on each tracked repository's default branch and adds the ones the inbox doesn't have: your own, merged Renovate and Dependabot updates, and anyone else's. A commit that only moves versions, lockfiles, pins, submodules or tool versions is marked routine, and so is a bot's commit that touches no source code. See [Dashboard](#dashboard). |
-| `labels`          | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                                                                                                   |
-| `bump`            | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched.                                                                                                          |
-| `heal`            | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                                                                                                                           |
-| `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                                                                                                                             |
-| `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                               |
-| `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                             |
-| `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                         |
-| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                                                                                                                               |
-| `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                          |
+| Job               | Runs             | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `releases`        | Every 30 minutes | Reads the latest release of each repository I own tracked for it, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                                                                                                                                                                                                          |
+| `watch`           | Every 15 minutes | Reads the last 48 hours of commits on each tracked repository's default branch and adds the ones the inbox doesn't have: your own, merged Renovate and Dependabot updates, and anyone else's. A commit that only moves versions, lockfiles, pins, submodules or tool versions is marked routine, and so is a bot's commit that touches no source code. It also reads each repository's title, and its [name](#names) when the worker opts in. See [Dashboard](#dashboard). |
+| `labels`          | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                                                                                                                                                                                          |
+| `bump`            | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched.                                                                                                                                                                                                 |
+| `heal`            | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                                                                                                                                                                                                                  |
+| `digest`          | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
+| `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
+| `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
+| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                                                                                                                                                                                                                      |
+| `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.

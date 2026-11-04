@@ -596,6 +596,7 @@ const WorkHandlers = HttpApiBuilder.group(
         ),
       titles: ({ payload }) =>
         store.setTitles(payload.titles).pipe(Effect.orDie),
+      names: ({ payload }) => store.setNames(payload.names).pipe(Effect.orDie),
       known: ({ payload }) =>
         store.known(payload.commits).pipe(
           Effect.map((known) => ({ known })),
@@ -682,6 +683,26 @@ const ReposHandlers = HttpApiBuilder.group(
         );
 
         return saved;
+      }),
+      rename: Effect.fn(function* ({ params, payload }) {
+        const admin = yield* Api.CurrentAdmin;
+        const repo = `${params.owner}/${params.name}`;
+
+        const renamed = yield* store
+          .rename(repo, payload.name)
+          .pipe(Effect.orDie);
+
+        if (Option.isNone(renamed)) {
+          return yield* new Api.RepoNotTracked({ repo });
+        }
+
+        yield* Effect.logInfo(
+          payload.name === null
+            ? `Cleared the name of ${renamed.value.repo}`
+            : `Named ${renamed.value.repo} ${payload.name}`,
+        ).pipe(Effect.annotateLogs({ admin: admin.name }));
+
+        return renamed.value;
       }),
       untrack: Effect.fn(function* ({ params }) {
         const admin = yield* Api.CurrentAdmin;

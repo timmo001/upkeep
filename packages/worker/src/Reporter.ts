@@ -51,6 +51,10 @@ export class Reporter extends Context.Service<
     readonly titles: (
       titles: ReadonlyArray<Api.RepoTitle>,
     ) => Effect.Effect<void, unknown>;
+    /** Record names to show tracked repositories by, from the `names` setting. */
+    readonly names: (
+      names: ReadonlyArray<Api.RepoLabel>,
+    ) => Effect.Effect<void, unknown>;
     /** Add commits found outside Upkeep's runs to the inbox. Returns how many were new. */
     readonly seen: (
       commits: ReadonlyArray<Domain.Change>,
@@ -114,6 +118,11 @@ export class Reporter extends Context.Service<
               yield* client.work.titles({ payload: { titles: batch } });
             }
           }),
+          names: Effect.fnUntraced(function* (names) {
+            for (const batch of Arr.chunksOf(names, Api.maxCommits)) {
+              yield* client.work.names({ payload: { names: batch } });
+            }
+          }),
           seen: Effect.fnUntraced(function* (commits) {
             let added = 0;
 
@@ -164,6 +173,10 @@ export class Reporter extends Context.Service<
         repos,
         known: () => Effect.succeed([]),
         titles: () => Effect.void,
+        names: (names) =>
+          RunLog.info(`Would name ${names.length} repositories`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+          ),
         seen: (commits) =>
           RunLog.info(`Would add ${commits.length} commits to the inbox`).pipe(
             Effect.provide(RunLog.RunLog.console),

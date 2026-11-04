@@ -601,7 +601,11 @@ const reposList = Command.make(
       }
 
       for (const tracked of all) {
-        yield* Console.log(`${tracked.repo}  ${tracked.jobs.join(",")}`);
+        const shown = tracked.name ?? tracked.title;
+
+        yield* Console.log(
+          `${tracked.repo}${shown === null ? "" : `  ${shown}`}  ${tracked.jobs.join(",")}`,
+        );
       }
     },
     (effect, input) => Effect.provide(effect, adminClient(input.server)),
@@ -624,11 +628,53 @@ const reposRemove = Command.make(
   Command.withDescription("Stop tracking a repository, so no job works on it"),
 );
 
+const reposRename = Command.make(
+  "rename",
+  {
+    repo: repoName,
+    name: Argument.String("name").pipe(
+      Argument.withDescription(
+        "The name to show it by; leave it out to clear the name, so a worker's name or its README title shows",
+      ),
+      Argument.optional,
+    ),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const typed = Option.getOrElse(input.name, () => "").trim();
+      const name = typed === "" ? null : typed;
+
+      const renamed = yield* client.repos.rename({
+        params: repoParams(input.repo),
+        payload: { name },
+      });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(renamed, null, 2));
+      }
+
+      yield* Console.log(
+        name === null
+          ? `Cleared the name of ${renamed.repo}`
+          : `Named ${renamed.repo} ${name}`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Set the name a repository shows by, over its README title and any name a worker gives it",
+  ),
+);
+
 const repos = Command.make("repos").pipe(
   Command.withDescription(
-    "Manage the repositories Upkeep works on and the jobs each is opted into",
+    "Manage the repositories Upkeep works on, the jobs each is opted into and the names they show by",
   ),
-  Command.withSubcommands([reposAdd, reposList, reposRemove]),
+  Command.withSubcommands([reposAdd, reposList, reposRename, reposRemove]),
 );
 
 const upkeep = Command.make("upkeep").pipe(

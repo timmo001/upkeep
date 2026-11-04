@@ -137,6 +137,21 @@ const Track = Tool.make("track", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const Rename = Tool.make("rename", {
+  description:
+    "Set the name a repository shows by in the dashboard, over its README title and any name a worker gives it. Leave name out to clear it.",
+  parameters: Schema.Struct({
+    repo: Domain.RepoName,
+    name: Schema.optionalKey(Schema.String),
+  }),
+  success: Domain.TrackedRepo,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const Untrack = Tool.make("untrack", {
   description: "Stop tracking a repository, so no job works on it",
   parameters: Schema.Struct({ repo: Domain.RepoName }),
@@ -170,6 +185,7 @@ export const Tools = Toolkit.make(
   Resume,
   Repos,
   Track,
+  Rename,
   Untrack,
 );
 
@@ -291,6 +307,21 @@ export const toolsLayer = Tools.toLayer(
             }),
           ),
         ),
+      rename: (input: {
+        readonly repo: string;
+        readonly name?: string | undefined;
+      }) => {
+        const typed = input.name?.trim() ?? "";
+
+        return onServer(
+          Client.use((client) =>
+            client.repos.rename({
+              params: repoParams(input.repo),
+              payload: { name: typed === "" ? null : typed },
+            }),
+          ),
+        );
+      },
       untrack: (input: { readonly repo: string }) =>
         onServer(
           Client.use((client) =>

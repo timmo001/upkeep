@@ -429,3 +429,26 @@ test("tracking a repository again replaces its jobs, ignoring case", () =>
       expect(yield* store.repos()).toEqual([]);
     }),
   ));
+
+test("a worker's name never replaces one set by hand", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const nameOf = Effect.map(store.repos(), ([repo]) => repo?.name);
+
+      yield* store.track("timmo001/a", ["bump"]);
+      yield* store.setNames([{ repo: "timmo001/a", name: "From dot" }]);
+      expect(yield* nameOf).toBe("From dot");
+
+      yield* store.rename("Timmo001/A", "By hand");
+      yield* store.setNames([{ repo: "timmo001/a", name: "From dot again" }]);
+      expect(yield* nameOf).toBe("By hand");
+
+      yield* store.rename("timmo001/a", null);
+      yield* store.setNames([{ repo: "timmo001/a", name: "From dot again" }]);
+      expect(yield* nameOf).toBe("From dot again");
+      expect(Option.isNone(yield* store.rename("timmo001/b", "Nope"))).toBe(
+        true,
+      );
+    }),
+  ));
