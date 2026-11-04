@@ -130,7 +130,7 @@ const transient =
 /**
  * Run a command to the end and return its stdout, failing with its output on
  * a non-zero exit. Clones live under the cache root, which mise is told to
- * trust, and nothing may prompt. A git command that fails on a GitHub blip
+ * trust, and nothing may prompt, so it gets no stdin. A git command that fails on a GitHub blip
  * is tried again, up to four more times over about two minutes.
  */
 export const run = (
@@ -162,6 +162,9 @@ const runOnce = Effect.fnUntraced(function* (
       const handle = yield* spawner.spawn(
         ChildProcess.make(command, [...args], {
           cwd: options.cwd,
+          // Nothing may prompt, and a command that reads a piped stdin, such
+          // as `opencode run`, would wait on it forever
+          stdin: "ignore",
           extendEnv: true,
           env: {
             MISE_TRUSTED_CONFIG_PATHS: options.trusted,
