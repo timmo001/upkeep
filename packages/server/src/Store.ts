@@ -199,6 +199,11 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DELETE FROM entry_items`;
     yield* sql`DELETE FROM entries`;
   }),
+  "0010_repo_titles": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE repos ADD COLUMN title TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -544,6 +549,10 @@ export class Store extends Context.Service<
     ): Effect.Effect<Domain.TrackedRepo, StoreError>;
     /** Stop tracking a repository, returning whether it was tracked. */
     untrack(repo: string): Effect.Effect<boolean, StoreError>;
+    /** Record tracked repositories' titles, as their READMEs give them. */
+    setTitles(
+      titles: ReadonlyArray<Api.RepoTitle>,
+    ): Effect.Effect<void, StoreError>;
     addToken(
       scope: Api.TokenScope,
       name: string,
@@ -1503,7 +1512,7 @@ export class Store extends Context.Service<
 
     const repos = Effect.fn("Store.repos")(function* () {
       return yield* selectRepos(sql`
-        SELECT repo, jobs, added_at FROM repos ORDER BY repo COLLATE NOCASE
+        SELECT repo, jobs, added_at, title FROM repos ORDER BY repo COLLATE NOCASE
       `);
     }, Effect.mapError(storeError));
 
@@ -1519,7 +1528,7 @@ export class Store extends Context.Service<
         })}
         ON CONFLICT (repo) DO UPDATE
         SET repo = excluded.repo, jobs = excluded.jobs
-        RETURNING repo, jobs, added_at
+        RETURNING repo, jobs, added_at, title
       `);
 
       if (tracked === undefined) {
@@ -1535,6 +1544,16 @@ export class Store extends Context.Service<
 
       return rows.length > 0;
     }, Effect.mapError(storeError));
+
+    const setTitles = Effect.fn("Store.setTitles")(
+      function* (titles: ReadonlyArray<Api.RepoTitle>) {
+        for (const { repo, title } of titles) {
+          yield* sql`UPDATE repos SET title = ${title} WHERE repo = ${repo}`;
+        }
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const addToken = Effect.fn("Store.addToken")(function* (
       scope: Api.TokenScope,
@@ -1627,6 +1646,7 @@ export class Store extends Context.Service<
       repos,
       track,
       untrack,
+      setTitles,
       addToken,
       tokenName,
       tokens,

@@ -4,7 +4,8 @@
  * shows what happened outside Upkeep's own runs. Renovate's and Dependabot's
  * commits are dependency updates, grouped by update across repositories; the
  * rest are grouped by repository and day. A commit is routine when it only
- * moves versions, lockfiles, pins or tool versions.
+ * moves versions, lockfiles, pins or tool versions. It also reads each
+ * repository's title from its README, for the dashboard.
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
@@ -188,6 +189,39 @@ const commitsOf = (repo: string, since: string) =>
     ),
   );
 
+/**
+ * A README's first heading as plain text, such as `System Bridge`, without
+ * images, badges or link markup. None when it has no heading.
+ */
+export const titleOf = (readme: string) => {
+  const heading = readme
+    .split("\n")
+    .find((line) => /^#\s+\S/.test(line) || /^<h1[\s>]/i.test(line.trim()));
+
+  if (heading === undefined) return null;
+
+  const text = heading
+    .replace(/^#\s+/, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[`*_]/g, "")
+    .trim();
+
+  return text === "" ? null : text;
+};
+
+/** A repository's title from its README, none when it has none to read. */
+const readTitle = (repo: string) =>
+  Api.text({
+    endpoint: `repos/${repo}/readme`,
+    method: "GET",
+    headers: { Accept: "application/vnd.github.raw+json" },
+  }).pipe(
+    Effect.map((readme) => ({ repo, title: titleOf(readme) })),
+    Effect.catchCause(() => Effect.succeed({ repo, title: null })),
+  );
+
 export const watch = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos();
@@ -248,6 +282,11 @@ export const watch = Effect.fnUntraced(function* () {
 
   const added = yield* reporter.seen(
     changes.filter((change) => change !== null),
+  );
+
+  // Titles change rarely, but reading them each run keeps a rename in step.
+  yield* reporter.titles(
+    yield* Effect.forEach(repos, readTitle, { concurrency: 4 }),
   );
 
   yield* summary(

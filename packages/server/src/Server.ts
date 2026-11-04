@@ -594,6 +594,8 @@ const WorkHandlers = HttpApiBuilder.group(
           ),
           Effect.orDie,
         ),
+      titles: ({ payload }) =>
+        store.setTitles(payload.titles).pipe(Effect.orDie),
       known: ({ payload }) =>
         store.known(payload.commits).pipe(
           Effect.map((known) => ({ known })),

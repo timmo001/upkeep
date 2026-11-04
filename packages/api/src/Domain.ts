@@ -95,6 +95,11 @@ export const TrackedRepo = Schema.Struct({
   repo: RepoName,
   jobs: Schema.Array(JobId),
   addedAt: Schema.Finite,
+  /**
+   * Its name as people write it, such as `System Bridge`, from its README's
+   * first heading. Null until the watch job has read it.
+   */
+  title: Schema.NullOr(Schema.String),
 });
 
 export interface TrackedRepo extends Schema.Schema.Type<typeof TrackedRepo> {}

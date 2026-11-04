@@ -232,6 +232,14 @@ export const maxReleases = 1000;
 /** The most commits one request to the inbox carries, either way. */
 export const maxCommits = 500;
 
+/** A tracked repository's title, from its README's first heading. */
+export const RepoTitle = Schema.Struct({
+  repo: RepoName,
+  title: Schema.NullOr(Schema.String),
+});
+
+export interface RepoTitle extends Schema.Schema.Type<typeof RepoTitle> {}
+
 /** A commit by its repository and SHA. */
 export const CommitRef = Schema.Struct({ repo: RepoName, sha: Schema.String });
 
@@ -484,6 +492,15 @@ export class WorkGroup extends HttpApiGroup.make("work")
     HttpApiEndpoint.get("repos", "/repos", {
       query: { job: Schema.optional(JobId) },
       success: Schema.Array(RepoName),
+    }),
+    /** Record tracked repositories' titles, which the watch job reads. */
+    HttpApiEndpoint.post("titles", "/repos/titles", {
+      payload: Schema.Struct({
+        titles: Schema.Array(RepoTitle).pipe(
+          Schema.check(Schema.isMaxLength(maxCommits)),
+        ),
+      }),
+      success: HttpApiSchema.NoContent,
     }),
     /** Which of these commits the inbox already has, for the watch job. */
     HttpApiEndpoint.post("known", "/inbox/known", {

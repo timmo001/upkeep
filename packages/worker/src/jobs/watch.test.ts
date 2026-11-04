@@ -1,6 +1,17 @@
 /** Which commits the watch job folds away as routine. */
 import { expect, test } from "bun:test";
-import { routine } from "./watch";
+import { routine, titleOf } from "./watch";
+
+test("a README's first heading is its title, without links or images", () => {
+  expect(titleOf("![logo](logo.png)\n\n# System Bridge\n\nText")).toBe(
+    "System Bridge",
+  );
+  expect(titleOf("# [Up Next](https://example.com) ![badge](b.svg)")).toBe(
+    "Up Next",
+  );
+  expect(titleOf('<h1 align="center">Triage</h1>')).toBe("Triage");
+  expect(titleOf("No heading here")).toBeNull();
+});
 
 test("lockfiles and tool config alone are routine", () => {
   expect(
