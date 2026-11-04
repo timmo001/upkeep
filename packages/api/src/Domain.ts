@@ -163,6 +163,19 @@ export const Parked = Schema.Struct({
 
 export interface Parked extends Schema.Schema.Type<typeof Parked> {}
 
+/**
+ * A job someone turned off: nothing queues it by schedule, release or heal
+ * until it's resumed, though it can still be run by hand. Pausing `heal`
+ * stops every heal.
+ */
+export const Paused = Schema.Struct({
+  at: Schema.Finite,
+  /** The admin who paused it. */
+  by: Schema.String,
+});
+
+export interface Paused extends Schema.Schema.Type<typeof Paused> {}
+
 /** A commit a run pushed, such as a bump, a drift update or a heal's fix. */
 export const Change = Schema.Struct({
   repo: RepoName,
@@ -236,6 +249,8 @@ export const JobStatus = Schema.Struct({
   lastRun: Schema.NullOr(Run),
   /** Set while the job is parked. */
   parked: Schema.NullOr(Parked),
+  /** Set while the job is paused. */
+  paused: Schema.NullOr(Paused),
 });
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}

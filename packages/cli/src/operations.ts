@@ -20,6 +20,8 @@ export const access = {
   run: "write",
   cancel: "write",
   unpark: "write",
+  pause: "write",
+  resume: "write",
   repos: "read",
   track: "write",
   untrack: "write",

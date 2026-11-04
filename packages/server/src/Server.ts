@@ -102,12 +102,18 @@ const healsPerDay = Config.Int("UPKEEP_HEALS_PER_DAY").pipe(
 const queue = Effect.fn("queue")(function* (run: NewRun) {
   const store = yield* Store;
 
-  // A parked job is only run by hand until it's unparked.
+  // A parked or paused job is only run by hand until it's let go again.
   if (run.trigger !== "manual") {
     const parked = yield* store.parked();
+    const paused = yield* store.paused();
 
-    if (parked.has(run.job) || (run.heal && parked.has(run.heal.job))) {
-      yield* Effect.logInfo(`Skipped ${run.job}: parked`);
+    const held = (job: string) =>
+      paused.has(job) ? "paused" : parked.has(job) ? "parked" : null;
+
+    const why = held(run.job) ?? (run.heal ? held(run.heal.job) : null);
+
+    if (why !== null) {
+      yield* Effect.logInfo(`Skipped ${run.job}: ${why}`);
 
       return Option.none<Domain.Run>();
     }
@@ -248,6 +254,7 @@ const JobsHandlers = HttpApiBuilder.group(
       list: Effect.fn(function* () {
         const latest = yield* store.latestRuns().pipe(Effect.orDie);
         const parked = yield* store.parked().pipe(Effect.orDie);
+        const paused = yield* store.paused().pipe(Effect.orDie);
 
         return Catalogue.jobs.map((job): Domain.JobStatus => ({
           id: job.id,
@@ -259,6 +266,7 @@ const JobsHandlers = HttpApiBuilder.group(
           tracked: job.tracked,
           lastRun: latest.get(job.id) ?? null,
           parked: parked.get(job.id) ?? null,
+          paused: paused.get(job.id) ?? null,
         }));
       }),
       run: Effect.fn(function* ({ params, payload }) {
@@ -286,6 +294,31 @@ const JobsHandlers = HttpApiBuilder.group(
 
         if (yield* store.unpark(params.id).pipe(Effect.orDie)) {
           yield* Effect.logInfo(`Unparked ${params.id}`).pipe(
+            Effect.annotateLogs({ admin: admin.name }),
+          );
+        }
+      }),
+      pause: Effect.fn(function* ({ params }) {
+        if (Option.isNone(findJob(params.id))) {
+          return yield* new Api.JobNotFound({ id: params.id });
+        }
+
+        const admin = yield* Api.CurrentAdmin;
+
+        yield* store.pause(params.id, admin.name).pipe(Effect.orDie);
+        yield* Effect.logInfo(`Paused ${params.id}`).pipe(
+          Effect.annotateLogs({ admin: admin.name }),
+        );
+      }),
+      resume: Effect.fn(function* ({ params }) {
+        if (Option.isNone(findJob(params.id))) {
+          return yield* new Api.JobNotFound({ id: params.id });
+        }
+
+        const admin = yield* Api.CurrentAdmin;
+
+        if (yield* store.resume(params.id).pipe(Effect.orDie)) {
+          yield* Effect.logInfo(`Resumed ${params.id}`).pipe(
             Effect.annotateLogs({ admin: admin.name }),
           );
         }

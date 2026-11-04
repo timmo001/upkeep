@@ -64,6 +64,14 @@ export class UpkeepJob extends LitElement {
                 }
               </gw-alert>`
         }
+        ${
+          job.paused === null
+            ? null
+            : html`<gw-alert class="message" tone="neutral" heading="Paused">
+                ${job.paused.by} paused it ${time(job.paused.at)}. Nothing
+                queues it until it's resumed, but it can still be run by hand.
+              </gw-alert>`
+        }
         <upkeep-runs .job=${job.id}></upkeep-runs>
       `;
     });

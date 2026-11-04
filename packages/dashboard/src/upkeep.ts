@@ -157,6 +157,20 @@ export const unparkJob = UpkeepApi.runtime.fn((job: string) =>
   ),
 );
 
+export const pauseJob = UpkeepApi.runtime.fn((job: string) =>
+  UpkeepApi.use((client) => client.jobs.pause({ params: { id: job } })).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate(runsKey)),
+  ),
+);
+
+export const resumeJob = UpkeepApi.runtime.fn((job: string) =>
+  UpkeepApi.use((client) => client.jobs.resume({ params: { id: job } })).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate(runsKey)),
+  ),
+);
+
 export const cancelRun = UpkeepApi.runtime.fn((id: string) =>
   UpkeepApi.use((client) => client.runs.cancel({ params: { id } })).pipe(
     asDefects,

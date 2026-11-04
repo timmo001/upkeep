@@ -91,6 +91,29 @@ const Unpark = Tool.make("unpark", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const Pause = Tool.make("pause", {
+  description:
+    "Turn a job off without stopping the server or worker: nothing queues it by schedule, release or heal until it's resumed, though it can still be run by hand. Pause heal to stop every heal.",
+  parameters: Schema.Struct({ job: Domain.JobId }),
+  success: Schema.Struct({ job: Domain.JobId }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const Resume = Tool.make("resume", {
+  description: "Turn a paused job back on",
+  parameters: Schema.Struct({ job: Domain.JobId }),
+  success: Schema.Struct({ job: Domain.JobId }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const Repos = Tool.make("repos", {
   description:
     "List the repositories the server tracks and the jobs each is opted into. A job that works on repositories leaves every other one alone.",
@@ -143,6 +166,8 @@ export const Tools = Toolkit.make(
   Run,
   Cancel,
   Unpark,
+  Pause,
+  Resume,
   Repos,
   Track,
   Untrack,
@@ -229,6 +254,22 @@ export const toolsLayer = Tools.toLayer(
           Client.use((client) =>
             client.jobs
               .unpark({ params: { id: input.job } })
+              .pipe(Effect.as({ job: input.job })),
+          ),
+        ),
+      pause: (input: { readonly job: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.jobs
+              .pause({ params: { id: input.job } })
+              .pipe(Effect.as({ job: input.job })),
+          ),
+        ),
+      resume: (input: { readonly job: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.jobs
+              .resume({ params: { id: input.job } })
               .pipe(Effect.as({ job: input.job })),
           ),
         ),

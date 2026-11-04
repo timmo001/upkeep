@@ -238,6 +238,21 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
       success: HttpApiSchema.NoContent,
       error: JobNotFound,
     }),
+    /**
+     * Turn a job off: nothing queues it until it's resumed, though it can
+     * still be run by hand. A run already going carries on.
+     */
+    HttpApiEndpoint.put("pause", "/:id/pause", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: JobNotFound,
+    }),
+    /** Turn a paused job back on. */
+    HttpApiEndpoint.delete("resume", "/:id/pause", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: JobNotFound,
+    }),
   )
   .middleware(AdminAuthorization)
   .prefix("/api/jobs")

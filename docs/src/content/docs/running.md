@@ -176,6 +176,8 @@ upkeep log <run> --follow
 upkeep cancel <run>
 upkeep runs --job heal
 upkeep unpark <job>
+upkeep pause heal
+upkeep resume heal
 ```
 
 `upkeep run` queues a run for a worker; a run of the same job and release
@@ -186,6 +188,13 @@ an admin token.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.
+
+`upkeep pause <job>` turns a job off without stopping the server or worker:
+nothing queues it on its schedule, on releases or as a heal until
+`upkeep resume <job>`, and runs of it already waiting stay in the queue
+untaken. A run already going carries on, and it can still be run by hand.
+Pausing `heal` stops every heal. The dashboard has the same switch on each
+job.
 
 Once an hour the server deletes finished runs older than `UPKEEP_KEEP_DAYS`
 and their logs, keeping the latest `UPKEEP_KEEP_RUNS` of each job. Queued and
@@ -256,8 +265,7 @@ picks by what each is `for`:
 ```
 
 `opencode` sets the OpenCode command (`opencode2` by default) and `repo`
-Upkeep's own repository, for a heal that targets Upkeep. The worker needs
-Herdr running for a fix; without it, the fix waits for the digest.
+Upkeep's own repository, for a heal that targets Upkeep.
 
 Without a decision model, a lost run is retried and anything else waits for
 the evening digest.

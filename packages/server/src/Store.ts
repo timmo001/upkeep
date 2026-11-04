@@ -137,6 +137,17 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE runs ADD COLUMN changes TEXT NOT NULL DEFAULT '[]'`;
     yield* sql`ALTER TABLE runs ADD COLUMN attention INTEGER NOT NULL DEFAULT 0`;
   }),
+  "0007_paused": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE paused (
+        job TEXT PRIMARY KEY,
+        paused_at INTEGER NOT NULL,
+        paused_by TEXT NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -229,6 +240,10 @@ const decodeReleases = Schema.decodeUnknownEffect(Schema.Array(Domain.Release));
 
 const decodeParked = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Parked.fields })),
+);
+
+const decodePaused = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Paused.fields })),
 );
 
 const decodeRepos = Schema.decodeUnknownEffect(
@@ -329,6 +344,12 @@ export class Store extends Context.Service<
     unpark(job: string): Effect.Effect<boolean, StoreError>;
     /** The parked jobs, by job ID. */
     parked(): Effect.Effect<ReadonlyMap<string, Domain.Parked>, StoreError>;
+    /** Pause a job, keeping when and by whom when it's already paused. */
+    pause(job: string, by: string): Effect.Effect<void, StoreError>;
+    /** Resume a paused job, returning whether it was paused. */
+    resume(job: string): Effect.Effect<boolean, StoreError>;
+    /** The paused jobs, by job ID. */
+    paused(): Effect.Effect<ReadonlyMap<string, Domain.Paused>, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -541,6 +562,8 @@ export class Store extends Context.Service<
           WHERE id = (
             SELECT id FROM runs
             WHERE state = 'queued' AND ${sql.in("job", jobs)}
+              AND (trigger = 'manual'
+                OR job NOT IN (SELECT job FROM paused))
             ORDER BY queued_at, id LIMIT 1
           )
           RETURNING *
@@ -799,6 +822,35 @@ export class Store extends Context.Service<
 
       return new Map(
         rows.map(({ job, ...entry }): [string, Domain.Parked] => [job, entry]),
+      );
+    }, Effect.mapError(storeError));
+
+    const pause = Effect.fn("Store.pause")(function* (job: string, by: string) {
+      yield* sql`
+        INSERT INTO paused ${sql.insert({
+          job,
+          pausedAt: yield* Clock.currentTimeMillis,
+          pausedBy: by,
+        })}
+        ON CONFLICT (job) DO NOTHING
+      `;
+    }, Effect.mapError(storeError));
+
+    const resume = Effect.fn("Store.resume")(function* (job: string) {
+      const rows = yield* sql`
+        DELETE FROM paused WHERE job = ${job} RETURNING job
+      `;
+
+      return rows.length > 0;
+    }, Effect.mapError(storeError));
+
+    const paused = Effect.fn("Store.paused")(function* () {
+      const rows = yield* sql`
+        SELECT job, paused_at AS at, paused_by AS by FROM paused
+      `.pipe(Effect.flatMap(decodePaused));
+
+      return new Map(
+        rows.map(({ job, ...entry }): [string, Domain.Paused] => [job, entry]),
       );
     }, Effect.mapError(storeError));
 
@@ -1076,6 +1128,9 @@ export class Store extends Context.Service<
       park,
       unpark,
       parked,
+      pause,
+      resume,
+      paused,
       cancel,
       log,
       logTail,

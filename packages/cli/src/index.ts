@@ -390,6 +390,43 @@ const unpark = Command.make(
   ),
 );
 
+const jobToggle = (options: {
+  readonly name: "pause" | "resume";
+  readonly description: string;
+  readonly done: (job: string) => string;
+}) =>
+  Command.make(
+    options.name,
+    {
+      job: Argument.String("job").pipe(
+        Argument.withDescription("The job's ID"),
+      ),
+      server,
+    },
+    Effect.fn(
+      function* (input) {
+        const client = yield* Client;
+
+        yield* client.jobs[options.name]({ params: { id: input.job } });
+        yield* Console.log(options.done(input.job));
+      },
+      (effect, input) => Effect.provide(effect, adminClient(input.server)),
+    ),
+  ).pipe(Command.withDescription(options.description));
+
+const pause = jobToggle({
+  name: "pause",
+  description:
+    "Turn a job off without stopping anything: nothing queues it until it's resumed. Pause heal to stop every heal",
+  done: (job) => `Paused ${job}; it only runs by hand until it's resumed`,
+});
+
+const resume = jobToggle({
+  name: "resume",
+  description: "Turn a paused job back on",
+  done: (job) => `Resumed ${job}; it's queued as usual again`,
+});
+
 const tokenCommands = (options: {
   readonly scope: Api.TokenScope;
   readonly command: string;
@@ -600,6 +637,8 @@ const upkeep = Command.make("upkeep").pipe(
     log,
     cancel,
     unpark,
+    pause,
+    resume,
     repos,
     serve,
     worker,

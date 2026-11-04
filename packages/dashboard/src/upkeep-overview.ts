@@ -1,9 +1,10 @@
 /**
  * `upkeep-overview`: a summary of the last day, with what needs a person and
  * the commits pushed; every job with its latest run, a button to run it and,
- * for a parked job, why and a button to unpark it; then the latest runs.
+ * for a parked job, why and a button to unpark it, and a switch to pause or
+ * resume it; then the latest runs.
  */
-import { mdiPlay, mdiPlayPause } from "@mdi/js";
+import { mdiPause, mdiPlay, mdiPlayPause } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
 import cronstrue from "cronstrue";
 import { AsyncResult } from "effect/reactivity";
@@ -14,6 +15,8 @@ import {
   activity,
   jobHref,
   jobs,
+  pauseJob,
+  resumeJob,
   runHref,
   runJob,
   unparkJob,
@@ -53,6 +56,26 @@ export const jobActions = (job: Domain.JobStatus) => html`
           icon=${mdiPlayPause}
           @click=${() => registry.set(unparkJob, job.id)}
           >Unpark</gw-button
+        >`
+  }
+  ${
+    job.paused === null
+      ? html`<gw-button
+          size="small"
+          appearance="outlined"
+          variant="neutral"
+          icon=${mdiPause}
+          title="Stop queueing it until it's resumed"
+          @click=${() => registry.set(pauseJob, job.id)}
+          >Pause</gw-button
+        >`
+      : html`<gw-button
+          size="small"
+          appearance="outlined"
+          variant="warning"
+          icon=${mdiPlay}
+          @click=${() => registry.set(resumeJob, job.id)}
+          >Resume</gw-button
         >`
   }
 `;
@@ -206,6 +229,14 @@ export class UpkeepOverview extends LitElement {
                             : html`<div class="parked">
                                 Parked ${time(job.parked.at)}:
                                 ${job.parked.reason}
+                              </div>`
+                        }
+                        ${
+                          job.paused === null
+                            ? null
+                            : html`<div class="muted">
+                                Paused ${time(job.paused.at)} by
+                                ${job.paused.by}
                               </div>`
                         }
                       </td>
