@@ -362,13 +362,18 @@ export const checkout = Effect.fnUntraced(function* (
   yield* run("git", ["clean", "--quiet", "-fdx"], options);
 });
 
-/** Each lockfile and the package manager that writes it. */
-const lockfiles: ReadonlyArray<readonly [string, string]> = [
-  ["bun.lock", "bun"],
-  ["bun.lockb", "bun"],
-  ["pnpm-lock.yaml", "pnpm"],
-  ["package-lock.json", "npm"],
-  ["yarn.lock", "yarn"],
+/**
+ * Each lockfile, the package manager that writes it and its install. CI is
+ * set, which makes pnpm freeze the lockfile the bump has to change.
+ */
+const lockfiles: ReadonlyArray<
+  readonly [string, string, ReadonlyArray<string>]
+> = [
+  ["bun.lock", "bun", ["install"]],
+  ["bun.lockb", "bun", ["install"]],
+  ["pnpm-lock.yaml", "pnpm", ["install", "--no-frozen-lockfile"]],
+  ["package-lock.json", "npm", ["install"]],
+  ["yarn.lock", "yarn", ["install"]],
 ];
 
 const lockfileIn = Effect.fnUntraced(function* (folder: string) {
@@ -414,7 +419,7 @@ export const install = Effect.fnUntraced(function* (
       const lockfile = path.join(folder, found[0]);
 
       if (!done.has(lockfile)) {
-        yield* tool(options.mise, found[1], ["install"], {
+        yield* tool(options.mise, found[1], found[2], {
           cwd: path.join(directory, folder),
           trusted: options.trusted,
         });
