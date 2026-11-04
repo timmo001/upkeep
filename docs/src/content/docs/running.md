@@ -142,7 +142,7 @@ reached.
 ## Repositories
 
 Jobs that work on repositories (`releases`, `labels`, `bump`,
-`notifications`, `stalled-updates`, `drift` and `deps`) only touch the ones
+`notifications`, `stalled-updates`, `drift`, `deps` and `ci`) only touch the ones
 the server tracks for them. Every other repository is left alone, and with
 none tracked they do nothing.
 
@@ -188,9 +188,10 @@ running runs are never pruned.
 ## Heals
 
 When a run fails or is lost, the server queues a `heal` run for it. A failed
-`bump` or `stalled-updates` run gets one heal per repository that failed,
-each with that repository as its target; any other failure gets one heal with
-Upkeep itself as the target. A failed heal never queues another.
+run of a job over repositories, such as `bump`, `stalled-updates`, `drift` or
+`ci`, gets one heal per repository that failed, each with that repository as
+its target; any other failure gets one heal with Upkeep itself as the target.
+A failed heal never queues another.
 
 Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
@@ -292,6 +293,7 @@ by default.
 | `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                    |
 | `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                |
 | `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                      |
+| `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                 |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
@@ -355,6 +357,23 @@ Clones are kept in `upkeep/stalled-updates` in the XDG cache directory. Set
 `UPKEEP_STALLED_UPDATES_DRY_RUN=true` to stop before each commit and log what
 would be pushed. A dry run logs the repositories that failed rather than
 failing, so it queues no heals.
+
+### CI
+
+Each hour the `ci` job reads the latest finished run of each workflow on
+every tracked repository's default branch, skipping archived ones. Pull
+request runs and cancelled runs are left out. When a workflow's latest run
+failed, the job logs the end of its failed steps, then runs the repository's
+checks in a clean clone, as a bump does, and logs how they went: whether
+installing changed a lockfile, which a frozen install in CI refuses, whether
+the checks fail here too, or whether they pass, so it fails only in CI. The
+run fails at the end, naming the red repositories, and a heal for each one
+hands both results to an agent to fix the cause, push and watch CI.
+
+Once a workflow's latest run passes again, the job dismisses the unread
+"workflow run failed" notifications for it on the default branch.
+
+Clones are kept in `upkeep/ci` in the XDG cache directory.
 
 ### Drift
 

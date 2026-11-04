@@ -1,5 +1,6 @@
 /** What each job in the catalogue does on a worker, by job ID. */
 import { bump } from "./jobs/bump";
+import { ci } from "./jobs/ci";
 import { deps } from "./jobs/deps";
 import { digest } from "./jobs/digest";
 import { drift } from "./jobs/drift";
@@ -20,4 +21,5 @@ export const handlers: Handlers = {
   "stalled-updates": () => stalledUpdates(),
   drift: () => drift(),
   deps: () => deps(),
+  ci: () => ci(),
 };

@@ -102,6 +102,17 @@ export const deps: Job = {
   tracked: true,
 };
 
+export const ci: Job = {
+  id: "ci",
+  name: "CI",
+  description:
+    "Read the latest CI on each repository's default branch: run the checks of a red one here and fail with both, so a heal fixes it forward",
+  schedule: "30 * * * *",
+  onRelease: false,
+  lane: "repos",
+  tracked: true,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   labels,
@@ -112,4 +123,5 @@ export const jobs: ReadonlyArray<Job> = [
   stalledUpdates,
   drift,
   deps,
+  ci,
 ];

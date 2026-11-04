@@ -96,6 +96,11 @@ const prompt = (
           "The run was taking over the dependency update pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit.",
         ]
       : []),
+    ...(run.job === "ci"
+      ? [
+          `${repo}'s CI is red on its default branch. The log has the failed run's failed steps and how its checks went here: tell a real failure from one only CI sees (a lockfile, the runner, a secret). Fix the cause, push, then watch CI on the commit until it passes.`,
+        ]
+      : []),
     ...reach,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
     `You have ${minutes} minutes. End with a short summary of what you did.`,
