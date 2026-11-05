@@ -55,3 +55,25 @@ test("an action pinned at a major tag moves to the next major tag", () => {
 
   expect(updates).toEqual([["major", "v7", "v8"]]);
 });
+
+const astro: Dependency = {
+  manager: "bun",
+  file: "docs/package.json",
+  depName: "astro",
+  packageName: "astro",
+  datasource: "npm",
+  depType: "dependencies",
+  currentValue: "^7.2.10",
+};
+
+test("a range with no locked version only updates past its range", () => {
+  const releases: Releases = {
+    releases: ["7.2.10", "7.4.5", "8.0.0"].map((version) => ({ version })),
+  };
+
+  const updates = updatesFor(policy, astro, releases, 0).updates.map(
+    ({ updateType, from, to }) => [updateType, from, to],
+  );
+
+  expect(updates).toEqual([["major", "7.4.5", "8.0.0"]]);
+});

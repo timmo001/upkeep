@@ -272,10 +272,31 @@ export const updatesFor = (
       ? partsOf(withSource.currentValue)
       : undefined;
 
+  // With no locked version, Renovate takes the highest release in the range
+  // that isn't past latest, so nothing inside the range is an update
+  const inRange = (range: string) => {
+    const versions = metadata.releases.flatMap((release) => {
+      const text = extract(release);
+
+      return text !== undefined && semver.satisfies(text, range) ? [text] : [];
+    });
+
+    const latest = metadata.latest;
+
+    const capped =
+      latest !== undefined && semver.satisfies(latest, range)
+        ? versions.filter((version) => semver.lte(version, latest))
+        : versions;
+
+    return (
+      semver.maxSatisfying(capped, range) ?? semver.minVersion(range)?.version
+    );
+  };
+
   const currentText =
     withSource.lockedVersion ??
     (precision === undefined && isRange(withSource.currentValue)
-      ? semver.minVersion(withSource.currentValue)?.version
+      ? inRange(withSource.currentValue)
       : withSource.currentValue);
 
   const current =

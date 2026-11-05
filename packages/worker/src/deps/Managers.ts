@@ -75,27 +75,6 @@ const bunLock = (file: string, files: ReadonlyMap<string, string>) => {
   }
 };
 
-/** The version bun.lock resolved each package to, by name. */
-const bunVersions = (text: string) => {
-  const versions = new Map<string, string>();
-  const lock: unknown = Bun.JSON5.parse(text);
-
-  if (!Predicate.isObject(lock) || !("packages" in lock)) return versions;
-
-  const packages = lock.packages;
-
-  if (!Predicate.isObject(packages)) return versions;
-
-  for (const [name, entry] of Object.entries(packages)) {
-    const resolution: unknown = Array.isArray(entry) ? entry[0] : undefined;
-
-    if (Predicate.isString(resolution))
-      versions.set(name, resolution.slice(resolution.lastIndexOf("@") + 1));
-  }
-
-  return versions;
-};
-
 const dependencyTypes = [
   "dependencies",
   "devDependencies",
@@ -178,9 +157,6 @@ const extractPackage = (
   const lock = bunLock(file, files);
   const manager = lock === undefined ? "npm" : "bun";
 
-  const locked =
-    lock === undefined ? new Map() : bunVersions(files.get(lock) ?? "");
-
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
 
@@ -207,12 +183,11 @@ const extractPackage = (
         depType,
       );
 
-      const version = locked.get(depName);
-
+      // Renovate's bun manager doesn't read versions from bun.lock, so a
+      // range in bun's hands has no locked version, and no in-range branch
       dependencies.push({
         ...dependency,
         lockFiles: lock === undefined ? undefined : [lock],
-        lockedVersion: dependency.datasource === "npm" ? version : undefined,
       });
     }
   }
