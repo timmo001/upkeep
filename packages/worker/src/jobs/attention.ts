@@ -32,6 +32,11 @@ const Author = Schema.NullOr(
 
 const Event = Schema.Struct({ author: Author, createdAt: Schema.String });
 
+/** Linked pull requests or issues, by their pages. */
+const Urls = Schema.Struct({
+  nodes: Schema.Array(Schema.NullOr(Schema.Struct({ url: Schema.String }))),
+});
+
 const Common = {
   url: Schema.String,
   number: Schema.Int,
@@ -61,6 +66,8 @@ const Pull = Schema.Struct({
   reviewDecision: Schema.NullOr(Schema.String),
   headRefOid: Schema.String,
   baseRefName: Schema.String,
+  headRefName: Schema.optionalKey(Schema.String),
+  closingIssuesReferences: Schema.optionalKey(Urls),
   commits: Schema.Struct({
     nodes: Schema.Array(
       Schema.NullOr(
@@ -118,6 +125,11 @@ export type Pull = typeof Pull.Type;
 const Issue = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   ...Common,
+  parent: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ url: Schema.String })),
+  ),
+  subIssues: Schema.optionalKey(Urls),
+  blockedBy: Schema.optionalKey(Urls),
 });
 
 export type Issue = typeof Issue.Type;
@@ -139,7 +151,8 @@ const document = `
         __typename
         ... on PullRequest {
           ${common}
-          isDraft mergeable reviewDecision headRefOid baseRefName
+          isDraft mergeable reviewDecision headRefOid baseRefName headRefName
+          closingIssuesReferences(first: 10) { nodes { url } }
           commits(last: 1) {
             nodes { commit { committedDate statusCheckRollup { state } } }
           }
@@ -156,7 +169,12 @@ const document = `
             nodes { author { __typename login } state submittedAt }
           }
         }
-        ... on Issue { ${common} }
+        ... on Issue {
+          ${common}
+          parent { url }
+          subIssues(first: 20) { nodes { url } }
+          blockedBy(first: 10) { nodes { url } }
+        }
       }
     }
   }
@@ -353,6 +371,46 @@ export const read = (
   };
 };
 
+const urls = (linked: typeof Urls.Type | undefined) =>
+  (linked?.nodes ?? []).flatMap((node) => (node === null ? [] : [node.url]));
+
+/**
+ * How the pull requests and issues found tie together, for the page's groups:
+ * a pull request and the issues it closes, an issue and its parent,
+ * sub-issues and blockers, and a stack, where one pull request's base is
+ * another's branch in the same repository.
+ */
+export const relationsOf = (
+  nodes: ReadonlyArray<Pull | Issue>,
+): Array<Domain.AttentionRelation> => {
+  const branches = new Map<string, string>();
+
+  for (const node of nodes) {
+    if (node.__typename === "PullRequest" && node.headRefName !== undefined) {
+      branches.set(
+        `${node.repository.nameWithOwner.toLowerCase()}:${node.headRefName}`,
+        node.url,
+      );
+    }
+  }
+
+  return nodes.flatMap((node) => {
+    const linked =
+      node.__typename === "PullRequest"
+        ? [
+            ...urls(node.closingIssuesReferences),
+            branches.get(
+              `${node.repository.nameWithOwner.toLowerCase()}:${node.baseRefName}`,
+            ),
+          ]
+        : [node.parent?.url, ...urls(node.subIssues), ...urls(node.blockedBy)];
+
+    return linked.flatMap((to) =>
+      to === undefined || to === node.url ? [] : [{ from: node.url, to }],
+    );
+  });
+};
+
 const Thread = Schema.Struct({
   id: Schema.String,
   reason: Schema.String,
@@ -537,6 +595,9 @@ export const attention = Effect.fnUntraced(function* () {
   let complete = true;
   const found = new Map<string, Read>();
 
+  // What each was read as, for how they tie together
+  const nodesRead = new Map<string, Pull | Issue>();
+
   const ignoredLabels = new Set(
     (settings?.ignoreLabels ?? []).map((name) => name.toLowerCase()),
   );
@@ -579,6 +640,7 @@ export const attention = Effect.fnUntraced(function* () {
           false);
 
       found.set(node.url, read(node, login, reviews));
+      nodesRead.set(node.url, node);
     }
   }
 
@@ -729,8 +791,14 @@ export const attention = Effect.fnUntraced(function* () {
           ],
   );
 
+  const sent = new Set(items.map((item) => item.url));
+
   const result = yield* reporter.attention({
     items,
+    // Only from what's sent, so an excluded item doesn't join a group
+    relations: relationsOf([...nodesRead.values()]).filter(
+      (relation) => sent.has(relation.from) && !ignored.has(relation.to),
+    ),
     complete,
     workTime: yield* workTimeOf(settings),
     staleDays,

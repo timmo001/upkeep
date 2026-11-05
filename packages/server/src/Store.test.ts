@@ -180,6 +180,70 @@ test("an item sits in one group, and removing a group takes what's on it", () =>
     }),
   ));
 
+test("GitHub's links form groups that keep what you set as they change", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const parent = "https://github.com/timmo001/a/issues/99";
+
+      const withRelations = (
+        items: ReadonlyArray<Domain.AttentionFound>,
+        relations: ReadonlyArray<Domain.AttentionRelation>,
+      ) => ({ ...snapshot(items), relations });
+
+      // Two pull requests closing the same issue, which isn't an item itself
+      yield* store.recordAttention(
+        withRelations(
+          [found(1), found(2), found(3)],
+          [
+            { from: found(1).url, to: parent },
+            { from: found(2).url, to: parent },
+          ],
+        ),
+      );
+
+      const [formed] = (yield* store.attention()).groups;
+
+      expect(formed?.items.map((item) => item.url)).toEqual([
+        found(1).url,
+        found(2).url,
+      ]);
+      expect(formed?.source).toBe("github");
+
+      yield* store.updateGroup(formed?.id ?? "", { focus: "today" });
+
+      // A third joins, and one you move by hand stays where you put it
+      const mine = yield* store.createGroup({
+        name: "Mine",
+        items: [found(2).url],
+      });
+
+      yield* store.recordAttention(
+        withRelations(
+          [found(1), found(2), found(3)],
+          [
+            { from: found(1).url, to: parent },
+            { from: found(2).url, to: parent },
+            { from: found(3).url, to: found(1).url },
+          ],
+        ),
+      );
+
+      const groups = (yield* store.attention()).groups;
+
+      expect(
+        groups.map((group) => [
+          group.id,
+          group.focus,
+          group.items.map((item) => item.url),
+        ]),
+      ).toEqual([
+        [formed?.id ?? "", "today", [found(1).url, found(3).url]],
+        [mine.id, "watching", [found(2).url]],
+      ]);
+    }),
+  ));
+
 test("a waiting run of the same job and release isn't queued twice", () =>
   run(
     Effect.gen(function* () {

@@ -58,6 +58,77 @@ export const sectionOf = (
   return quiet ? "stale" : "waiting";
 };
 
+/** A piece of work GitHub's links make of some items, and what to call it. */
+export interface Work {
+  readonly urls: ReadonlyArray<string>;
+  readonly name: string;
+}
+
+/**
+ * The pieces of work GitHub's links make: items tied together, directly or
+ * through a page that isn't an item itself, such as a shared parent issue.
+ * Items in `apart` were grouped by hand, so they neither join nor bridge one.
+ * Each is named after its most linked item, an issue before a pull request.
+ */
+export const workOf = (
+  relations: ReadonlyArray<Domain.AttentionRelation>,
+  items: ReadonlyArray<{
+    readonly url: string;
+    readonly kind: string;
+    readonly title: string;
+  }>,
+  apart: ReadonlySet<string>,
+): Array<Work> => {
+  const leader = new Map<string, string>();
+
+  const find = (url: string): string => {
+    const next = leader.get(url);
+
+    if (next === undefined || next === url) return url;
+
+    const root = find(next);
+
+    leader.set(url, root);
+
+    return root;
+  };
+
+  const degree = new Map<string, number>();
+
+  for (const { from, to } of relations) {
+    if (apart.has(from) || apart.has(to)) continue;
+
+    leader.set(find(from), find(to));
+    degree.set(from, (degree.get(from) ?? 0) + 1);
+    degree.set(to, (degree.get(to) ?? 0) + 1);
+  }
+
+  const pieces = new Map<string, Array<(typeof items)[number]>>();
+
+  for (const item of items) {
+    if (apart.has(item.url)) continue;
+
+    const root = find(item.url);
+
+    pieces.set(root, [...(pieces.get(root) ?? []), item]);
+  }
+
+  const named = (a: (typeof items)[number], b: (typeof items)[number]) =>
+    (degree.get(b.url) ?? 0) - (degree.get(a.url) ?? 0) ||
+    Number(b.kind === "issue") - Number(a.kind === "issue") ||
+    a.url.localeCompare(b.url);
+
+  return [...pieces.values()]
+    .flatMap((piece) => {
+      const [first] = piece.toSorted(named);
+
+      return piece.length < 2 || first === undefined
+        ? []
+        : [{ urls: piece.map((item) => item.url), name: first.title }];
+    })
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+};
+
 /**
  * What moved between what was kept of an item and what was found now: the
  * signals that came and went, and a new title. An item found for the first

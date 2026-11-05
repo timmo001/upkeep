@@ -24,6 +24,7 @@ import {
   AttentionFound,
   // The HTTP group below already takes the name
   AttentionGroup as AttentionGroupSchema,
+  AttentionRelation,
   AttentionRule,
   AttentionWait,
   Change,
@@ -302,6 +303,15 @@ export const attentionRefreshMs = 5 * 60_000;
 export const AttentionSnapshot = Schema.Struct({
   items: Schema.Array(AttentionFound).pipe(
     Schema.check(Schema.isMaxLength(maxAttention)),
+  ),
+  /**
+   * How the items tie together on GitHub, which the server forms groups
+   * from. A worker without it leaves GitHub's groups as they were.
+   */
+  relations: Schema.optionalKey(
+    Schema.Array(AttentionRelation).pipe(
+      Schema.check(Schema.isMaxLength(maxAttention * 20)),
+    ),
   ),
   complete: Schema.Boolean,
   /** Whether it's work time, from the worker's check, or null without one. */

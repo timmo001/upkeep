@@ -641,6 +641,20 @@ export interface AttentionChange extends Schema.Schema.Type<
   typeof AttentionChange
 > {}
 
+/**
+ * A link GitHub keeps between two pull requests or issues, such as a pull
+ * request and the issue it closes, an issue and its parent, or a stack.
+ */
+export const AttentionRelation = Schema.Struct({
+  from: Schema.String,
+  /** The other page, which may be one that isn't an item itself. */
+  to: Schema.String,
+});
+
+export interface AttentionRelation extends Schema.Schema.Type<
+  typeof AttentionRelation
+> {}
+
 /** How much a group of work is wanted now: pinned, kept an eye on, or put away. */
 export const AttentionFocus = Schema.Literals(["today", "watching", "parked"]);
 

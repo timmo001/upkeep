@@ -1677,6 +1677,98 @@ export class Store extends Context.Service<
     const numberOf = (value: string | undefined) =>
       value === undefined ? null : Number(value);
 
+    /**
+     * Form GitHub's groups again from how the items tie together. A group
+     * that mostly carries on keeps its ID, so its focus, notes and waits stay,
+     * and one left empty goes unless you added something to it.
+     */
+    const formGroups = Effect.fnUntraced(function* (
+      relations: ReadonlyArray<Domain.AttentionRelation>,
+      now: number,
+    ) {
+      const items = yield* sql<{ url: string; kind: string; title: string }>`
+        SELECT url, kind, title FROM attention_items
+      `;
+
+      const links = yield* sql<{
+        url: string;
+        groupId: string;
+        source: string;
+      }>`
+        SELECT url, group_id, source FROM attention_links
+      `;
+
+      const apart = new Set(
+        links.flatMap((link) => (link.source === "github" ? [] : [link.url])),
+      );
+
+      const before = new Map(
+        links.flatMap((link) =>
+          link.source === "github" ? [[link.url, link.groupId] as const] : [],
+        ),
+      );
+
+      yield* sql`DELETE FROM attention_links WHERE source = 'github'`;
+
+      const used = new Set<string>();
+
+      for (const work of Attention.workOf(relations, items, apart)) {
+        const votes = new Map<string, number>();
+
+        for (const url of work.urls) {
+          const id = before.get(url);
+
+          if (id !== undefined && !used.has(id)) {
+            votes.set(id, (votes.get(id) ?? 0) + 1);
+          }
+        }
+
+        const [carried] = [...votes].toSorted((a, b) => b[1] - a[1]);
+        const id = carried?.[0] ?? (yield* random.ulid);
+
+        if (carried === undefined) {
+          yield* sql`
+            INSERT INTO attention_groups ${sql.insert({
+              id,
+              name: work.name,
+              focus: "watching",
+              notes: null,
+              source: "github",
+              createdAt: now,
+            })}
+          `;
+        }
+
+        used.add(id);
+
+        for (const url of work.urls) {
+          yield* sql`
+            INSERT INTO attention_links ${sql.insert({
+              url,
+              groupId: id,
+              source: "github",
+              suggested: 0,
+              createdAt: now,
+            })}
+          `;
+        }
+      }
+
+      yield* sql`
+        DELETE FROM attention_groups
+        WHERE source = 'github'
+          AND focus = 'watching'
+          AND notes IS NULL
+          AND id NOT IN (SELECT group_id FROM attention_links)
+          AND id NOT IN (SELECT group_id FROM attention_waits)
+      `;
+      yield* sql`
+        DELETE FROM attention_comments
+        WHERE group_id IS NOT NULL
+          AND group_id NOT IN (SELECT id FROM attention_groups)
+      `;
+    });
+
     const recordAttention = Effect.fn("Store.recordAttention")(
       function* (snapshot: Api.AttentionSnapshot) {
         const now = yield* Clock.currentTimeMillis;
@@ -1762,6 +1854,10 @@ export class Store extends Context.Service<
             );
             counts.gone += 1;
           }
+        }
+
+        if (snapshot.relations !== undefined) {
+          yield* formGroups(snapshot.relations, now);
         }
 
         yield* setAttentionState("collected_at", `${now}`);
