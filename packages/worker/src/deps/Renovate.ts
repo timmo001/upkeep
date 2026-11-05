@@ -8,6 +8,7 @@
 import { Effect, Option, Predicate, Result, Schema } from "effect";
 import builtIn from "./renovate-presets.json" with { type: "json" };
 import {
+  type CustomDatasource,
   type CustomManager,
   DepsError,
   Patterns,
@@ -632,7 +633,46 @@ const translateManager = (
 };
 
 /** The managers Upkeep reads, by Renovate name. */
-export const managers = ["npm", "bun", "mise", "github-actions"];
+export const managers = [
+  "npm",
+  "bun",
+  "mise",
+  "github-actions",
+  "git-submodules",
+];
+
+/** A custom datasource, as Renovate writes it. */
+const RenovateDatasource = Schema.Struct({
+  defaultRegistryUrlTemplate: Schema.optional(Schema.String),
+  format: Schema.optional(Schema.String),
+  transformTemplates: Schema.optional(Patterns),
+});
+
+const decodeDatasource = Schema.decodeUnknownOption(RenovateDatasource);
+
+/** Translate the custom datasources, noting any that can't be read. */
+const translateDatasources = (value: Json | undefined) => {
+  const datasources: Record<string, CustomDatasource> = {};
+  const notes: Array<string> = [];
+
+  for (const [name, entry] of Object.entries(isConfig(value) ? value : {})) {
+    const decoded = decodeDatasource(entry);
+
+    if (Option.isNone(decoded)) {
+      notes.push(`the custom datasource ${name} couldn't be read`);
+
+      continue;
+    }
+
+    datasources[name] = {
+      registryUrlTemplate: decoded.value.defaultRegistryUrlTemplate,
+      format: decoded.value.format ?? "json",
+      transformTemplates: decoded.value.transformTemplates ?? [],
+    };
+  }
+
+  return { datasources, notes };
+};
 
 /** Translate a resolved Renovate config into Upkeep's Policy. */
 export const toPolicy = (
@@ -648,7 +688,10 @@ export const toPolicy = (
       ignoredKeys.set(key, (ignoredKeys.get(key) ?? 0) + 1);
   };
 
-  const rules: Array<Rule> = [];
+  // Renovate leaves submodules alone unless its config turns them on
+  const rules: Array<Rule> = [
+    { match: { managers: ["git-submodules"] }, set: { enabled: false } },
+  ];
 
   // Renovate merges an update type's object in before the rules run again,
   // so the rules still win over it
@@ -717,6 +760,7 @@ export const toPolicy = (
     "ignorePaths",
     "enabledManagers",
     "customManagers",
+    "customDatasources",
   ]);
 
   for (const key of Object.keys(config))
@@ -729,15 +773,30 @@ export const toPolicy = (
         .join(", ")}`,
     );
 
+  const datasources = translateDatasources(config.customDatasources);
+
+  notes.push(...datasources.notes);
+
+  // `"enabled": false` at the top turns Renovate off for the repository, not
+  // its dependencies: Upkeep keeps the rest of the config and takes over
+  const own: Settings = translateSettings(config).set;
+  const { enabled, ...settings } = own;
+  const updaterRuns = enabled !== false;
+
+  if (!updaterRuns)
+    notes.push("Renovate is turned off, so Upkeep owns every group");
+
   return {
     updater: "renovate",
+    updaterRuns,
     file,
-    settings: translateSettings(config).set,
+    settings: enabled === true ? { ...settings, enabled } : settings,
     ignorePaths: strings(config.ignorePaths),
     enabledManagers: strings(config.enabledManagers),
     ignoreDeps: strings(config.ignoreDeps),
     rules,
     customManagers,
+    customDatasources: datasources.datasources,
     notes,
   };
 };

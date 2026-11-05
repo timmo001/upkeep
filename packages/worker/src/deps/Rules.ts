@@ -49,6 +49,7 @@ const categories = new Map([
   ["npm", ["js"]],
   ["bun", ["js"]],
   ["github-actions", ["ci"]],
+  ["git-submodules", ["git"]],
 ]);
 
 export const managerCategories = (manager: string) =>

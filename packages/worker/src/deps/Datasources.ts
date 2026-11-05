@@ -4,15 +4,20 @@
  * API. Lookups are cached for the run, so a package many repositories use is
  * read once, and GitHub responses are kept between runs and asked for again
  * conditionally, so what hasn't changed costs no rate limit. Release and tag
- * lists stop at the page that reaches the version in use.
+ * lists stop at the page that reaches the version in use. A config's custom
+ * datasources are fetched and run through their JSONata transforms.
  */
 import { Gh, GhCommandError } from "@timmo001/effect-gh";
-import { Cache, Context, Effect, Layer, Schema } from "effect";
+import jsonata from "jsonata";
+import { Cache, Context, Effect, Layer, Match, Schema } from "effect";
+import { Yaml } from "effect/encoding";
 import { HttpClient } from "effect/http";
 import semver from "semver";
 import { ghReason } from "../Failure";
 import * as Kept from "../Kept";
+import { render } from "./Managers";
 import {
+  type CustomDatasource,
   type Dependency,
   DepsError,
   type Release,
@@ -72,6 +77,21 @@ const Commit = Schema.Struct({
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
+/** What a custom datasource's transforms must leave, as Renovate reads it. */
+const CustomReleases = Schema.Struct({
+  releases: Schema.Array(
+    Schema.Struct({
+      version: Schema.String,
+      releaseTimestamp: Schema.optional(
+        Schema.NullOr(Schema.Union([Schema.String, Schema.Number])),
+      ),
+      digest: Schema.optional(Schema.String),
+      isStable: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  sourceUrl: Schema.optional(Schema.String),
+});
+
 /** A page size GitHub allows, so most lists are one request. */
 const perPage = 100;
 
@@ -129,8 +149,10 @@ const datedTags = 10;
 export class Datasources extends Context.Service<
   Datasources,
   {
+    /** Releases for a dependency, with the config's custom datasources. */
     readonly lookup: (
       dependency: Dependency,
+      custom?: Readonly<Record<string, CustomDatasource>>,
     ) => Effect.Effect<Releases, DepsError>;
   }
 >()("@upkeep/worker/deps/Datasources") {
@@ -403,9 +425,110 @@ export class Datasources extends Context.Service<
         },
       });
 
+      /**
+       * A custom datasource: fetch its URL, parse it by its format, then run
+       * each transform over the result in turn.
+       */
+      const customLookup = Effect.fnUntraced(function* (key: string) {
+        const { url, format, transforms } = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              url: Schema.String,
+              format: Schema.String,
+              transforms: Schema.Array(Schema.String),
+            }),
+          ),
+        )(key);
+
+        const response = yield* http.get(url);
+
+        if (response.status !== 200)
+          return yield* new DepsError({
+            message: `${url} returned ${response.status}`,
+          });
+
+        const text = yield* response.text;
+
+        // Parsed by its format, as Renovate does
+        let data: unknown = yield* Effect.try(() =>
+          Match.value(format).pipe(
+            Match.when("plain", () => ({
+              releases: text
+                .split(/\r?\n/)
+                .map((line) => ({ version: line.trim() })),
+            })),
+            Match.when("yaml", () => Yaml.parse(text)),
+            Match.when("toml", () => Bun.TOML.parse(text)),
+            Match.orElse(() => JSON.parse(text)),
+          ),
+        );
+
+        for (const transform of transforms)
+          data = yield* Effect.tryPromise(() =>
+            jsonata(transform).evaluate(data),
+          );
+
+        const result = yield* Schema.decodeUnknownEffect(CustomReleases)(data);
+
+        return {
+          releases: result.releases.map((release): Release => ({
+            version: release.version,
+            digest: release.digest,
+            date:
+              release.releaseTimestamp === undefined ||
+              release.releaseTimestamp === null
+                ? undefined
+                : new Date(release.releaseTimestamp).toISOString(),
+            prerelease: release.isStable === false ? true : undefined,
+          })),
+          sourceUrl: result.sourceUrl ?? null,
+        } satisfies Releases;
+      });
+
+      const customCache = yield* Cache.make({
+        capacity: 256,
+        lookup: (key: string) =>
+          customLookup(key).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof DepsError ? cause : failed("custom")(cause),
+            ),
+          ),
+      });
+
       return Datasources.of({
-        lookup: (dependency) =>
-          Cache.get(
+        lookup: (dependency, custom = {}) => {
+          if (dependency.datasource.startsWith("custom.")) {
+            const name = dependency.datasource.slice("custom.".length);
+            const config = custom[name];
+
+            if (config?.registryUrlTemplate === undefined)
+              return Effect.fail(
+                new DepsError({
+                  message: `no ${dependency.datasource} datasource`,
+                }),
+              );
+
+            // Renovate fills the URL and transforms as Handlebars templates
+            const values = {
+              packageName: dependency.packageName,
+              currentValue: dependency.currentValue,
+            };
+
+            return Cache.get(
+              customCache,
+              JSON.stringify({
+                url: render(config.registryUrlTemplate, values),
+                format: config.format,
+                transforms: config.transformTemplates.map((transform) =>
+                  /\{\{\s*\{?\s*(?:packageName|currentValue)\b/.test(transform)
+                    ? render(transform, values)
+                    : transform,
+                ),
+              }),
+            );
+          }
+
+          return Cache.get(
             cache,
             [
               dependency.datasource,
@@ -416,7 +539,8 @@ export class Datasources extends Context.Service<
                 ? dependency.currentValue
                 : "",
             ].join("\u0000"),
-          ),
+          );
+        },
       });
     }),
   );

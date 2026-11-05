@@ -2,7 +2,8 @@
  * The managers: find the dependencies in a repository's files, read from
  * their text without running a package manager. npm and Bun read
  * package.json beside a bun.lock, mise reads its TOML configs, GitHub
- * Actions reads workflows and actions, and custom regex and jsonata managers
+ * Actions reads workflows and actions, git submodules read .gitmodules and
+ * the commits the tree pins, and custom regex and jsonata managers
  * read whatever files a policy points them at.
  */
 import jsonata from "jsonata";
@@ -25,6 +26,7 @@ const filePatterns = {
     "/(^|/)(workflow-templates|\\.(?:github|gitea|forgejo)/(?:workflows|actions))/.+\\.ya?ml$/",
     "/(^|/)action\\.ya?ml$/",
   ],
+  "git-submodules": ["/(^|/)\\.gitmodules$/"],
 };
 
 /** What extraction found, with what it couldn't read. */
@@ -452,6 +454,88 @@ const extractActions = (file: string, text: string): Extraction => {
   return { dependencies, notes };
 };
 
+/** Each submodule in a `.gitmodules` file, with its settings by key. */
+export const parseGitmodules = (text: string) => {
+  const submodules: Array<Record<string, string>> = [];
+  let current: Record<string, string> | undefined;
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+
+    if (line.startsWith("[")) {
+      current = /^\[submodule\s+"[^"]*"\]$/.test(line) ? {} : undefined;
+
+      if (current !== undefined) submodules.push(current);
+
+      continue;
+    }
+
+    const setting = /^(?<key>[\w.-]+)\s*=\s*(?<value>.*)$/.exec(line)?.groups;
+
+    if (current !== undefined && setting?.key !== undefined)
+      current[setting.key.toLowerCase()] = (setting.value ?? "").replace(
+        /^"(?<inner>.*)"$/,
+        "$<inner>",
+      );
+  }
+
+  return submodules;
+};
+
+/**
+ * Submodules, as Renovate reads them: each one follows the branch its
+ * `.gitmodules` entry names, or the remote's default branch, and an update
+ * moves the commit it's pinned to. The commit comes from the gitlinks, the
+ * submodule commits the repository's tree records.
+ */
+const extractSubmodules = (
+  file: string,
+  text: string,
+  gitlinks: ReadonlyMap<string, string>,
+): Extraction => {
+  const dependencies: Array<Dependency> = [];
+  const notes: Array<string> = [];
+  const directory = dirname(file);
+
+  for (const submodule of parseGitmodules(text)) {
+    const { path: relative, url, branch } = submodule;
+
+    if (relative === undefined || url === undefined) continue;
+
+    const path = directory === "" ? relative : `${directory}/${relative}`;
+    const digest = gitlinks.get(path);
+
+    if (digest === undefined) {
+      notes.push(`${file}: submodule ${path} has no commit in the tree`);
+
+      continue;
+    }
+
+    if (url.startsWith(".") || branch === ".") {
+      notes.push(
+        `${file}: submodule ${path} has a relative URL or branch, which isn't read`,
+      );
+
+      continue;
+    }
+
+    dependencies.push({
+      manager: "git-submodules",
+      file,
+      depName: path,
+      packageName: url,
+      datasource: "git-refs",
+      depType: "submodule",
+      currentValue: branch ?? "HEAD",
+      currentDigest: digest,
+    });
+  }
+
+  return { dependencies, notes };
+};
+
 /** Fill `{{{name}}}` and `{{name}}` from the captures. */
 export const render = (
   template: string,
@@ -670,6 +754,8 @@ const extractJsonata = Effect.fnUntraced(function* (
 export const extract = Effect.fnUntraced(function* (
   policy: Policy,
   files: ReadonlyMap<string, string>,
+  /** Each submodule's path and the commit the tree pins it to. */
+  gitlinks: ReadonlyMap<string, string> = new Map(),
 ) {
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
@@ -707,6 +793,12 @@ export const extract = Effect.fnUntraced(function* (
       enabled(policy, "github-actions")
     )
       attempt(file, () => extractActions(file, text));
+
+    if (
+      matchesFiles(file, filePatterns["git-submodules"]) &&
+      enabled(policy, "git-submodules")
+    )
+      attempt(file, () => extractSubmodules(file, text, gitlinks));
 
     for (const manager of policy.customManagers) {
       if (!matchesFiles(file, manager.files)) continue;

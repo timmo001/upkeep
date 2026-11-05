@@ -1,8 +1,8 @@
 /**
  * The planner: for each dependency, the releases its policy allows, then the
  * updates Renovate would make of them, grouped into the branches it would
- * open. Each group has an owner: the updater when every update in it
- * automerges, otherwise Upkeep.
+ * open. Each group has an owner: the updater when it runs and every update
+ * in it automerges, otherwise Upkeep.
  */
 import semver from "semver";
 import type {
@@ -473,7 +473,7 @@ export interface Group {
   readonly branch: string;
   readonly name: string;
   readonly updates: ReadonlyArray<Update>;
-  /** The updater when every update automerges, otherwise Upkeep. */
+  /** The updater when it runs and every update automerges, otherwise Upkeep. */
   readonly owner: string;
 }
 
@@ -496,8 +496,10 @@ export const group = (policy: Policy, updates: ReadonlyArray<Update>) => {
         members[0]?.dependency.depName ??
         branch,
       updates: members,
-      owner: members.every((update) => update.settings.automerge === true)
-        ? policy.updater
-        : "upkeep",
+      owner:
+        policy.updaterRuns &&
+        members.every((update) => update.settings.automerge === true)
+          ? policy.updater
+          : "upkeep",
     }));
 };

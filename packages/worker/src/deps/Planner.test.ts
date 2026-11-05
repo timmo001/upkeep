@@ -5,6 +5,7 @@ import type { Dependency, Policy, Releases } from "./Policy";
 
 const policy: Policy = {
   updater: "renovate",
+  updaterRuns: true,
   file: "renovate.json",
   settings: {},
   ignorePaths: [],
@@ -12,6 +13,7 @@ const policy: Policy = {
   ignoreDeps: [],
   rules: [],
   customManagers: [],
+  customDatasources: {},
   notes: [],
 };
 

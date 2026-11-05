@@ -121,9 +121,26 @@ export const CustomManager = Schema.Union([
 
 export type CustomManager = typeof CustomManager.Type;
 
+/**
+ * A datasource a config defines itself: a URL to fetch, in a format, and
+ * JSONata transforms that turn what it returns into releases.
+ */
+export interface CustomDatasource {
+  /** The URL, with `{{packageName}}` and `{{currentValue}}` filled in. */
+  readonly registryUrlTemplate: string | undefined;
+  /** `json`, `plain`, `yaml` or `toml`. */
+  readonly format: string;
+  readonly transformTemplates: ReadonlyArray<string>;
+}
+
 export interface Policy {
   /** The updater whose config this came from, which owns automerged groups. */
   readonly updater: string;
+  /**
+   * Whether the updater itself still runs. When its config turns it off,
+   * Upkeep keeps reading the config and owns every group.
+   */
+  readonly updaterRuns: boolean;
   /** The config file it was read from. */
   readonly file: string;
   /** Settings every dependency starts from. */
@@ -135,6 +152,8 @@ export interface Policy {
   /** Applied in order, later rules winning. */
   readonly rules: ReadonlyArray<Rule>;
   readonly customManagers: ReadonlyArray<CustomManager>;
+  /** Datasources the config defines, by name without the `custom.` prefix. */
+  readonly customDatasources: Readonly<Record<string, CustomDatasource>>;
   /** What the adapter read but couldn't model, for the run's log. */
   readonly notes: ReadonlyArray<string>;
 }

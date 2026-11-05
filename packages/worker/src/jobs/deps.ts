@@ -158,7 +158,22 @@ const planRepository = Effect.fnUntraced(function* (
     if (Option.isSome(text)) files.set(file, text.value);
   }
 
-  const extraction = yield* Managers.extract(policy, files);
+  // Submodule commits, which the tree records as gitlinks
+  const gitlinks = new Map(
+    (yield* Bump.run("git", ["ls-files", "--stage", "-z"], options))
+      .split("\0")
+      .flatMap((entry) => {
+        const link = /^160000 (?<sha>[a-f\d]{40}) \d\t(?<file>.+)$/.exec(
+          entry,
+        )?.groups;
+
+        return link?.sha === undefined || link.file === undefined
+          ? []
+          : [[link.file, link.sha] as const];
+      }),
+  );
+
+  const extraction = yield* Managers.extract(policy, files, gitlinks);
 
   const notes = [...policy.notes, ...extraction.notes];
 
@@ -175,7 +190,7 @@ const planRepository = Effect.fnUntraced(function* (
     (dependency) =>
       dependency.datasource === "local"
         ? Effect.void
-        : datasources.lookup(dependency).pipe(
+        : datasources.lookup(dependency, policy.customDatasources).pipe(
             Effect.map((releases) => {
               updates.push(
                 ...Planner.updatesFor(policy, dependency, releases, now, repo)
@@ -252,13 +267,48 @@ const applyGroup = Effect.fnUntraced(function* (
 
   yield* Bump.checkout(repo, branch, directory, context.root);
 
-  const files = new Set(group.updates.map((update) => update.dependency.file));
+  // A submodule moves by checking out its new commit, not by an edit
+  const submodules = group.updates.filter(
+    (update) => update.dependency.manager === "git-submodules",
+  );
+
+  const textual = group.updates.filter(
+    (update) => update.dependency.manager !== "git-submodules",
+  );
+
+  for (const update of submodules) {
+    if (update.digest === undefined) {
+      yield* RunLog.warn(
+        `${repo}: renovate/${group.branch} left to the updater: ${update.dependency.depName}: no commit to move to`,
+      );
+
+      return false;
+    }
+
+    const submodule = {
+      cwd: path.join(directory, update.dependency.depName),
+      trusted: context.root,
+    };
+
+    yield* Bump.run(
+      "git",
+      ["fetch", "--quiet", "origin", update.digest],
+      submodule,
+    );
+    yield* Bump.run(
+      "git",
+      ["checkout", "--quiet", "--detach", update.digest],
+      submodule,
+    );
+  }
+
+  const files = new Set(textual.map((update) => update.dependency.file));
   const edits = new Map<string, string>();
 
   for (const file of files) {
     let text = yield* fs.readFileString(path.join(directory, file));
 
-    for (const update of group.updates) {
+    for (const update of textual) {
       if (update.dependency.file !== file) continue;
 
       const edit = Applier.apply(update, text);

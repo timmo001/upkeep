@@ -377,7 +377,7 @@ by default.
 | `notifications`     | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
 | `stalled-updates`   | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`             | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
-| `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                                    |
+| `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
@@ -440,6 +440,17 @@ repository's updates land, its `tooling.yml`, if it has one, is checked as
 at the end naming each repository with a failed group, and a heal for each
 one applies that group by hand, migrating what the new versions need. Clones
 are kept in `upkeep/deps` in the XDG cache directory, with their submodules.
+
+Git submodules are read when the config turns on Renovate's `git-submodules`
+manager. Each submodule follows its `.gitmodules` branch, or its remote's
+default branch, and an update checks out the new commit. A config's
+`customDatasources` are fetched in their format (`json`, `plain`, `yaml` or
+`toml`) and run through their JSONata transforms, as Renovate does.
+
+To hand a repository over to Upkeep entirely, set `"enabled": false` at the
+top of its Renovate config. Renovate then stops, and Upkeep keeps reading the
+rest of the config and owns every group, including the ones Renovate would
+have automerged.
 
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:

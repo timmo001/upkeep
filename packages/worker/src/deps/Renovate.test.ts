@@ -1,8 +1,154 @@
-/** How Renovate configs merge and their presets resolve, as Renovate does it. */
+/**
+ * How Renovate configs merge, their presets resolve and they translate into
+ * a Policy, as Renovate reads them.
+ */
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { mergeChildConfig, parsePreset, resolvePresets } from "./Renovate";
+import * as Managers from "./Managers";
+import { group } from "./Planner";
+import {
+  mergeChildConfig,
+  parsePreset,
+  resolvePresets,
+  toPolicy,
+} from "./Renovate";
+import { settingsFor } from "./Rules";
 import type { ReadFile } from "./Updaters";
+
+test("enabled: false turns Renovate off but keeps its rules, and Upkeep owns automerged groups", () => {
+  const policy = toPolicy(
+    {
+      enabled: false,
+      packageRules: [{ matchPackageNames: ["*"], automerge: true }],
+    },
+    "renovate.json",
+    [],
+  );
+
+  expect(policy.updaterRuns).toBe(false);
+  expect(policy.settings.enabled).toBeUndefined();
+
+  const dependency = {
+    manager: "npm",
+    file: "package.json",
+    depName: "effect",
+    packageName: "effect",
+    datasource: "npm",
+    depType: "dependencies",
+    currentValue: "4.0.0",
+  };
+
+  const settings = settingsFor(policy, dependency);
+
+  expect(settings.automerge).toBe(true);
+
+  const [only] = group(policy, [
+    {
+      dependency,
+      updateType: "patch",
+      from: "4.0.0",
+      to: "4.0.1",
+      settings,
+      branch: "effect-4.x",
+      lockfile: false,
+    },
+  ]);
+
+  expect(only?.owner).toBe("upkeep");
+});
+
+test("submodules stay off until the config turns them on, as in Renovate", () => {
+  const submodule = {
+    manager: "git-submodules",
+    file: ".gitmodules",
+    depName: "plugins/clock",
+    packageName: "https://github.com/owner/clock.git",
+    datasource: "git-refs",
+    depType: "submodule",
+    currentValue: "main",
+  };
+
+  expect(
+    settingsFor(toPolicy({}, "renovate.json", []), submodule).enabled,
+  ).toBe(false);
+
+  expect(
+    settingsFor(
+      toPolicy({ "git-submodules": { enabled: true } }, "renovate.json", []),
+      submodule,
+    ).enabled,
+  ).toBe(true);
+});
+
+test("custom datasources are read with Renovate's json default", () => {
+  const policy = toPolicy(
+    {
+      customDatasources: {
+        mise: {
+          defaultRegistryUrlTemplate: "https://example.com/PKGBUILD",
+          format: "plain",
+          transformTemplates: ["$"],
+        },
+        quickshell: { defaultRegistryUrlTemplate: "https://example.com/json" },
+      },
+    },
+    "renovate.json",
+    [],
+  );
+
+  expect(policy.customDatasources).toEqual({
+    mise: {
+      registryUrlTemplate: "https://example.com/PKGBUILD",
+      format: "plain",
+      transformTemplates: ["$"],
+    },
+    quickshell: {
+      registryUrlTemplate: "https://example.com/json",
+      format: "json",
+      transformTemplates: [],
+    },
+  });
+});
+
+test("submodules are read from .gitmodules with the commits the tree pins", () => {
+  const extraction = Effect.runSync(
+    Managers.extract(
+      toPolicy({ "git-submodules": { enabled: true } }, "renovate.json", []),
+      new Map([
+        [
+          ".gitmodules",
+          '[submodule "clock"]\n\tpath = plugins/clock\n\turl = https://github.com/owner/clock.git\n\tbranch = dev\n[submodule "notes"]\n\tpath = plugins/notes\n\turl = https://github.com/owner/notes.git\n',
+        ],
+      ]),
+      new Map([
+        ["plugins/clock", "a".repeat(40)],
+        ["plugins/notes", "b".repeat(40)],
+      ]),
+    ),
+  );
+
+  expect(
+    extraction.dependencies.map((dependency) => [
+      dependency.depName,
+      dependency.packageName,
+      dependency.currentValue,
+      dependency.currentDigest,
+    ]),
+  ).toEqual([
+    [
+      "plugins/clock",
+      "https://github.com/owner/clock.git",
+      "dev",
+      "a".repeat(40),
+    ],
+    [
+      "plugins/notes",
+      "https://github.com/owner/notes.git",
+      "HEAD",
+      "b".repeat(40),
+    ],
+  ]);
+});
 
 test("mergeable arrays concatenate and objects merge, other keys replace", () => {
   const merged = mergeChildConfig(

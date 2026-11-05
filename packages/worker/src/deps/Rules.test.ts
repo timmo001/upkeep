@@ -17,6 +17,7 @@ const dependency: Dependency = {
 
 const policy = (rules: ReadonlyArray<Rule>): Policy => ({
   updater: "renovate",
+  updaterRuns: true,
   file: "renovate.json",
   settings: {},
   ignorePaths: [],
@@ -24,6 +25,7 @@ const policy = (rules: ReadonlyArray<Rule>): Policy => ({
   ignoreDeps: [],
   rules,
   customManagers: [],
+  customDatasources: {},
   notes: [],
 });
 
