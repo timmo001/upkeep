@@ -471,6 +471,25 @@ const migrations = SqliteMigrator.fromRecord({
       ALTER TABLE attention_items ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'
     `;
   }),
+  // The context agent's notes, keyed by URL like links so they outlive an
+  // item dropping off; the group a gone item was in, for its follow-up; and
+  // the follow-up itself
+  "0022_attention_context": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE attention_notes (
+        url TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        recheck_at INTEGER,
+        fingerprint TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`ALTER TABLE attention_changes ADD COLUMN group_id TEXT`;
+    yield* sql`ALTER TABLE attention_groups ADD COLUMN follow_up TEXT`;
+    yield* sql`ALTER TABLE attention_groups ADD COLUMN follow_up_at INTEGER`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -646,6 +665,12 @@ const decodeAttentionChanges = Schema.decodeUnknownEffect(
   ),
 );
 
+const decodeAttentionNotes = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({ ...Domain.AttentionNote.fields, url: Schema.String }),
+  ),
+);
+
 const decodeAttentionReleases = Schema.decodeUnknownEffect(
   Domain.Attention.fields.releases,
 );
@@ -659,6 +684,8 @@ const decodeAttentionGroups = Schema.decodeUnknownEffect(
       notes: Schema.NullOr(Schema.String),
       source: Domain.AttentionSource,
       createdAt: Schema.Finite,
+      followUp: Schema.NullOr(Schema.String),
+      followUpAt: Schema.NullOr(Schema.Finite),
     }),
   ),
 );
@@ -977,6 +1004,13 @@ export class Store extends Context.Service<
     ): Effect.Effect<Domain.AttentionComment, Api.GroupNotFound | StoreError>;
     addRule(text: string): Effect.Effect<Domain.AttentionRule, StoreError>;
     removeRule(id: string): Effect.Effect<void, StoreError>;
+    /**
+     * Keep what the context agent made of the items and groups it was given.
+     * Answers about a group or comment that's gone since are skipped.
+     */
+    recordContext(
+      context: Api.AttentionContext,
+    ): Effect.Effect<void, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -1806,6 +1840,7 @@ export class Store extends Context.Service<
           item: Pick<Domain.AttentionFound, "url" | "repo" | "title">,
           what: ReadonlyArray<string>,
           gone: boolean,
+          group: string | null = null,
         ) =>
           first
             ? Effect.void
@@ -1817,6 +1852,7 @@ export class Store extends Context.Service<
                   at: now,
                   what: JSON.stringify(what),
                   gone: gone ? 1 : 0,
+                  groupId: group,
                 })}
               `;
 
@@ -1874,11 +1910,17 @@ export class Store extends Context.Service<
 
         if (snapshot.complete) {
           for (const { found } of kept.values()) {
+            // Read before GitHub's groups are formed again without it
+            const [link] = yield* sql<{ groupId: string }>`
+              SELECT group_id FROM attention_links WHERE url = ${found.url}
+            `;
+
             yield* sql`DELETE FROM attention_items WHERE url = ${found.url}`;
             yield* logChange(
               found,
               ["Closed, or no longer involves you"],
               true,
+              link?.groupId ?? null,
             );
             counts.gone += 1;
           }
@@ -1926,6 +1968,12 @@ export class Store extends Context.Service<
         SELECT * FROM attention_items ORDER BY changed_at DESC
       `.pipe(Effect.flatMap(decodeAttention));
 
+      const notes = new Map(
+        (yield* sql`SELECT * FROM attention_notes`.pipe(
+          Effect.flatMap(decodeAttentionNotes),
+        )).map(({ url, ...note }) => [url, note]),
+      );
+
       const items = rows.map((row): Domain.AttentionItem => {
         const { found, firstSeen, changedAt, hidden } = toFound(row);
 
@@ -1934,20 +1982,36 @@ export class Store extends Context.Service<
             ? [...found.signals, { kind: "upkeep" as const, detail: null }]
             : found.signals;
 
+        const note = notes.get(found.url) ?? null;
+
+        // A note keeps it out of Going stale until its recheck date, and
+        // only while nothing about the item has moved since
+        const noted =
+          note !== null &&
+          note.fingerprint === found.fingerprint &&
+          note.recheckAt !== null &&
+          note.recheckAt > now;
+
         return {
           ...found,
           signals,
-          section: Attention.sectionOf({ ...found, signals }, now, staleDays),
+          section: Attention.sectionOf(
+            { ...found, signals, noted },
+            now,
+            staleDays,
+          ),
           firstSeen,
           changedAt,
           hidden,
+          note,
         };
       });
 
       // What moved since you last looked, and what went over the last week
       // whenever you looked, which the page keeps apart as a history
       const changes = yield* sql`
-        SELECT url, repo, title, at, what, gone FROM attention_changes
+        SELECT url, repo, title, at, what, gone, group_id AS "group"
+        FROM attention_changes
         WHERE (gone = 0 AND at > ${since ?? now - firstLookHours * 3_600_000})
           OR (gone = 1 AND at > ${now - goneDays * 86_400_000})
         ORDER BY at DESC
@@ -1970,8 +2034,12 @@ export class Store extends Context.Service<
       const groups = (yield* sql`
         SELECT * FROM attention_groups ORDER BY created_at
       `.pipe(Effect.flatMap(decodeAttentionGroups))).map(
-        (group): Domain.AttentionGroup => ({
+        ({ followUp, followUpAt, ...group }): Domain.AttentionGroup => ({
           ...group,
+          followUp:
+            followUp === null
+              ? null
+              : { text: followUp, at: followUpAt ?? group.createdAt },
           items: links.flatMap(({ groupId, suggested, ...link }) =>
             groupId === group.id
               ? [{ ...link, suggested: suggested !== 0 }]
@@ -2170,6 +2238,7 @@ export class Store extends Context.Service<
             suggested: false,
           })),
           waits: [],
+          followUp: null,
         } satisfies Domain.AttentionGroup;
       },
       sql.withTransaction,
@@ -2322,6 +2391,95 @@ export class Store extends Context.Service<
     const removeRule = Effect.fn("Store.removeRule")(function* (id: string) {
       yield* sql`DELETE FROM attention_rules WHERE id = ${id}`;
     }, Effect.mapError(storeError));
+
+    const recordContext = Effect.fn("Store.recordContext")(
+      function* (context: Api.AttentionContext) {
+        const now = yield* Clock.currentTimeMillis;
+
+        const groups = new Set(
+          (yield* sql<{ id: string }>`SELECT id FROM attention_groups`).map(
+            ({ id }) => id,
+          ),
+        );
+
+        for (const note of context.notes) {
+          yield* sql`
+            INSERT OR REPLACE INTO attention_notes ${sql.insert({
+              url: note.url,
+              text: note.text,
+              recheckAt: note.recheckAt,
+              fingerprint: note.fingerprint,
+              at: now,
+            })}
+          `;
+        }
+
+        for (const followUp of context.followUps) {
+          if (!groups.has(followUp.group)) continue;
+
+          yield* sql`
+            UPDATE attention_groups
+            SET follow_up = ${followUp.text}, follow_up_at = ${now}
+            WHERE id = ${followUp.group}
+          `;
+        }
+
+        for (const answer of context.comments) {
+          const [comment] = yield* sql<{ id: string }>`
+            SELECT id FROM attention_comments
+            WHERE id = ${answer.id} AND done_at IS NULL
+          `;
+
+          if (comment === undefined) continue;
+
+          yield* sql`
+            UPDATE attention_comments
+            SET outcome = ${answer.outcome}, done_at = ${now}
+            WHERE id = ${answer.id}
+          `;
+
+          if (answer.rule !== null) {
+            yield* sql`
+              INSERT INTO attention_rules ${sql.insert({
+                id: yield* random.ulid,
+                text: answer.rule,
+                commentId: answer.id,
+                createdAt: now,
+              })}
+            `;
+          }
+        }
+
+        for (const link of context.links) {
+          if (link.group === null) {
+            // Only what the agent or GitHub put there; your own links stay
+            yield* sql`
+              DELETE FROM attention_links
+              WHERE url = ${link.url} AND source != 'you'
+            `;
+
+            continue;
+          }
+
+          if (!groups.has(link.group)) continue;
+
+          const row = {
+            url: link.url,
+            groupId: link.group,
+            source: "agent",
+            suggested: link.suggested ? 1 : 0,
+            createdAt: now,
+          };
+
+          // A suggestion never moves an item out of a group it's in
+          yield* link.suggested
+            ? sql`INSERT OR IGNORE INTO attention_links ${sql.insert(row)}`
+            : sql`INSERT OR REPLACE INTO attention_links ${sql.insert(row)}`;
+        }
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -3040,6 +3198,7 @@ export class Store extends Context.Service<
       commentAttention,
       addRule,
       removeRule,
+      recordContext,
       paused,
       cancel,
       log,

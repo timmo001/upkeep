@@ -38,7 +38,10 @@ export const sectionOf = (
   item: Pick<
     Domain.AttentionFound,
     "kind" | "signals" | "labels" | "yours" | "activityAt" | "involved"
-  >,
+  > & {
+    /** The context agent's note says it's waiting on something for now. */
+    readonly noted?: boolean;
+  },
   now: number,
   staleDays: number,
 ): Domain.AttentionSection => {
@@ -69,7 +72,7 @@ export const sectionOf = (
   )
     return "backlog";
 
-  return quiet ? "stale" : "waiting";
+  return quiet && item.noted !== true ? "stale" : "waiting";
 };
 
 /** A piece of work GitHub's links make of some items, and what to call it. */

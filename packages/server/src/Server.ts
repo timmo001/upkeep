@@ -877,6 +877,9 @@ const WorkHandlers = HttpApiBuilder.group(
       }),
       attention: ({ payload }) =>
         store.recordAttention(payload).pipe(Effect.orDie),
+      attentionPage: () => store.attention().pipe(Effect.orDie),
+      attentionContext: ({ payload }) =>
+        store.recordContext(payload).pipe(Effect.orDie),
     });
   }),
 );
@@ -952,10 +955,24 @@ const AttentionHandlers = HttpApiBuilder.group(
           .pipe(Effect.catchTag("StoreError", Effect.die)),
       removeWait: ({ params }) =>
         store.removeWait(params.id).pipe(Effect.orDie),
-      comment: ({ payload }) =>
-        store
+      comment: Effect.fn(function* ({ payload }) {
+        const comment = yield* store
           .commentAttention(payload)
-          .pipe(Effect.catchTag("StoreError", Effect.die)),
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        // The agent reads it on its next run, so start one unless it's queued
+        const job = Catalogue.attentionContext.id;
+        const [last] = yield* store.runs({ job, limit: 1 }).pipe(Effect.orDie);
+
+        if (last?.state !== "queued") {
+          yield* queue({ job, trigger: "manual", release: null }).pipe(
+            Effect.provideService(Store, store),
+            Effect.orDie,
+          );
+        }
+
+        return comment;
+      }),
       addRule: ({ payload }) => store.addRule(payload.text).pipe(Effect.orDie),
       removeRule: ({ params }) =>
         store.removeRule(params.id).pipe(Effect.orDie),

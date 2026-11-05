@@ -146,6 +146,17 @@ export const attention: Job = {
   tracked: false,
 };
 
+export const attentionContext: Job = {
+  id: "attention-context",
+  name: "Attention context",
+  description:
+    "Ask an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments",
+  schedule: "0 */3 * * *",
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const command: Job = {
   id: "command",
   name: "Command",
@@ -171,5 +182,6 @@ export const jobs: ReadonlyArray<Job> = [
   deps,
   ci,
   summary,
+  attentionContext,
   command,
 ];

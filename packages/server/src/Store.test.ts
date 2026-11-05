@@ -225,6 +225,78 @@ test("an item sits in one group, and removing a group takes what's on it", () =>
     }),
   ));
 
+test("the context agent's notes, answers and links land, and a gone item keeps its group", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      // Quiet since the epoch, so going stale until a note says otherwise
+      yield* store.recordAttention(snapshot([found(1), found(2), found(3)]));
+
+      const group = yield* store.createGroup({
+        name: "Rollout",
+        items: [found(3).url],
+      });
+
+      const comment = yield* store.commentAttention({
+        url: found(1).url,
+        text: "Never show me subscribed threads",
+      });
+
+      yield* store.recordContext({
+        notes: [
+          {
+            url: found(1).url,
+            text: "Waiting on the December release",
+            recheckAt: Number.MAX_SAFE_INTEGER,
+            fingerprint: found(1).fingerprint,
+          },
+        ],
+        followUps: [{ group: "gone", text: "Skipped" }],
+        comments: [
+          {
+            id: comment.id,
+            outcome: "Kept as a rule",
+            rule: "Skip subscribed threads",
+          },
+        ],
+        links: [
+          { url: found(2).url, group: group.id, suggested: true },
+          // Already in the group, so the suggestion leaves it be
+          { url: found(3).url, group: "gone", suggested: true },
+        ],
+      });
+
+      const page = yield* store.attention();
+
+      const item = (number: number) =>
+        page.items.find((each) => each.number === number);
+
+      expect([item(1)?.section, item(1)?.note?.text]).toEqual([
+        "waiting",
+        "Waiting on the December release",
+      ]);
+      expect(item(2)?.section).toBe("stale");
+      expect(page.comments[0]?.outcome).toBe("Kept as a rule");
+      expect(page.rules.map((rule) => rule.text)).toEqual([
+        "Skip subscribed threads",
+      ]);
+      expect(page.groups.find((each) => each.id === group.id)?.items).toEqual([
+        { url: found(3).url, source: "you", suggested: false },
+        { url: found(2).url, source: "agent", suggested: true },
+      ]);
+
+      // Item 3 goes, and its change says which group it left
+      yield* store.recordAttention(snapshot([found(1), found(2)]));
+
+      const after = yield* store.attention();
+
+      expect(
+        after.changes.find((change) => change.url === found(3).url)?.group,
+      ).toBe(group.id);
+    }),
+  ));
+
 test("GitHub's links form groups that keep what you set as they change", () =>
   run(
     Effect.gen(function* () {

@@ -639,6 +639,23 @@ export interface AttentionFound extends Schema.Schema.Type<
   typeof AttentionFound
 > {}
 
+/**
+ * The context agent's one-line read of an item, such as "Waiting on the
+ * December release". Until `recheckAt`, or until the item changes, it keeps
+ * the item out of Going stale.
+ */
+export const AttentionNote = Schema.Struct({
+  text: Schema.String,
+  recheckAt: Schema.NullOr(Schema.Finite),
+  /** The item's fingerprint when it was written, so a change shows it's old. */
+  fingerprint: Schema.String,
+  at: Schema.Finite,
+});
+
+export interface AttentionNote extends Schema.Schema.Type<
+  typeof AttentionNote
+> {}
+
 /** An item as the Attention page shows it. */
 export const AttentionItem = Schema.Struct({
   ...AttentionFound.fields,
@@ -648,6 +665,8 @@ export const AttentionItem = Schema.Struct({
   changedAt: Schema.Finite,
   /** Hidden until anything about it changes. */
   hidden: Schema.Boolean,
+  /** The context agent's note, or null before its first. */
+  note: Schema.NullOr(AttentionNote),
 });
 
 export interface AttentionItem extends Schema.Schema.Type<
@@ -664,6 +683,8 @@ export const AttentionChange = Schema.Struct({
   what: Schema.Array(Schema.String),
   /** It's closed or merged, or no longer involves you. */
   gone: Schema.Boolean,
+  /** The group it was in when it went, for the agent's follow-up. */
+  group: Schema.NullOr(Schema.String),
 });
 
 export interface AttentionChange extends Schema.Schema.Type<
@@ -732,6 +753,13 @@ export const AttentionGroup = Schema.Struct({
   createdAt: Schema.Finite,
   items: Schema.Array(AttentionLink),
   waits: Schema.Array(AttentionWait),
+  /**
+   * The context agent's follow-up after one of its items went: what that
+   * means for the rest, such as an issue to close or an item now unblocked.
+   */
+  followUp: Schema.NullOr(
+    Schema.Struct({ text: Schema.String, at: Schema.Finite }),
+  ),
 });
 
 export interface AttentionGroup extends Schema.Schema.Type<

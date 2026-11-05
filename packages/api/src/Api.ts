@@ -323,6 +323,51 @@ export interface AttentionSnapshot extends Schema.Schema.Type<
   typeof AttentionSnapshot
 > {}
 
+/** The most of each kind of answer one context run carries. */
+export const maxContext = 200;
+
+/**
+ * What the context agent made of the items and groups it was given: a note
+ * on each item, a follow-up on each group one of its items left, what it did
+ * about each of your comments, and the links it made or suggests.
+ */
+export const AttentionContext = Schema.Struct({
+  notes: Schema.Array(
+    Schema.Struct({
+      url: Schema.String,
+      text: Schema.String,
+      recheckAt: Schema.NullOr(Schema.Finite),
+      fingerprint: Schema.String,
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(maxContext))),
+  followUps: Schema.Array(
+    Schema.Struct({ group: Schema.String, text: Schema.String }),
+  ).pipe(Schema.check(Schema.isMaxLength(maxContext))),
+  comments: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      outcome: Schema.String,
+      /** A standing instruction it found in the comment, kept as a rule. */
+      rule: Schema.NullOr(Schema.String),
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(maxContext))),
+  /**
+   * Items to move into a group, or out of any with null. A suggestion only
+   * lands on an item that isn't in a group yet, and waits to be accepted.
+   */
+  links: Schema.Array(
+    Schema.Struct({
+      url: Schema.String,
+      group: Schema.NullOr(Schema.String),
+      suggested: Schema.Boolean,
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(maxContext))),
+});
+
+export interface AttentionContext extends Schema.Schema.Type<
+  typeof AttentionContext
+> {}
+
 /** A tracked repository's title, from its README's first heading. */
 export const RepoTitle = Schema.Struct({
   repo: RepoName,
@@ -812,6 +857,15 @@ export class WorkGroup extends HttpApiGroup.make("work")
         changed: Schema.Int,
         gone: Schema.Int,
       }),
+    }),
+    /** The Attention page as the dashboard reads it, for the context agent. */
+    HttpApiEndpoint.get("attentionPage", "/attention", {
+      success: Attention,
+    }),
+    /** What the context agent made of the items and groups it was given. */
+    HttpApiEndpoint.post("attentionContext", "/attention/context", {
+      payload: AttentionContext,
+      success: HttpApiSchema.NoContent,
     }),
     /**
      * The latest release of each repository. The server queues every job
