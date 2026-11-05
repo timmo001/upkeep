@@ -537,6 +537,30 @@ test("a run's commit replaces the same commit the watch job found", () =>
     }),
   ));
 
+test("a held release keeps the latest per repository until it's taken", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const v1 = { repo: "timmo001/lib", tag: "v1", url: "" };
+      const other = { repo: "timmo001/app", tag: "v3", url: "" };
+
+      yield* store.hold("bump", v1);
+      yield* store.hold("bump", other);
+      yield* store.hold("bump", { ...v1, repo: "Timmo001/Lib", tag: "v2" });
+      yield* store.hold("drift", v1);
+
+      expect(
+        (yield* store.takeHeld("bump"))
+          .map((release) => `${release.repo}@${release.tag}`)
+          .toSorted(),
+      ).toEqual(["timmo001/app@v3", "timmo001/lib@v2"]);
+      expect(yield* store.takeHeld("bump")).toEqual([]);
+      expect((yield* store.takeHeld("drift")).map((r) => r.tag)).toEqual([
+        "v1",
+      ]);
+    }),
+  ));
+
 test("parking needs a person until the job is unparked", () =>
   run(
     Effect.gen(function* () {

@@ -294,6 +294,22 @@ const migrations = SqliteMigrator.fromRecord({
       `;
     }
   }),
+  // A release a parked or paused job skipped, the latest per repository, to
+  // queue once the job is let go
+  "0015_held_releases": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE held_releases (
+        job TEXT NOT NULL,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        tag TEXT NOT NULL,
+        url TEXT NOT NULL,
+        held_at INTEGER NOT NULL,
+        PRIMARY KEY (job, repo)
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -560,6 +576,18 @@ export class Store extends Context.Service<
     resume(job: string): Effect.Effect<boolean, StoreError>;
     /** The paused jobs, by job ID. */
     paused(): Effect.Effect<ReadonlyMap<string, Domain.Paused>, StoreError>;
+    /**
+     * Keep a release a parked or paused job skipped, so it runs once the job
+     * is let go. A later release of the same repository replaces it.
+     */
+    hold(
+      job: Domain.JobId,
+      release: Domain.Release,
+    ): Effect.Effect<void, StoreError>;
+    /** Take the releases held for a job, oldest first, leaving none held. */
+    takeHeld(
+      job: string,
+    ): Effect.Effect<ReadonlyArray<Domain.Release>, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -1195,6 +1223,39 @@ export class Store extends Context.Service<
         rows.map(({ job, ...entry }): [string, Domain.Paused] => [job, entry]),
       );
     }, Effect.mapError(storeError));
+
+    const hold = Effect.fn("Store.hold")(function* (
+      job: Domain.JobId,
+      release: Domain.Release,
+    ) {
+      yield* sql`
+        INSERT INTO held_releases ${sql.insert({
+          job,
+          repo: release.repo,
+          tag: release.tag,
+          url: release.url,
+          heldAt: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (job, repo) DO UPDATE
+        SET tag = excluded.tag, url = excluded.url, held_at = excluded.held_at
+      `;
+    }, Effect.mapError(storeError));
+
+    const takeHeld = Effect.fn("Store.takeHeld")(
+      function* (job: string) {
+        return yield* sql`
+          DELETE FROM held_releases WHERE job = ${job}
+          RETURNING repo, tag, url, held_at
+        `.pipe(
+          Effect.map((rows) =>
+            rows.toSorted((a, b) => Number(a["heldAt"]) - Number(b["heldAt"])),
+          ),
+          Effect.flatMap(decodeReleases),
+        );
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -1895,6 +1956,8 @@ export class Store extends Context.Service<
       waiting,
       pause,
       resume,
+      hold,
+      takeHeld,
       paused,
       cancel,
       log,

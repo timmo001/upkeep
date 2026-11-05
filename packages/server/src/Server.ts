@@ -114,7 +114,13 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
     const why = held(run.job) ?? (run.heal ? held(run.heal.job) : null);
 
     if (why !== null) {
-      yield* Effect.logInfo(`Skipped ${run.job}: ${why}`);
+      // A release would otherwise be lost, so it waits for the job
+      if (run.trigger === "release" && run.release !== null && !run.heal) {
+        yield* store.hold(run.job, run.release);
+        yield* Effect.logInfo(
+          `Held ${run.job} for ${run.release.repo}@${run.release.tag}: ${why}`,
+        );
+      } else yield* Effect.logInfo(`Skipped ${run.job}: ${why}`);
 
       return Option.none<Domain.Run>();
     }
@@ -218,6 +224,21 @@ const heal = Effect.fn("heal")(function* (
 });
 
 /**
+ * Queue the releases a job skipped while it was parked or paused, now it's
+ * let go. One it's still held for is held again.
+ */
+const queueHeld = Effect.fn("queueHeld")(function* (job: string) {
+  const store = yield* Store;
+  const found = findJob(job);
+
+  if (Option.isNone(found)) return;
+
+  for (const release of yield* store.takeHeld(job)) {
+    yield* queue({ job: found.value.id, trigger: "release", release });
+  }
+});
+
+/**
  * Unpark each job whose triage issue has been resolved, once a minute, so
  * resolving the failure in triage lets the job run again.
  */
@@ -234,6 +255,7 @@ export const unparkResolved = Layer.effectDiscard(
 
         if (yield* store.unpark(job)) {
           yield* Effect.logInfo(`Unparked ${job}: its triage issue resolved`);
+          yield* queueHeld(job).pipe(Effect.provideService(Store, store));
         }
       }
     }).pipe(
@@ -411,6 +433,10 @@ const JobsHandlers = HttpApiBuilder.group(
           yield* Effect.logInfo(`Unparked ${params.id}`).pipe(
             Effect.annotateLogs({ admin: admin.name }),
           );
+          yield* queueHeld(params.id).pipe(
+            Effect.provideService(Store, store),
+            Effect.orDie,
+          );
         }
       }),
       pause: Effect.fn(function* ({ params }) {
@@ -435,6 +461,10 @@ const JobsHandlers = HttpApiBuilder.group(
         if (yield* store.resume(params.id).pipe(Effect.orDie)) {
           yield* Effect.logInfo(`Resumed ${params.id}`).pipe(
             Effect.annotateLogs({ admin: admin.name }),
+          );
+          yield* queueHeld(params.id).pipe(
+            Effect.provideService(Store, store),
+            Effect.orDie,
           );
         }
       }),
