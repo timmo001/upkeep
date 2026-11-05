@@ -388,6 +388,12 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // What a command run is asked to do, as JSON
+  "0018_run_commands": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN command TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -422,6 +428,7 @@ const RunRow = Schema.Struct({
   attention: Schema.Number,
   period: Schema.NullOr(Schema.fromJsonString(Domain.Period)),
   agent: Schema.NullOr(Schema.fromJsonString(Domain.AgentModel)),
+  command: Schema.NullOr(Schema.fromJsonString(Domain.Command)),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -622,6 +629,8 @@ export interface NewRun {
   readonly job: Domain.JobId;
   readonly trigger: Domain.Trigger;
   readonly release: Domain.Release | null;
+  /** For a command run: what it's asked to do. */
+  readonly command?: Domain.Command;
   /** For a heal: the failed run, its job, what to heal and its triage issue. */
   readonly heal?: {
     readonly of: string;
@@ -930,13 +939,17 @@ export class Store extends Context.Service<
     });
 
     const queueRun = Effect.fn("Store.queueRun")(
-      function* ({ job, trigger, release, heal }: NewRun) {
+      function* ({ job, trigger, release, command, heal }: NewRun) {
+        const commandColumn =
+          command === undefined ? null : JSON.stringify(command);
+
         const waiting = yield* selectRuns(sql`
           SELECT * FROM runs
           WHERE job = ${job}
             AND state = 'queued'
             AND coalesce(release_repo, '') = ${release?.repo ?? ""}
             AND coalesce(release_tag, '') = ${release?.tag ?? ""}
+            AND coalesce(command, '') = ${commandColumn ?? ""}
             AND coalesce(heal_of, '') = ${heal?.of ?? ""}
             AND coalesce(heal_target, '') = ${heal === undefined ? "" : targetColumn(heal.target)}
           LIMIT 1
@@ -952,6 +965,7 @@ export class Store extends Context.Service<
             releaseRepo: release?.repo ?? null,
             releaseTag: release?.tag ?? null,
             releaseUrl: release?.url ?? null,
+            command: commandColumn,
             state: "queued",
             queuedAt: yield* Clock.currentTimeMillis,
             healOf: heal?.of ?? null,

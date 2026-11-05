@@ -87,6 +87,10 @@ days after they last changed. The first time the server starts with the
 inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 `watch` job adds the commits made outside Upkeep.
 
+**Attention** is what needs you on GitHub, by section, with what changed
+since you last looked on any device, and a Work, Personal or All filter. See
+[Attention](#attention).
+
 **Jobs** lists the jobs with their last run and whether they're parked or
 paused, then the latest runs; press anywhere in a run's row to open it. Each
 run shows its summary, its commits, its
@@ -377,6 +381,8 @@ by default.
 | `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                                    |
 | `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `summary`         | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
+| `attention`       | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
+| `command`         | On request       | Does one thing the dashboard asks, such as mark a notification read. A failed command shows on its run and is never healed.                                                                                                                                                                                                                                                                                                                                                |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker.
@@ -443,6 +449,45 @@ Applying is a dry run by default, logging what would be pushed. Set
   "deps": {
     "apply": ["owner/name"],
     "dryRun": false
+  }
+}
+```
+
+### Attention
+
+The `attention` job reads what involves you on GitHub and sends it all to the
+server, which sorts each item into a section by its signals, with no model:
+
+- **Needs you:** a review requested, changes requested, unresolved threads,
+  a mention, or a reply from someone else in the last `staleDays`.
+- **Blocked:** your own, with failing checks, conflicts, a base branch that
+  moved under its files, or an Upkeep finding for its repository.
+- **Going stale** (no activity for `staleDays`) and **Waiting on others**:
+  the rest of your own.
+- **Your backlog** (your drafts, and your issues nobody else has joined) and
+  **Watching** (everyone else's), folded away.
+
+Each run sends the full set, and the server only logs what moved since the
+last one, which **Since you last looked** shows. Opening the page queues a run
+when the last one is more than 5 minutes old. Notifications and base branches
+are read conditionally, so a quiet run costs little.
+
+The `attention` section of the worker's config file sets the rest. `searches`
+are extra GitHub searches, with `{since}` replaced by the date `staleDays`
+ago. Items on a `work` site count as work, `exclude` sites are left out, and
+so are items carrying one of `ignoreLabels`. `workTime.command` prints
+`{ "work": true }` during work time, so the page opens on Work or Personal to
+match, or All without it:
+
+```json
+{
+  "attention": {
+    "searches": ["org:some-org is:pr is:open updated:>={since}"],
+    "work": ["github.com/some-org", "*.example.com"],
+    "exclude": ["github.com/owner/name"],
+    "ignoreLabels": ["wontfix"],
+    "staleDays": 14,
+    "workTime": { "command": ["work-time-check"] }
   }
 }
 ```

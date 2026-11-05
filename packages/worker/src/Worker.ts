@@ -34,11 +34,13 @@ import * as Status from "./Status";
 export const skipped = "skipped";
 
 /**
- * What a job does when it runs, given the release it's for, if any. It ends
- * with `skipped` when it found nothing to do.
+ * What a job does when it runs, given the release it's for and, for a command
+ * run, what it's asked to do. It ends with `skipped` when it found nothing to
+ * do.
  */
 export type Handler = (
   release: Domain.Release | null,
+  command: Domain.Command | null,
 ) => Effect.Effect<
   void | typeof skipped,
   unknown,
@@ -160,7 +162,7 @@ const execute = Effect.fnUntraced(function* (
     unknown,
     Effect.Services<ReturnType<Handler>>
   > =>
-    handler(run.release).pipe(
+    handler(run.release, run.command).pipe(
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           if (
@@ -341,6 +343,6 @@ export const runLocal = (
   release: Domain.Release | null,
   repos: (job?: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
 ) =>
-  handler(release).pipe(
+  handler(release, null).pipe(
     Effect.provide([Reporter.local(repos), RunLog.console]),
   );

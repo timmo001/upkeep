@@ -2,6 +2,7 @@
 import { attention } from "./jobs/attention";
 import { bump } from "./jobs/bump";
 import { ci } from "./jobs/ci";
+import { command as runCommand } from "./jobs/command";
 import { deps } from "./jobs/deps";
 import { digest } from "./jobs/digest";
 import { drift } from "./jobs/drift";
@@ -28,4 +29,5 @@ export const handlers: Handlers = {
   deps: () => deps(),
   ci: () => ci(),
   summary: () => summary(),
+  command: (_release, command) => runCommand(command),
 };

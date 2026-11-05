@@ -153,7 +153,13 @@ const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
   consumers: ReadonlyArray<string>,
 ) {
-  if (run.job === Catalogue.heal.id || run.state !== "failed") return;
+  // A command that failed shows on its run, with nothing for an agent to fix
+  if (
+    run.job === Catalogue.heal.id ||
+    run.job === Catalogue.command.id ||
+    run.state !== "failed"
+  )
+    return;
 
   const store = yield* Store;
   const limit = yield* healsPerDay;
@@ -909,6 +915,22 @@ const AttentionHandlers = HttpApiBuilder.group(
 
         return { run: Option.getOrNull(queued) };
       }),
+      command: ({ payload }) =>
+        store
+          .queueRun({
+            job: Catalogue.command.id,
+            trigger: "manual",
+            release: null,
+            command: payload,
+          })
+          .pipe(
+            Effect.tap((run) =>
+              Effect.logInfo(`Queued ${payload.kind}`).pipe(
+                Effect.annotateLogs({ run: run.id }),
+              ),
+            ),
+            Effect.orDie,
+          ),
     });
   }),
 );

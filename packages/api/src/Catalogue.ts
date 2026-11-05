@@ -146,6 +146,17 @@ export const attention: Job = {
   tracked: false,
 };
 
+export const command: Job = {
+  id: "command",
+  name: "Command",
+  description:
+    "Do one thing the dashboard asks, such as mark a notification read",
+  schedule: null,
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   watch,
@@ -160,4 +171,5 @@ export const jobs: ReadonlyArray<Job> = [
   deps,
   ci,
   summary,
+  command,
 ];

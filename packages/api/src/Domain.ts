@@ -331,12 +331,27 @@ export const describePeriod = (period: Period) => {
   return `the last ${days === 1 ? "day" : `${days} days`}, ${dates}`;
 };
 
+/**
+ * Something the server asks a worker to do once, on demand, as a run of the
+ * `command` job: `mark-read` marks a GitHub notification thread read.
+ */
+export const Command = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("mark-read"),
+    thread: Schema.String.check(Schema.isPattern(/^\d+$/)),
+  }),
+]);
+
+export type Command = typeof Command.Type;
+
 export const Run = Schema.Struct({
   id: Schema.String,
   job: JobId,
   trigger: Trigger,
   /** The release it's for, when a release started it or was given. */
   release: Schema.NullOr(Release),
+  /** For a command run: what it's asked to do. */
+  command: Schema.NullOr(Command),
   state: RunState,
   /** The worker that took it. */
   worker: Schema.NullOr(Schema.String),

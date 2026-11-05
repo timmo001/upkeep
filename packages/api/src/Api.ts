@@ -21,6 +21,7 @@ import {
   Attention,
   AttentionFound,
   Change,
+  Command,
   Entry,
   Heal,
   HealDecision,
@@ -496,6 +497,15 @@ export class AttentionGroup extends HttpApiGroup.make("attention")
      */
     HttpApiEndpoint.post("refresh", "/refresh", {
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
+    }),
+    /**
+     * Ask a worker to do something once, such as mark a notification read,
+     * by queueing a run of the command job. The same command still waiting
+     * is returned instead of a second one.
+     */
+    HttpApiEndpoint.post("command", "/commands", {
+      payload: Command,
+      success: Run,
     }),
   )
   .middleware(AdminAuthorization)
