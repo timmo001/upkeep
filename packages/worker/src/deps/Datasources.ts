@@ -1,7 +1,8 @@
 /**
- * The datasources: where a dependency's releases come from. npm through its
- * registry, GitHub releases, tags and refs through the GitHub API. Lookups
- * are cached for the run, so a package many repositories use is read once.
+ * The datasources: where a dependency's releases come from. npm and PyPI
+ * through their registries, GitHub releases, tags and refs through the GitHub
+ * API. Lookups are cached for the run, so a package many repositories use is
+ * read once.
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Cache, Context, Effect, Layer, Schema } from "effect";
@@ -24,6 +25,24 @@ const NpmPackage = Schema.Struct({
       Schema.String,
       Schema.Struct({ url: Schema.optionalKey(Schema.String) }),
     ]),
+  ),
+});
+
+const PypiPackage = Schema.Struct({
+  info: Schema.Struct({
+    version: Schema.String,
+    project_urls: Schema.optionalKey(
+      Schema.NullOr(Schema.Record(Schema.String, Schema.String)),
+    ),
+  }),
+  releases: Schema.Record(
+    Schema.String,
+    Schema.Array(
+      Schema.Struct({
+        upload_time_iso_8601: Schema.optionalKey(Schema.String),
+        yanked: Schema.optionalKey(Schema.Boolean),
+      }),
+    ),
   ),
 });
 
@@ -83,6 +102,7 @@ const failed = (datasource: string) => (cause: unknown) =>
 /** The datasources Upkeep reads. */
 export const supported = new Set([
   "npm",
+  "pypi",
   "github-releases",
   "github-tags",
   "git-refs",
@@ -138,6 +158,37 @@ export class Datasources extends Context.Service<
             repository === undefined || repository === ""
               ? null
               : sourceUrl(repository),
+        } satisfies Releases;
+      });
+
+      const pypi = Effect.fnUntraced(function* (name: string) {
+        const response = yield* http.get(
+          `https://pypi.org/pypi/${encodeURIComponent(name)}/json`,
+        );
+
+        if (response.status !== 200)
+          return yield* new DepsError({
+            message: `PyPI returned ${response.status} for ${name}`,
+          });
+
+        const metadata = yield* Schema.decodeUnknownEffect(PypiPackage)(
+          yield* response.json,
+        );
+
+        const source = Object.values(metadata.info.project_urls ?? {})
+          .map((url) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+/.exec(url))
+          .find((match) => match !== null)?.[0];
+
+        return {
+          releases: Object.entries(metadata.releases)
+            // A version with no files, or only yanked ones, can't be installed
+            .filter(([, files]) => files.some((file) => file.yanked !== true))
+            .map(([version, files]): Release => ({
+              version,
+              date: files[0]?.upload_time_iso_8601,
+            })),
+          latest: metadata.info.version,
+          sourceUrl: source === undefined ? null : sourceUrl(source),
         } satisfies Releases;
       });
 
@@ -244,6 +295,8 @@ export class Datasources extends Context.Service<
 
           const lookup = Effect.gen(function* () {
             if (datasource === "npm") return yield* npm(packageName);
+
+            if (datasource === "pypi") return yield* pypi(packageName);
 
             if (datasource === "github-releases")
               return {

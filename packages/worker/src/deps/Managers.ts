@@ -255,6 +255,8 @@ const upstreams = new Map([
   ["copilot", "github/copilot-cli"],
   ["ghui", "kitlangton/ghui"],
   ["playwright", "microsoft/playwright"],
+  ["aube", "aubepkg/aube"],
+  ["golangci-lint", "golangci/golangci-lint"],
 ]);
 
 /** Tools whose versions are tags rather than releases. */
@@ -324,6 +326,12 @@ const extractMise = (file: string, text: string): Extraction => {
 
     if (backend === "npm") {
       dependencies.push({ ...base, packageName: tool, datasource: "npm" });
+
+      continue;
+    }
+
+    if (backend === "pipx" || backend === "pypi") {
+      dependencies.push({ ...base, packageName: tool, datasource: "pypi" });
 
       continue;
     }
