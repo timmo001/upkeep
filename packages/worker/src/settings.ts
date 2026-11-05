@@ -143,7 +143,7 @@ export const Settings = Schema.Struct({
        * How many heals a day, across every worker, the decision model is
        * asked about. Unlimited by default, or 300 for the `opencode`
        * provider; set it for a cloud model on a shared or metered plan.
-       * Past it, heals are left for the digest.
+       * Past it, heals are left for you.
        */
       decisionsPerDay: Schema.optionalKey(
         Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -151,7 +151,7 @@ export const Settings = Schema.Struct({
       /** Upkeep's own repository, `timmo001/upkeep` by default. */
       repo: Schema.optionalKey(Schema.String),
       /**
-       * The Plannotator command asks and the daily digest go through,
+       * The Plannotator command a heal that needs you asks through,
        * `plannotator` by default, or `false` to send nothing.
        */
       inbox: Schema.optionalKey(

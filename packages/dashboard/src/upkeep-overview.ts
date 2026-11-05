@@ -239,7 +239,7 @@ export class UpkeepOverview extends LitElement {
         model: worker.decisions ?? "None",
         for:
           worker.decisions === null
-            ? "Without a model, lost runs are retried and other failures wait for the digest"
+            ? "Without a model, lost runs are retried and other failures are left for you"
             : "Chooses to retry, fix, park or ask, and picks the agent for a fix",
       },
       ...worker.agents.map((agent, index) => ({

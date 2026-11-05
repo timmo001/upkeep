@@ -2,9 +2,9 @@
  * The heal job: read a failed or lost run and its log, and choose what to do
  * with a decision model, or an LLM through OpenCode: run it again, hand a fix
  * to an agent in an OpenCode session in Herdr, park the job, or leave it for
- * the digest. Whatever it chooses goes in the heal's record. Without a
- * decision model in the settings, a lost run is retried and anything else
- * waits for the digest.
+ * you on the dashboard and the Attention page. Whatever it chooses goes in
+ * the heal's record. Without a decision model in the settings, a lost run is
+ * retried and anything else is left for you.
  */
 import {
   CloudflareClient,
@@ -388,7 +388,7 @@ const startDelay = Effect.fnUntraced(function* (
  * Hand a fix to an agent. A person hears about it only when the agent leaves
  * it unfixed, with the session to pick it up from. An agent that couldn't
  * start after a temporary failure, such as GitHub's rate limit, starts again
- * once it's passed; one that still can't is left for the digest.
+ * once it's passed; one that still can't is left for you.
  */
 const handOff = Effect.fnUntraced(function* (
   healing: Healing,
@@ -442,7 +442,7 @@ const handOff = Effect.fnUntraced(function* (
   const result = yield* start(0).pipe(
     Effect.catchCause((cause) =>
       Effect.succeed({
-        action: `Left for the digest: the agent couldn't start, ${failureReason(cause)}`,
+        action: `Left for you: the agent couldn't start, ${failureReason(cause)}`,
         session: null,
         attention: true,
         said: null,
@@ -516,7 +516,7 @@ const act = Effect.fnUntraced(function* (
 
     case "fix": {
       if (Option.isNone(chosen.agent)) {
-        const action = "Left for the digest: there's no agent to fix it";
+        const action = "Left for you: there's no agent to fix it";
 
         yield* RunLog.warn(action);
         yield* reporter.heal({ action });
@@ -531,14 +531,14 @@ const act = Effect.fnUntraced(function* (
 
     case "ask": {
       // The model isn't sure what's wrong, which is what the last agent, the
-      // one for hard fixes, is for. Without one, or a model, it waits for the
-      // evening digest.
+      // one for hard fixes, is for. Without one, or a model, it's left for
+      // you.
       const agent = agents.at(-1);
 
       if (chosen.decided && agent !== undefined)
         return yield* handOff(healing, agent, chosen.reason);
 
-      const action = "Left for the digest";
+      const action = "Left for you";
 
       yield* RunLog.warn(action);
       yield* reporter.heal({ action });

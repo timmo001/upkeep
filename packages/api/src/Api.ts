@@ -758,7 +758,7 @@ export class WorkGroup extends HttpApiGroup.make("work")
       }),
       error: [RunNotFound, RunNotClaimed],
     }),
-    /** The heals queued since `since`, newest first, for the daily digest. */
+    /** The heals queued since `since`, newest first, for the daily limit. */
     HttpApiEndpoint.get("heals", "/heals", {
       query: { since: Schema.FiniteFromString },
       success: Schema.Array(Run),

@@ -1,6 +1,6 @@
 /**
  * Messages to a person through the Plannotator Inbox: a heal that needs one
- * asks there, and the daily digest lands there. Sending never fails a job; a
+ * asks there. Sending never fails a job; a
  * missing or broken Inbox is logged and skipped.
  */
 import { Config, Effect } from "effect";

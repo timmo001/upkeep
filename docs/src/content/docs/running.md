@@ -159,7 +159,7 @@ loop. A worker reads GitHub through `gh`, logged in as whoever runs it.
 
 A worker runs jobs in three lanes at once, one run per lane, so a long job
 doesn't hold up the others: heals in one, the quick API-only jobs
-(`releases`, `watch`, `labels`, `notifications` and `digest`) in another, and the jobs
+(`releases`, `watch`, `labels` and `notifications`) in another, and the jobs
 that clone and push to repositories in the third, where they take turns.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
@@ -312,7 +312,7 @@ AI with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` and
 `"provider": "opencode"` and a `provider/model` model, for a worker without a
 local model. `decisionsPerDay` caps how many heals a day the model chooses:
 unlimited by default, 300 for `opencode`. Set one for a cloud model on a
-shared or metered plan; past it, heals wait for the digest. The first agent is the default; with more than one, the model
+shared or metered plan; past it, heals are left for you. The first agent is the default; with more than one, the model
 picks by what each is `for`:
 
 ```json
@@ -334,8 +334,9 @@ picks by what each is `for`:
 `opencode` sets the OpenCode command (`opencode2` by default) and `repo`
 Upkeep's own repository, for a heal that targets Upkeep.
 
-Without a decision model, a lost run is retried and anything else waits for
-the evening digest.
+Without a decision model, a lost run is retried and anything else is left for
+you: the run is marked as needing attention on the dashboard, and its
+repository's items on the Attention page show it.
 
 ### Triage
 
@@ -358,9 +359,8 @@ when there's something for a person to do: a job it parked, or a fix an
 agent left unfinished, with the session to pick it up from. The message is an
 action item that says what to do and what was tried, and quotes the log lines
 about that target, such as the one consumer's failed check out of a run over
-many. Everything else goes in the digest: the `digest` job sends the day's
-heals there as one
-message each evening. `inbox` in the worker's `heal` settings sets the
+many. Everything else stays on the dashboard, with each heal's record on its
+run. `inbox` in the worker's `heal` settings sets the
 Plannotator command (`plannotator` by default, or `false` to send nothing),
 and `inboxProject` the folder whose Inbox project they go to, the home folder
 by default.
@@ -374,7 +374,6 @@ by default.
 | `labels`            | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                                                                                                                                                                                          |
 | `bump`              | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched.                                                                                                                                                                                                 |
 | `heal`              | On a failed run  | Fixes a failed or lost run: retries it, hands it to an agent, parks the job or asks. See [Heals](#heals).                                                                                                                                                                                                                                                                                                                                                                  |
-| `digest`            | Daily at 20:00   | Sends the day's heals to the Inbox as one message. See [Inbox](#inbox).                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `notifications`     | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
 | `stalled-updates`   | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`             | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |

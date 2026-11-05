@@ -48,16 +48,6 @@ export const heal: Job = {
   tracked: false,
 };
 
-export const digest: Job = {
-  id: "digest",
-  name: "Digest",
-  description: "Send the day's heals to the Inbox as one message",
-  schedule: "0 20 * * *",
-  onRelease: false,
-  lane: "quick",
-  tracked: false,
-};
-
 export const notifications: Job = {
   id: "notifications",
   name: "Notifications",
@@ -175,7 +165,6 @@ export const jobs: ReadonlyArray<Job> = [
   labels,
   bump,
   heal,
-  digest,
   notifications,
   stalledUpdates,
   drift,
