@@ -401,6 +401,68 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE attention_items ADD COLUMN hidden TEXT`;
   }),
+  // Groups of work on the Attention page: the items in each and what each
+  // waits on outside GitHub, what you told the agent, and its standing rules.
+  // Links are keyed by the item's URL, not tied to its row, so they outlive
+  // an item dropping off and coming back
+  "0020_attention_groups": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE attention_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        focus TEXT NOT NULL,
+        notes TEXT,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `;
+
+    yield* sql`
+      CREATE TABLE attention_links (
+        url TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        suggested INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX attention_links_group ON attention_links (group_id)`;
+
+    yield* sql`
+      CREATE TABLE attention_waits (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        url TEXT,
+        recheck_at INTEGER,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `;
+
+    yield* sql`
+      CREATE TABLE attention_comments (
+        id TEXT PRIMARY KEY,
+        url TEXT,
+        group_id TEXT,
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        outcome TEXT,
+        done_at INTEGER
+      )
+    `;
+
+    yield* sql`
+      CREATE TABLE attention_rules (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        comment_id TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -574,6 +636,64 @@ const decodeAttentionChanges = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+const decodeAttentionGroups = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      focus: Domain.AttentionFocus,
+      notes: Schema.NullOr(Schema.String),
+      source: Domain.AttentionSource,
+      createdAt: Schema.Finite,
+    }),
+  ),
+);
+
+const decodeAttentionLinks = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      url: Schema.String,
+      groupId: Schema.String,
+      source: Domain.AttentionSource,
+      suggested: Schema.Number,
+    }),
+  ),
+);
+
+const decodeAttentionWaits = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({ ...Domain.AttentionWait.fields, groupId: Schema.String }),
+  ),
+);
+
+const decodeAttentionComments = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      url: Schema.NullOr(Schema.String),
+      groupId: Schema.NullOr(Schema.String),
+      text: Schema.String,
+      createdAt: Schema.Finite,
+      outcome: Schema.NullOr(Schema.String),
+      doneAt: Schema.NullOr(Schema.Finite),
+    }),
+  ),
+);
+
+const decodeAttentionRules = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      text: Schema.String,
+      commentId: Schema.NullOr(Schema.String),
+      createdAt: Schema.Finite,
+    }),
+  ),
+);
+
+/** How many of your comments to the agent the page keeps showing. */
+const attentionCommentLimit = 500;
 
 /** A kept attention item, without where it sits, which depends on the time. */
 const toFound = ({
@@ -795,6 +915,52 @@ export class Store extends Context.Service<
      * notification is hidden, as it won't be found again.
      */
     markAttentionRead(thread: string): Effect.Effect<void, StoreError>;
+    /** Start a group of work by hand, moving the items given into it. */
+    createGroup(group: {
+      readonly name: string;
+      readonly focus?: Domain.AttentionFocus;
+      readonly notes?: string | null;
+      readonly items?: ReadonlyArray<string>;
+    }): Effect.Effect<Domain.AttentionGroup, StoreError>;
+    /** Rename a group, or change its focus or notes. */
+    updateGroup(
+      id: string,
+      change: {
+        readonly name?: string;
+        readonly focus?: Domain.AttentionFocus;
+        readonly notes?: string | null;
+      },
+    ): Effect.Effect<void, Api.GroupNotFound | StoreError>;
+    /** Remove a group with its links, waits and comments. */
+    deleteGroup(
+      id: string,
+    ): Effect.Effect<void, Api.GroupNotFound | StoreError>;
+    /**
+     * Move an item into a group by hand, accepting any suggestion, or out of
+     * any group with null.
+     */
+    linkAttention(
+      url: string,
+      group: string | null,
+    ): Effect.Effect<void, Api.GroupNotFound | StoreError>;
+    /** Note something outside GitHub a group waits on. */
+    addWait(
+      group: string,
+      wait: {
+        readonly text: string;
+        readonly url?: string | null;
+        readonly recheckAt?: number | null;
+      },
+    ): Effect.Effect<Domain.AttentionWait, Api.GroupNotFound | StoreError>;
+    removeWait(id: string): Effect.Effect<void, StoreError>;
+    /** Keep something you told the agent about an item or a group. */
+    commentAttention(
+      comment:
+        | { readonly url: string; readonly text: string }
+        | { readonly group: string; readonly text: string },
+    ): Effect.Effect<Domain.AttentionComment, Api.GroupNotFound | StoreError>;
+    addRule(text: string): Effect.Effect<Domain.AttentionRule, StoreError>;
+    removeRule(id: string): Effect.Effect<void, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -1661,8 +1827,56 @@ export class Store extends Context.Service<
         LIMIT 500
       `.pipe(Effect.flatMap(decodeAttentionChanges));
 
+      const links = yield* sql`
+        SELECT url, group_id, source, suggested FROM attention_links
+        ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeAttentionLinks));
+
+      const waits = yield* sql`
+        SELECT * FROM attention_waits ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeAttentionWaits));
+
+      const groups = (yield* sql`
+        SELECT * FROM attention_groups ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeAttentionGroups))).map(
+        (group): Domain.AttentionGroup => ({
+          ...group,
+          items: links.flatMap(({ groupId, suggested, ...link }) =>
+            groupId === group.id
+              ? [{ ...link, suggested: suggested !== 0 }]
+              : [],
+          ),
+          waits: waits.flatMap(({ groupId, ...wait }) =>
+            groupId === group.id ? [wait] : [],
+          ),
+        }),
+      );
+
+      const comments = (yield* sql`
+        SELECT * FROM attention_comments
+        ORDER BY created_at DESC
+        LIMIT ${attentionCommentLimit}
+      `.pipe(Effect.flatMap(decodeAttentionComments))).map(
+        ({ groupId, ...comment }): Domain.AttentionComment => ({
+          ...comment,
+          group: groupId,
+        }),
+      );
+
+      const rules = (yield* sql`
+        SELECT * FROM attention_rules ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeAttentionRules))).map(
+        ({ commentId, ...rule }): Domain.AttentionRule => ({
+          ...rule,
+          comment: commentId,
+        }),
+      );
+
       return {
         items,
+        groups,
+        comments,
+        rules,
         changes: changes.map((change) => ({
           ...change,
           gone: change.gone !== 0,
@@ -1739,6 +1953,222 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.mapError(storeError),
     );
+
+    const requireGroup = Effect.fnUntraced(function* (id: string) {
+      const rows = yield* sql`SELECT id FROM attention_groups WHERE id = ${id}`;
+
+      if (rows.length === 0) return yield* new Api.GroupNotFound({ id });
+    });
+
+    // An item sits in one group at most, so linking it moves it
+    const putLink = Effect.fnUntraced(function* (
+      url: string,
+      group: string,
+      now: number,
+    ) {
+      yield* sql`
+        INSERT INTO attention_links ${sql.insert({
+          url,
+          groupId: group,
+          source: "you",
+          suggested: 0,
+          createdAt: now,
+        })}
+        ON CONFLICT (url) DO UPDATE SET
+          group_id = excluded.group_id,
+          source = excluded.source,
+          suggested = 0,
+          created_at = excluded.created_at
+      `;
+    });
+
+    const createGroup = Effect.fn("Store.createGroup")(
+      function* ({
+        name,
+        focus = "watching",
+        notes = null,
+        items = [],
+      }: {
+        readonly name: string;
+        readonly focus?: Domain.AttentionFocus;
+        readonly notes?: string | null;
+        readonly items?: ReadonlyArray<string>;
+      }) {
+        const now = yield* Clock.currentTimeMillis;
+
+        const group = {
+          id: yield* random.ulid,
+          name,
+          focus,
+          notes,
+          source: "you" as const,
+          createdAt: now,
+        };
+
+        yield* sql`INSERT INTO attention_groups ${sql.insert(group)}`;
+
+        for (const url of items) yield* putLink(url, group.id, now);
+
+        return {
+          ...group,
+          items: items.map((url) => ({
+            url,
+            source: "you" as const,
+            suggested: false,
+          })),
+          waits: [],
+        } satisfies Domain.AttentionGroup;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const updateGroup = Effect.fn("Store.updateGroup")(
+      function* (
+        id: string,
+        change: {
+          readonly name?: string;
+          readonly focus?: Domain.AttentionFocus;
+          readonly notes?: string | null;
+        },
+      ) {
+        yield* requireGroup(id);
+
+        yield* sql`
+          UPDATE attention_groups SET
+            name = coalesce(${change.name ?? null}, name),
+            focus = coalesce(${change.focus ?? null}, focus),
+            notes = ${change.notes === undefined ? sql`notes` : change.notes}
+          WHERE id = ${id}
+        `;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const deleteGroup = Effect.fn("Store.deleteGroup")(
+      function* (id: string) {
+        yield* requireGroup(id);
+        yield* sql`DELETE FROM attention_links WHERE group_id = ${id}`;
+        yield* sql`DELETE FROM attention_waits WHERE group_id = ${id}`;
+        yield* sql`DELETE FROM attention_comments WHERE group_id = ${id}`;
+        yield* sql`DELETE FROM attention_groups WHERE id = ${id}`;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const linkAttention = Effect.fn("Store.linkAttention")(
+      function* (url: string, group: string | null) {
+        if (group === null) {
+          yield* sql`DELETE FROM attention_links WHERE url = ${url}`;
+
+          return;
+        }
+
+        yield* requireGroup(group);
+        yield* putLink(url, group, yield* Clock.currentTimeMillis);
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const addWait = Effect.fn("Store.addWait")(
+      function* (
+        group: string,
+        {
+          text,
+          url = null,
+          recheckAt = null,
+        }: {
+          readonly text: string;
+          readonly url?: string | null;
+          readonly recheckAt?: number | null;
+        },
+      ) {
+        yield* requireGroup(group);
+
+        const wait = {
+          id: yield* random.ulid,
+          text,
+          url,
+          recheckAt,
+          source: "you" as const,
+          createdAt: yield* Clock.currentTimeMillis,
+        } satisfies Domain.AttentionWait;
+
+        yield* sql`
+          INSERT INTO attention_waits ${sql.insert({ ...wait, groupId: group })}
+        `;
+
+        return wait;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const removeWait = Effect.fn("Store.removeWait")(function* (id: string) {
+      yield* sql`DELETE FROM attention_waits WHERE id = ${id}`;
+    }, Effect.mapError(storeError));
+
+    const commentAttention = Effect.fn("Store.commentAttention")(
+      function* (
+        target:
+          | { readonly url: string; readonly text: string }
+          | { readonly group: string; readonly text: string },
+      ) {
+        const group = "group" in target ? target.group : null;
+
+        if (group !== null) yield* requireGroup(group);
+
+        const comment = {
+          id: yield* random.ulid,
+          url: "url" in target ? target.url : null,
+          group,
+          text: target.text,
+          createdAt: yield* Clock.currentTimeMillis,
+          outcome: null,
+          doneAt: null,
+        } satisfies Domain.AttentionComment;
+
+        yield* sql`
+          INSERT INTO attention_comments ${sql.insert({
+            id: comment.id,
+            url: comment.url,
+            groupId: group,
+            text: comment.text,
+            createdAt: comment.createdAt,
+          })}
+        `;
+
+        return comment;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const addRule = Effect.fn("Store.addRule")(function* (text: string) {
+      const rule = {
+        id: yield* random.ulid,
+        text,
+        comment: null,
+        createdAt: yield* Clock.currentTimeMillis,
+      } satisfies Domain.AttentionRule;
+
+      yield* sql`
+        INSERT INTO attention_rules ${sql.insert({
+          id: rule.id,
+          text,
+          createdAt: rule.createdAt,
+        })}
+      `;
+
+      return rule;
+    }, Effect.mapError(storeError));
+
+    const removeRule = Effect.fn("Store.removeRule")(function* (id: string) {
+      yield* sql`DELETE FROM attention_rules WHERE id = ${id}`;
+    }, Effect.mapError(storeError));
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -2448,6 +2878,15 @@ export class Store extends Context.Service<
       looked,
       hideAttention,
       markAttentionRead,
+      createGroup,
+      updateGroup,
+      deleteGroup,
+      linkAttention,
+      addWait,
+      removeWait,
+      commentAttention,
+      addRule,
+      removeRule,
       paused,
       cancel,
       log,

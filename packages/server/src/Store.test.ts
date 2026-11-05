@@ -127,6 +127,59 @@ test("a hidden item stays hidden until it changes, and marking read settles its 
     }),
   ));
 
+test("an item sits in one group, and removing a group takes what's on it", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const first = yield* store.createGroup({
+        name: "Roadmap item",
+        items: [found(1).url, found(2).url],
+      });
+
+      const second = yield* store.createGroup({
+        name: "Docs",
+        focus: "today",
+        notes: "Before the release",
+      });
+
+      yield* store.linkAttention(found(2).url, second.id);
+      yield* store.updateGroup(second.id, { notes: null });
+      yield* store.addWait(second.id, { text: "Frontend demo release" });
+      yield* store.commentAttention({ group: second.id, text: "Not stale" });
+      yield* store.commentAttention({ url: found(1).url, text: "Mine" });
+
+      const page = yield* store.attention();
+
+      expect(
+        page.groups.map((group) => [
+          group.name,
+          group.focus,
+          group.notes,
+          group.items.map((item) => item.url),
+          group.waits.length,
+        ]),
+      ).toEqual([
+        ["Roadmap item", "watching", null, [found(1).url], 0],
+        ["Docs", "today", null, [found(2).url], 1],
+      ]);
+
+      yield* store.deleteGroup(second.id);
+
+      const after = yield* store.attention();
+
+      expect(after.groups.map((group) => group.id)).toEqual([first.id]);
+      expect(after.comments.map((comment) => comment.text)).toEqual(["Mine"]);
+
+      expect(
+        yield* store.linkAttention(found(2).url, second.id).pipe(
+          Effect.flip,
+          Effect.map((error) => error._tag),
+        ),
+      ).toBe("GroupNotFound");
+    }),
+  ));
+
 test("a waiting run of the same job and release isn't queued twice", () =>
   run(
     Effect.gen(function* () {

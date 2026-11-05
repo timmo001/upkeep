@@ -641,9 +641,97 @@ export interface AttentionChange extends Schema.Schema.Type<
   typeof AttentionChange
 > {}
 
+/** How much a group of work is wanted now: pinned, kept an eye on, or put away. */
+export const AttentionFocus = Schema.Literals(["today", "watching", "parked"]);
+
+export type AttentionFocus = typeof AttentionFocus.Type;
+
+/** Who put something on the page: GitHub's own links, you, or the agent. */
+export const AttentionSource = Schema.Literals(["github", "you", "agent"]);
+
+export type AttentionSource = typeof AttentionSource.Type;
+
+/** An item put in a group. */
+export const AttentionLink = Schema.Struct({
+  /** The item's page on GitHub, kept even while the item is gone. */
+  url: Schema.String,
+  source: AttentionSource,
+  /** The agent proposed it, and it's not accepted yet. */
+  suggested: Schema.Boolean,
+});
+
+export interface AttentionLink extends Schema.Schema.Type<
+  typeof AttentionLink
+> {}
+
+/** Something outside GitHub a group waits on, such as a release next month. */
+export const AttentionWait = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+  url: Schema.NullOr(Schema.String),
+  /** When to look at it again. */
+  recheckAt: Schema.NullOr(Schema.Finite),
+  source: AttentionSource,
+  createdAt: Schema.Finite,
+});
+
+export interface AttentionWait extends Schema.Schema.Type<
+  typeof AttentionWait
+> {}
+
+/** One piece of work: items across repositories, and what it waits on. */
+export const AttentionGroup = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  focus: AttentionFocus,
+  notes: Schema.NullOr(Schema.String),
+  source: AttentionSource,
+  createdAt: Schema.Finite,
+  items: Schema.Array(AttentionLink),
+  waits: Schema.Array(AttentionWait),
+});
+
+export interface AttentionGroup extends Schema.Schema.Type<
+  typeof AttentionGroup
+> {}
+
+/** Something you told the agent about an item or a group, and what it did. */
+export const AttentionComment = Schema.Struct({
+  id: Schema.String,
+  /** The item it's about, or null for a group. */
+  url: Schema.NullOr(Schema.String),
+  /** The group it's about, or null for an item. */
+  group: Schema.NullOr(Schema.String),
+  text: Schema.String,
+  createdAt: Schema.Finite,
+  /** What the agent did about it, once it has. */
+  outcome: Schema.NullOr(Schema.String),
+  doneAt: Schema.NullOr(Schema.Finite),
+});
+
+export interface AttentionComment extends Schema.Schema.Type<
+  typeof AttentionComment
+> {}
+
+/** A standing instruction for the agent, such as which threads to skip. */
+export const AttentionRule = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+  /** The comment it came from, or null when written as a rule. */
+  comment: Schema.NullOr(Schema.String),
+  createdAt: Schema.Finite,
+});
+
+export interface AttentionRule extends Schema.Schema.Type<
+  typeof AttentionRule
+> {}
+
 /** The Attention page: every item, and what changed since you last looked. */
 export const Attention = Schema.Struct({
   items: Schema.Array(AttentionItem),
+  groups: Schema.Array(AttentionGroup),
+  comments: Schema.Array(AttentionComment),
+  rules: Schema.Array(AttentionRule),
   changes: Schema.Array(AttentionChange),
   /** When you last looked before this visit, or null the first time. */
   since: Schema.NullOr(Schema.Finite),

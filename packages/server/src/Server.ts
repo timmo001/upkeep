@@ -935,6 +935,33 @@ const AttentionHandlers = HttpApiBuilder.group(
           ),
       hide: ({ payload }) =>
         store.hideAttention(payload.url, payload.hidden).pipe(Effect.orDie),
+      createGroup: ({ payload }) =>
+        store.createGroup(payload).pipe(Effect.orDie),
+      updateGroup: ({ params, payload }) =>
+        store
+          .updateGroup(params.id, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      deleteGroup: ({ params }) =>
+        store
+          .deleteGroup(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      link: ({ payload }) =>
+        store
+          .linkAttention(payload.url, payload.group)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      addWait: ({ params, payload }) =>
+        store
+          .addWait(params.id, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      removeWait: ({ params }) =>
+        store.removeWait(params.id).pipe(Effect.orDie),
+      comment: ({ payload }) =>
+        store
+          .commentAttention(payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      addRule: ({ payload }) => store.addRule(payload.text).pipe(Effect.orDie),
+      removeRule: ({ params }) =>
+        store.removeRule(params.id).pipe(Effect.orDie),
     });
   }),
 );

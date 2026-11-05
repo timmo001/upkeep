@@ -19,7 +19,13 @@ import {
   AgentModel,
   AgentSetup,
   Attention,
+  AttentionComment,
+  AttentionFocus,
   AttentionFound,
+  // The HTTP group below already takes the name
+  AttentionGroup as AttentionGroupSchema,
+  AttentionRule,
+  AttentionWait,
   Change,
   Command,
   Entry,
@@ -88,6 +94,16 @@ export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
 ) {
   override get message() {
     return `There's no run ${this.id}`;
+  }
+}
+
+export class GroupNotFound extends Schema.TaggedError<GroupNotFound>()(
+  "GroupNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no attention group ${this.id}`;
   }
 }
 
@@ -515,6 +531,86 @@ export class AttentionGroup extends HttpApiGroup.make("attention")
      */
     HttpApiEndpoint.post("hide", "/hide", {
       payload: Schema.Struct({ url: Schema.String, hidden: Schema.Boolean }),
+      success: HttpApiSchema.NoContent,
+    }),
+    /**
+     * Start a group of work, by hand, with the items given moved into it.
+     * Focus defaults to watching.
+     */
+    HttpApiEndpoint.post("createGroup", "/groups", {
+      payload: Schema.Struct({
+        name: Schema.String,
+        focus: Schema.optionalKey(AttentionFocus),
+        notes: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        items: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
+      success: AttentionGroupSchema,
+    }),
+    /** Rename a group, or change its focus or notes. */
+    HttpApiEndpoint.patch("updateGroup", "/groups/:id", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        name: Schema.optionalKey(Schema.String),
+        focus: Schema.optionalKey(AttentionFocus),
+        notes: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: GroupNotFound,
+    }),
+    /**
+     * Remove a group, with its waits and comments. Its items go back to
+     * their sections.
+     */
+    HttpApiEndpoint.delete("deleteGroup", "/groups/:id", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: GroupNotFound,
+    }),
+    /**
+     * Move an item into a group, by hand, or out of any with null. This also
+     * accepts the agent's suggestion for that group.
+     */
+    HttpApiEndpoint.put("link", "/links", {
+      payload: Schema.Struct({
+        url: Schema.String,
+        group: Schema.NullOr(Schema.String),
+      }),
+      success: HttpApiSchema.NoContent,
+      error: GroupNotFound,
+    }),
+    /** Note something outside GitHub a group waits on. */
+    HttpApiEndpoint.post("addWait", "/groups/:id/waits", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        text: Schema.String,
+        url: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        recheckAt: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+      }),
+      success: AttentionWait,
+      error: GroupNotFound,
+    }),
+    /** Drop an outside wait, such as once it's happened. */
+    HttpApiEndpoint.delete("removeWait", "/waits/:id", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+    }),
+    /** Tell the agent something about an item or a group, for its next run. */
+    HttpApiEndpoint.post("comment", "/comments", {
+      payload: Schema.Union([
+        Schema.Struct({ url: Schema.String, text: Schema.String }),
+        Schema.Struct({ group: Schema.String, text: Schema.String }),
+      ]),
+      success: AttentionComment,
+      error: GroupNotFound,
+    }),
+    /** Give the agent a standing instruction. */
+    HttpApiEndpoint.post("addRule", "/rules", {
+      payload: Schema.Struct({ text: Schema.String }),
+      success: AttentionRule,
+    }),
+    /** Remove a standing instruction. */
+    HttpApiEndpoint.delete("removeRule", "/rules/:id", {
+      params: { id: Schema.String },
       success: HttpApiSchema.NoContent,
     }),
   )
