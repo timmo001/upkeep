@@ -44,6 +44,13 @@ const Common = {
   participants: Schema.Struct({
     nodes: Schema.Array(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   }),
+  labels: Schema.NullOr(
+    Schema.Struct({
+      nodes: Schema.Array(
+        Schema.NullOr(Schema.Struct({ name: Schema.String })),
+      ),
+    }),
+  ),
 };
 
 const Pull = Schema.Struct({
@@ -121,6 +128,7 @@ const common = `
   repository { nameWithOwner }
   comments(last: 1) { nodes { author { __typename login } createdAt } }
   participants(first: 10) { nodes { login } }
+  labels(first: 20) { nodes { name } }
 `;
 
 const document = `
@@ -529,6 +537,13 @@ export const attention = Effect.fnUntraced(function* () {
   let complete = true;
   const found = new Map<string, Read>();
 
+  const ignoredLabels = new Set(
+    (settings?.ignoreLabels ?? []).map((name) => name.toLowerCase()),
+  );
+
+  // Left out by label, so their notifications are too
+  const ignored = new Set<string>();
+
   for (const search of searches) {
     const nodes = yield* searchAll(search.q).pipe(
       Effect.catchCause((cause) =>
@@ -544,6 +559,17 @@ export const attention = Effect.fnUntraced(function* () {
     );
 
     for (const node of nodes) {
+      if (
+        node.labels?.nodes.some(
+          (label) =>
+            label !== null && ignoredLabels.has(label.name.toLowerCase()),
+        )
+      ) {
+        ignored.add(node.url);
+
+        continue;
+      }
+
       // A review request found once stays, whichever search finds it again
       const earlier = found.get(node.url);
 
@@ -622,6 +648,8 @@ export const attention = Effect.fnUntraced(function* () {
 
   for (const thread of threads) {
     const url = pageOf(thread);
+
+    if (ignored.has(url)) continue;
 
     const notification = {
       id: thread.id,

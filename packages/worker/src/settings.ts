@@ -62,6 +62,11 @@ const Attention = Schema.Struct({
   work: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Sites to leave out, in the same form. */
   exclude: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Labels whose pull requests and issues are left out, such as `wontfix`,
+   * matched without regard to case.
+   */
+  ignoreLabels: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Days without activity before your own item is going stale, 14 by default. */
   staleDays: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   /**
