@@ -59,8 +59,12 @@ export const shared = css`
     vertical-align: baseline;
   }
 
+  /* Pinned to its container's corner: left at its place in a line cut short,
+     it would sit past the clip and widen the page */
   .visually-hidden {
     position: absolute;
+    top: 0;
+    left: 0;
     width: 1px;
     height: 1px;
     overflow: hidden;

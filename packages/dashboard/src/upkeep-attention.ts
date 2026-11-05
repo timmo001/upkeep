@@ -345,6 +345,7 @@ export class UpkeepAttention extends LitElement {
       /* The links take what room is left, cut off at the end, or a line of
          their own on a narrow screen rather than widening the page */
       .since > .since-links {
+        position: relative;
         flex: 1 1 0;
         min-width: 10rem;
         overflow: hidden;
