@@ -95,7 +95,7 @@ export const deps: Job = {
   id: "deps",
   name: "Dependencies",
   description:
-    "Read each repository's dependency updater config and log the groups of updates it would open, with who owns each. Changes nothing yet",
+    "Read each repository's dependency updater config and plan the groups of updates it would open, with who owns each, then apply, check and push them in the repositories set to apply",
   schedule: "0 */6 * * *",
   onRelease: false,
   lane: "repos",
