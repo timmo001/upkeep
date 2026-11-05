@@ -1,10 +1,10 @@
 /**
- * The deps job: read each repository's dependency updater config, find its
- * dependencies and the releases its policy allows, and log the groups of
- * updates the updater would open, with who owns each: the updater when it
- * automerges the group, otherwise Upkeep. In the repositories set to apply,
- * Upkeep's groups are applied, checked and pushed one at a time, as a dry
- * run unless that's turned off (#5).
+ * The deps job: check out each repository and read its dependency updater
+ * config, find its dependencies and the releases its policy allows, and log
+ * the groups of updates the updater would open, with who owns each: the
+ * updater when it automerges the group, otherwise Upkeep. In the repositories
+ * set to apply, Upkeep's groups are applied, checked and pushed one at a time,
+ * as a dry run unless that's turned off (#5).
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
@@ -31,13 +31,6 @@ const OwnedRepository = Schema.Struct({
   fork: Schema.Boolean,
   default_branch: Schema.String,
   owner: Schema.Struct({ login: Schema.String }),
-});
-
-const Tree = Schema.Struct({
-  truncated: Schema.Boolean,
-  tree: Schema.Array(
-    Schema.Struct({ path: Schema.String, type: Schema.String }),
-  ),
 });
 
 const missing = (cause: unknown) =>
@@ -99,31 +92,52 @@ const repositories = Effect.fnUntraced(function* () {
 const describe = (update: Planner.Update) =>
   `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""})`;
 
-/** Plan one repository and log its groups. */
+/**
+ * Plan one repository and log its groups, reading its files from a clean
+ * checkout, since a git fetch doesn't count against the API's rate limit.
+ */
 const planRepository = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   extras: Settings.Settings["deps"],
+  root: string,
 ) {
   const updaters = yield* Updaters;
   const datasources = yield* Datasources;
   const gh = yield* Gh;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
-  const read: ReadFile = (repo, path, ref) =>
-    readFile(repo, path, ref).pipe(Effect.provideService(Gh, gh));
+  const directory = path.join(root, repo);
+  const options = { cwd: directory, trusted: root };
 
-  const tree = yield* Api.json(
-    {
-      endpoint: `repos/${repo}/git/trees/${encodeURIComponent(branch)}`,
-      method: "GET",
-      query: { recursive: 1 },
-    },
-    Tree,
-  );
+  yield* Bump.checkout(repo, branch, directory, root);
 
-  const paths = tree.tree
-    .filter((entry) => entry.type === "blob")
-    .map((entry) => entry.path);
+  const paths = (yield* Bump.run("git", ["ls-files", "-z"], options))
+    .split("\0")
+    .filter((file) => file !== "");
+
+  const readLocal = (file: string) =>
+    Effect.gen(function* () {
+      const target = path.join(directory, file);
+
+      return (yield* fs.exists(target))
+        ? Option.some(yield* fs.readFileString(target))
+        : Option.none<string>();
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DepsError({
+            message: `couldn't read ${repo}/${file}: ${cause.message}`,
+          }),
+      ),
+    );
+
+  // Presets from other repositories, or at a tag, still come from the API
+  const read: ReadFile = (from, file, ref) =>
+    from === repo && ref === undefined
+      ? readLocal(file)
+      : readFile(from, file, ref).pipe(Effect.provideService(Gh, gh));
 
   const detected = updaters.detect(paths);
 
@@ -138,28 +152,15 @@ const planRepository = Effect.fnUntraced(function* (
 
   const files = new Map<string, string>();
 
-  yield* Effect.forEach(
-    Managers.wanted(policy, paths),
-    (path) =>
-      readFile(repo, path, branch).pipe(
-        Effect.tap((text) =>
-          Effect.sync(() => {
-            if (Option.isSome(text)) files.set(path, text.value);
-          }),
-        ),
-      ),
-    { concurrency: 8, discard: true },
-  );
+  for (const file of Managers.wanted(policy, paths)) {
+    const text = yield* readLocal(file);
+
+    if (Option.isSome(text)) files.set(file, text.value);
+  }
 
   const extraction = Managers.extract(policy, files);
 
-  const notes = [
-    ...(tree.truncated
-      ? ["the file tree was truncated, so some files weren't read"]
-      : []),
-    ...policy.notes,
-    ...extraction.notes,
-  ];
+  const notes = [...policy.notes, ...extraction.notes];
 
   const now = Date.now();
   const updates: Array<Planner.Update> = [];
@@ -479,6 +480,7 @@ export const deps = Effect.fnUntraced(function* () {
           repo.full_name,
           repo.default_branch,
           extras,
+          root,
         );
 
         if (Option.isNone(result)) return;
