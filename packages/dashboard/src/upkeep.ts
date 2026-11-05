@@ -73,6 +73,9 @@ export const jobs = UpkeepApi.query("jobs", "list", {
   reactivityKeys: runsKey,
 });
 
+/** Each worker's agents, as it last told the server. */
+export const agents = UpkeepApi.query("jobs", "agents", {});
+
 /** The server's version, shown in the header. */
 export const serverVersion = UpkeepApi.query("system", "version", {});
 

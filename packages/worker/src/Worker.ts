@@ -27,6 +27,7 @@ import { pretty, reason } from "./Failure";
 import * as RateLimits from "./RateLimits";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
+import * as Settings from "./settings";
 import * as Status from "./Status";
 
 /** What a handler ends with when its run found nothing to do. */
@@ -265,9 +266,23 @@ export const work = Effect.fn("Worker.work")(function* (
     ),
   );
 
+  // How the worker is set up to heal, read each time so the dashboard follows
+  // its settings. Settings that can't be read leave the last ones shown.
+  const agents = Settings.load().pipe(
+    Effect.map((settings) => ({ agents: Settings.agentSetup(settings) })),
+    Effect.catchCause((cause) =>
+      Effect.logDebug("Couldn't read the agents to report", cause).pipe(
+        Effect.as({}),
+      ),
+    ),
+  );
+
   const lane = (laneJobs: ReadonlyArray<string>) => {
     const next = holdOff.pipe(
-      Effect.andThen(client.work.claim({ payload: { jobs: laneJobs } })),
+      Effect.andThen(agents),
+      Effect.flatMap((setup) =>
+        client.work.claim({ payload: { jobs: laneJobs, ...setup } }),
+      ),
       Effect.tap(() => status.update({ reachable: true })),
       Effect.flatMap(({ run }) =>
         Option.match(Option.fromNullishOr(run), {

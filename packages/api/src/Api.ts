@@ -16,6 +16,8 @@ import {
 } from "effect/http-api";
 import {
   Activity,
+  AgentModel,
+  AgentSetup,
   Change,
   Entry,
   Heal,
@@ -34,6 +36,7 @@ import {
   Run,
   RunState,
   TrackedRepo,
+  WorkerAgents,
 } from "./Domain";
 
 /** The admin a request was authenticated as. */
@@ -162,6 +165,7 @@ export interface Cancelled extends Schema.Schema.Type<typeof Cancelled> {}
 export const HealUpdate = Schema.Struct({
   decision: Schema.optionalKey(HealDecision),
   reason: Schema.optionalKey(Schema.String),
+  decidedBy: Schema.optionalKey(Schema.String),
   model: Schema.optionalKey(Schema.String),
   variant: Schema.optionalKey(Schema.String),
   /** Added to the heal's actions. */
@@ -174,14 +178,16 @@ export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}
 
 /**
  * What a run reports as it goes: `summary` replaces its summary, `change` is
- * added to its changes, `attention` marks it as needing a person and
- * `period` sets the stretch of the inbox a summary run covers.
+ * added to its changes, `attention` marks it as needing a person, and
+ * `period` and `agent` set the stretch of the inbox a summary run covers and
+ * the model that writes it.
  */
 export const RunReport = Schema.Struct({
   summary: Schema.optionalKey(Schema.String),
   change: Schema.optionalKey(Change),
   attention: Schema.optionalKey(Schema.Boolean),
   period: Schema.optionalKey(Period),
+  agent: Schema.optionalKey(AgentModel),
 });
 
 export interface RunReport extends Schema.Schema.Type<typeof RunReport> {}
@@ -288,6 +294,10 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
   .add(
     HttpApiEndpoint.get("list", "/", {
       success: Schema.Array(JobStatus),
+    }),
+    /** Each worker's agents, as it last told the server, by worker name. */
+    HttpApiEndpoint.get("agents", "/agents", {
+      success: Schema.Array(WorkerAgents),
     }),
     /**
      * Queue a run, as the run button does. A run of the job for the same
@@ -445,9 +455,15 @@ export class InboxGroup extends HttpApiGroup.make("inbox")
 
 export class WorkGroup extends HttpApiGroup.make("work")
   .add(
-    /** Take the oldest waiting run of one of these jobs, if there is one. */
+    /**
+     * Take the oldest waiting run of one of these jobs, if there is one.
+     * `agents` is how the worker is set up to heal, which the dashboard shows.
+     */
     HttpApiEndpoint.post("claim", "/claim", {
-      payload: Schema.Struct({ jobs: Schema.Array(JobId) }),
+      payload: Schema.Struct({
+        jobs: Schema.Array(JobId),
+        agents: Schema.optionalKey(AgentSetup),
+      }),
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
     }),
     /** Tell the server the run is still going. */

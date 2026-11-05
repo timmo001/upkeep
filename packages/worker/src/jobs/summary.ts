@@ -4,7 +4,8 @@
  * sentences the dashboard writes itself. It covers what's unread, or the
  * whole inbox when everything has been read, records that period on the run
  * and names it in the write-up, which becomes the run's summary and the
- * inbox shows. It uses the first of the heal agents in the worker's settings.
+ * inbox shows. It uses the first of the heal agents in the worker's settings,
+ * and records its model and variant on the run.
  */
 import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
@@ -108,7 +109,7 @@ export const summary = Effect.fnUntraced(function* () {
       ? agent.model
       : `${agent.model}#${agent.variant}`;
 
-  yield* reporter.report({ period });
+  yield* reporter.report({ period, agent: Settings.agentModel(agent) });
 
   yield* RunLog.info(
     `Asking ${model} to write up ${worth.length} entries, ${describePeriod(period)}`,

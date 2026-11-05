@@ -2,8 +2,9 @@
  * `upkeep-overview`: the Jobs page. Every job, grouped by the lane it runs
  * in, with its latest run, a button to run it (unless it runs on releases,
  * which need one given) and, for a parked job, why and
- * a button to unpark it, and a switch to pause or resume it; then the latest
- * runs.
+ * a button to unpark it, and a switch to pause or resume it; then each
+ * worker's agents, with their roles, models and what they're for; then the
+ * latest runs.
  */
 import { mdiPause, mdiPlay, mdiPlayPause } from "@mdi/js";
 import type {
@@ -15,9 +16,17 @@ import cronstrue from "cronstrue";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
-import { shared, stateBadge, time, view } from "./ui.ts";
+import {
+  agentLabel,
+  formatTime,
+  shared,
+  stateBadge,
+  time,
+  view,
+} from "./ui.ts";
 import { type CellContent, cell } from "./upkeep-cell.ts";
 import {
+  agents,
   jobHref,
   jobs,
   pauseJob,
@@ -120,6 +129,8 @@ export class UpkeepOverview extends LitElement {
 
   readonly #jobs = new AtomController(this, () => jobs, always);
 
+  readonly #workers = new AtomController(this, () => agents, always);
+
   /** The jobs as a table, grouped by the lane each runs in. */
   #table(list: ReadonlyArray<Domain.JobStatus>) {
     const byId = new Map(list.map((job) => [job.id, job]));
@@ -213,6 +224,56 @@ export class UpkeepOverview extends LitElement {
     ></gw-table>`;
   }
 
+  /** Each worker's agents, one row per role, grouped by worker. */
+  #agents(list: ReadonlyArray<Domain.WorkerAgents>) {
+    if (list.length === 0)
+      return html`<p class="muted">
+        No worker has said which agents it has yet.
+      </p>`;
+
+    const rows = list.flatMap((worker) => [
+      {
+        id: `${worker.worker}:decisions`,
+        worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
+        role: "Decisions",
+        model: worker.decisions ?? "None",
+        for:
+          worker.decisions === null
+            ? "Without a model, lost runs are retried and other failures wait for the digest"
+            : "Chooses to retry, fix, park or ask, and picks the agent for a fix",
+      },
+      ...worker.agents.map((agent, index) => ({
+        id: `${worker.worker}:${index}`,
+        worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
+        role: [
+          "Fix",
+          ...(index === 0 ? ["the default", "summaries"] : []),
+          ...(index === worker.agents.length - 1
+            ? ["the heals the decision model isn't sure about"]
+            : []),
+        ].join(", "),
+        model: agentLabel(agent),
+        for: agent.for,
+      })),
+    ]);
+
+    const columns: TableColumn[] = [
+      { id: "worker", header: "Worker" },
+      { id: "role", header: "Role" },
+      { id: "model", header: "Model" },
+      { id: "for", header: "For", wide: true },
+    ];
+
+    return html`<gw-table
+      label="Agents"
+      group="worker"
+      row-key="id"
+      search="never"
+      .columns=${columns}
+      .rows=${rows}
+    ></gw-table>`;
+  }
+
   override render() {
     return html`
       <gw-page-header
@@ -223,7 +284,9 @@ export class UpkeepOverview extends LitElement {
       ${
         AsyncResult.isFailure(this.#jobs.value)
           ? null
-          : html`<gw-section-title class="runs">Latest runs</gw-section-title>
+          : html`<gw-section-title class="runs">Agents</gw-section-title>
+              ${view(this.#workers.value, (list) => this.#agents(list))}
+              <gw-section-title class="runs">Latest runs</gw-section-title>
               <upkeep-runs></upkeep-runs>`
       }
     `;

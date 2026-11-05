@@ -220,6 +220,7 @@ test("a heal's record fills in as its worker reports", () =>
       yield* store.updateHeal(id, "desktop", {
         decision: "retry",
         reason: "A flaky network call",
+        decidedBy: "cloudflare/clef",
         action: "Queued bump again",
       });
       yield* store.updateHeal(id, "desktop", { action: "Watched it pass" });
@@ -232,6 +233,7 @@ test("a heal's record fills in as its worker reports", () =>
         target: { kind: "consumer", repo: "timmo001/a" },
         decision: "retry",
         reason: "A flaky network call",
+        decidedBy: "cloudflare/clef",
         model: null,
         variant: null,
         actions: ["Queued bump again", "Watched it pass"],

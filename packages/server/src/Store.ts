@@ -310,6 +310,36 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // The decision model a heal was chosen by, kept apart from its reason, the
+  // model a summary was written by, and each worker's agents
+  "0016_agents": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN heal_decided_by TEXT`;
+    yield* sql`ALTER TABLE runs ADD COLUMN agent TEXT`;
+
+    yield* sql`
+      CREATE TABLE worker_agents (
+        worker TEXT PRIMARY KEY,
+        decisions TEXT,
+        agents TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+
+    // Until now the reason ended by naming it, "(…, by provider/model)"
+    const heals = yield* sql<{ id: string; healReason: string }>`
+      SELECT id, heal_reason FROM runs WHERE heal_reason LIKE '%by %)'
+    `;
+
+    for (const heal of heals) {
+      const by = /\bby ([\w.-]+\/[^)]+)\)$/.exec(heal.healReason)?.[1];
+
+      if (by !== undefined) {
+        yield* sql`UPDATE runs SET heal_decided_by = ${by} WHERE id = ${heal.id}`;
+      }
+    }
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -330,6 +360,7 @@ const RunRow = Schema.Struct({
   healTarget: Schema.NullOr(Schema.String),
   healDecision: Schema.NullOr(Domain.HealDecision),
   healReason: Schema.NullOr(Schema.String),
+  healDecidedBy: Schema.NullOr(Schema.String),
   healModel: Schema.NullOr(Schema.String),
   healVariant: Schema.NullOr(Schema.String),
   healActions: Schema.NullOr(
@@ -342,6 +373,7 @@ const RunRow = Schema.Struct({
   changes: Schema.fromJsonString(Schema.Array(Domain.Change)),
   attention: Schema.Number,
   period: Schema.NullOr(Schema.fromJsonString(Domain.Period)),
+  agent: Schema.NullOr(Schema.fromJsonString(Domain.AgentModel)),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -350,9 +382,9 @@ const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
 const targetColumn = (target: Domain.Target) =>
   target.kind === "upkeep" ? "upkeep" : target.repo;
 
-/** A summary's period as it's kept: JSON, or NULL for other runs. */
-const periodColumn = (period: Domain.Period | null) =>
-  period === null ? null : JSON.stringify(period);
+/** A summary's period or agent as it's kept: JSON, or NULL for other runs. */
+const jsonColumn = (value: Domain.Period | Domain.AgentModel | null) =>
+  value === null ? null : JSON.stringify(value);
 
 const targetOf = (column: string): Domain.Target =>
   column === "upkeep" ? { kind: "upkeep" } : { kind: "consumer", repo: column };
@@ -366,6 +398,7 @@ const toRun = ({
   healTarget,
   healDecision,
   healReason,
+  healDecidedBy,
   healModel,
   healVariant,
   healActions,
@@ -390,6 +423,7 @@ const toRun = ({
           target: targetOf(healTarget),
           decision: healDecision,
           reason: healReason,
+          decidedBy: healDecidedBy,
           model: healModel,
           variant: healVariant,
           actions: healActions ?? [],
@@ -404,6 +438,15 @@ const decodeLog = Schema.decodeUnknownEffect(Schema.Array(Domain.LogLine));
 const decodeTokens = Schema.decodeUnknownEffect(Schema.Array(Api.Token));
 
 const decodeReleases = Schema.decodeUnknownEffect(Schema.Array(Domain.Release));
+
+const decodeAgents = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      ...Domain.WorkerAgents.fields,
+      agents: Schema.fromJsonString(Schema.Array(Domain.Agent)),
+    }),
+  ),
+);
 
 const decodeParked = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Parked.fields })),
@@ -588,6 +631,13 @@ export class Store extends Context.Service<
     takeHeld(
       job: string,
     ): Effect.Effect<ReadonlyArray<Domain.Release>, StoreError>;
+    /** Keep the agents a worker said it's set up with, replacing its last. */
+    setAgents(
+      worker: string,
+      setup: Domain.AgentSetup,
+    ): Effect.Effect<void, StoreError>;
+    /** Each worker's agents, by worker name. */
+    agents(): Effect.Effect<ReadonlyArray<Domain.WorkerAgents>, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -970,6 +1020,7 @@ export class Store extends Context.Service<
           UPDATE runs SET ${sql.update({
             healDecision: update.decision ?? current.heal.decision,
             healReason: update.reason ?? current.heal.reason,
+            healDecidedBy: update.decidedBy ?? current.heal.decidedBy,
             healModel: update.model ?? current.heal.model,
             healVariant: update.variant ?? current.heal.variant,
             healActions: JSON.stringify(actions),
@@ -998,7 +1049,8 @@ export class Store extends Context.Service<
                 : [...current.changes, update.change],
             ),
             attention: (update.attention ?? current.attention) ? 1 : 0,
-            period: periodColumn(update.period ?? current.period),
+            period: jsonColumn(update.period ?? current.period),
+            agent: jsonColumn(update.agent ?? current.agent),
           })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));
@@ -1256,6 +1308,29 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.mapError(storeError),
     );
+
+    const setAgents = Effect.fn("Store.setAgents")(function* (
+      worker: string,
+      setup: Domain.AgentSetup,
+    ) {
+      yield* sql`
+        INSERT INTO worker_agents ${sql.insert({
+          worker,
+          decisions: setup.decisions,
+          agents: JSON.stringify(setup.agents),
+          at: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (worker) DO UPDATE
+        SET decisions = excluded.decisions, agents = excluded.agents,
+          at = excluded.at
+      `;
+    }, Effect.mapError(storeError));
+
+    const agents = Effect.fn("Store.agents")(function* () {
+      return yield* sql`
+        SELECT worker, decisions, agents, at FROM worker_agents ORDER BY worker
+      `.pipe(Effect.flatMap(decodeAgents));
+    }, Effect.mapError(storeError));
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -1958,6 +2033,8 @@ export class Store extends Context.Service<
       resume,
       hold,
       takeHeld,
+      setAgents,
+      agents,
       paused,
       cancel,
       log,

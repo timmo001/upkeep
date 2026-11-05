@@ -176,7 +176,7 @@ export const fallback = (
 
 /** How a heal's reason names the model that chose it, to count its use. */
 const by = (model: Settings.DecisionModel) =>
-  `by ${model.provider}/${model.model}`;
+  `by ${Settings.deciderName(model)}`;
 
 /** Ask the model, picking an agent too when it chooses a fix. */
 const decide = Effect.fnUntraced(function* (
@@ -628,6 +628,11 @@ export const heal = Effect.fnUntraced(function* () {
           : { model: agent.model, variant: agent.variant },
     }),
   });
+
+  if (chosen.decided && settings.decisions !== undefined)
+    yield* reporter.heal({
+      decidedBy: Settings.deciderName(settings.decisions),
+    });
 
   yield* act(healing, chosen, settings.agents ?? []);
 });

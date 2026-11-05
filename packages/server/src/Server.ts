@@ -400,6 +400,7 @@ const JobsHandlers = HttpApiBuilder.group(
             .map(({ run, repo, at }) => ({ run, repo, at })),
         }));
       }),
+      agents: () => store.agents().pipe(Effect.orDie),
       run: Effect.fn(function* ({ params, payload }) {
         const job = findJob(params.id);
 
@@ -619,6 +620,12 @@ const WorkHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       claim: Effect.fn(function* ({ payload }) {
         const worker = yield* Api.CurrentWorker;
+
+        if (payload.agents !== undefined) {
+          yield* store
+            .setAgents(worker.name, payload.agents)
+            .pipe(Effect.orDie);
+        }
 
         const run = yield* store
           .claim(payload.jobs, worker.name)

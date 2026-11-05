@@ -125,6 +125,45 @@ export const Target = Schema.Union([
 
 export type Target = typeof Target.Type;
 
+/** An OpenCode model and its variant, as an agent runs it. */
+export const AgentModel = Schema.Struct({
+  model: Schema.String,
+  variant: Schema.NullOr(Schema.String),
+});
+
+export interface AgentModel extends Schema.Schema.Type<typeof AgentModel> {}
+
+/** An agent a worker can hand a fix to, and what it's for. */
+export const Agent = Schema.Struct({
+  ...AgentModel.fields,
+  /** What the decision model reads to pick it. */
+  for: Schema.String,
+});
+
+export interface Agent extends Schema.Schema.Type<typeof Agent> {}
+
+/**
+ * The agents a worker is set up with: where its heal decisions are made, as
+ * `provider/model`, or null without a decision model, and its fix agents.
+ * The first agent is the default and writes summaries; the last takes the
+ * heals the decision model isn't sure about.
+ */
+export const AgentSetup = Schema.Struct({
+  decisions: Schema.NullOr(Schema.String),
+  agents: Schema.Array(Agent),
+});
+
+export interface AgentSetup extends Schema.Schema.Type<typeof AgentSetup> {}
+
+/** A worker's agents, as it last told the server when it asked for work. */
+export const WorkerAgents = Schema.Struct({
+  worker: Schema.String,
+  ...AgentSetup.fields,
+  at: Schema.Finite,
+});
+
+export interface WorkerAgents extends Schema.Schema.Type<typeof WorkerAgents> {}
+
 /** What the decision model chose for a failed run. */
 export const HealDecision = Schema.Literals(["retry", "fix", "park", "ask"]);
 
@@ -143,6 +182,11 @@ export const Heal = Schema.Struct({
   target: Target,
   decision: Schema.NullOr(HealDecision),
   reason: Schema.NullOr(Schema.String),
+  /**
+   * The decision model that chose, as `provider/model`, or null when nothing
+   * chose and the fallback did.
+   */
+  decidedBy: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   variant: Schema.NullOr(Schema.String),
   actions: Schema.Array(Schema.String),
@@ -311,6 +355,8 @@ export const Run = Schema.Struct({
   attention: Schema.Boolean,
   /** For a summary run: the stretch of the inbox it covers. */
   period: Schema.NullOr(Period),
+  /** For a summary run: the model and variant that wrote it. */
+  agent: Schema.NullOr(AgentModel),
 });
 
 export interface Run extends Schema.Schema.Type<typeof Run> {}

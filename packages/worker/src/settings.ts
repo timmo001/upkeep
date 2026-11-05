@@ -4,6 +4,7 @@
  * derived, such as the checks of a repository that doesn't follow
  * groundwork's tasks. A missing file means every default.
  */
+import { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Schema } from "effect";
 import { Rule } from "./deps/Policy";
 
@@ -129,6 +130,29 @@ const path = Config.String("UPKEEP_CONFIG").pipe(
     ),
   ),
 );
+
+/** How a decision model is named to the server, `provider/model`. */
+export const deciderName = (model: DecisionModel) =>
+  `${model.provider}/${model.model}`;
+
+/** An agent as the server keeps it. */
+export const agentModel = (agent: Agent): Domain.AgentModel => ({
+  model: agent.model,
+  variant: agent.variant ?? null,
+});
+
+/** The agents in these settings, as the worker tells the server. */
+export const agentSetup = (settings: Settings): Domain.AgentSetup => ({
+  decisions:
+    settings.heal?.decisions === undefined
+      ? null
+      : deciderName(settings.heal.decisions),
+  agents: (settings.heal?.agents ?? []).map((agent) => ({
+    model: agent.model,
+    variant: agent.variant ?? null,
+    for: agent.for,
+  })),
+});
 
 /** Read the settings, or the defaults when there's no file. */
 export const load = Effect.fnUntraced(function* () {

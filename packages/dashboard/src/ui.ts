@@ -195,6 +195,10 @@ const states: Record<
 export const capitalise = (text: string) =>
   `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 
+/** A model with its variant, such as `opencode/big-pickle (high)`. */
+export const agentLabel = (agent: Domain.AgentModel) =>
+  agent.variant === null ? agent.model : `${agent.model} (${agent.variant})`;
+
 /** A job's name, such as `Stalled updates`, from its ID. */
 export const jobName = (id: string) =>
   Catalogue.jobs.find((job) => job.id === id)?.name ?? capitalise(id);

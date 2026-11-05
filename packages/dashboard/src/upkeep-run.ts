@@ -9,6 +9,7 @@ import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import {
+  agentLabel,
   attentionBadge,
   capitalise,
   commit,
@@ -51,16 +52,16 @@ const healFacts = (heal: Domain.Heal) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
   ${heal.decision === null ? null : fact("Decision", capitalise(heal.decision))}
+  ${
+    heal.decision === null
+      ? null
+      : fact("Decided by", heal.decidedBy ?? "The fallback, without a model")
+  }
   ${heal.reason === null ? null : fact("Why", heal.reason)}
   ${
     heal.model === null
       ? null
-      : fact(
-          "Model",
-          heal.variant === null
-            ? heal.model
-            : `${heal.model} (${heal.variant})`,
-        )
+      : fact("Agent", agentLabel({ model: heal.model, variant: heal.variant }))
   }
   ${
     heal.commit === null
@@ -292,6 +293,7 @@ export class UpkeepRun extends LitElement {
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
           ${current.heal === null ? null : healFacts(current.heal)}
+          ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${
           current.summary === null
