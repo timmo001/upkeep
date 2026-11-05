@@ -11,9 +11,11 @@
  */
 import {
   mdiBellOutline,
+  mdiCheck,
   mdiCheckCircleOutline,
   mdiClockOutline,
   mdiClose,
+  mdiCommentOutline,
   mdiDeleteOutline,
   mdiDotsVertical,
   mdiEmailOpenOutline,
@@ -23,8 +25,10 @@ import {
   mdiFolderPlusOutline,
   mdiFolderRemoveOutline,
   mdiPencil,
+  mdiPlus,
   mdiRecordCircleOutline,
   mdiRefresh,
+  mdiRobotOutline,
   mdiSourcePull,
   mdiTagOutline,
 } from "@mdi/js";
@@ -40,8 +44,10 @@ import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
 import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
 import {
+  addRule,
   addWait,
   attention,
+  commentAttention,
   createGroup,
   deleteGroup,
   hideAttention,
@@ -49,6 +55,7 @@ import {
   linkAttention,
   markNotificationRead,
   openAttention,
+  removeRule,
   removeWait,
   updateGroup,
 } from "./upkeep.ts";
@@ -342,6 +349,23 @@ export class UpkeepAttention extends LitElement {
         gap: var(--gw-space-1);
       }
 
+      .context {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--gw-space-2);
+        align-items: center;
+        margin: 0;
+        font-size: var(--gw-font-size-s);
+      }
+
+      .context > .icon {
+        color: var(--gw-color-text-secondary);
+      }
+
+      .pending {
+        color: var(--gw-color-text-secondary);
+      }
+
       .waits li {
         display: flex;
         gap: var(--gw-space-2);
@@ -361,6 +385,9 @@ export class UpkeepAttention extends LitElement {
 
   /** Every group, for each item's Group menu. */
   #groups: ReadonlyArray<Domain.AttentionGroup> = [];
+
+  /** Your latest comments, shown on what each is about. */
+  #comments: ReadonlyArray<Domain.AttentionComment> = [];
 
   #prompt: GwPopover | undefined;
 
@@ -512,6 +539,11 @@ export class UpkeepAttention extends LitElement {
             label: "Add an outside wait",
             icon: mdiClockOutline,
           },
+          {
+            value: "comment",
+            label: "Tell the agent",
+            icon: mdiCommentOutline,
+          },
           { value: "rename", label: "Rename", icon: mdiPencil },
           ...(group.source === "github"
             ? []
@@ -530,6 +562,15 @@ export class UpkeepAttention extends LitElement {
             this.#ask(event, "Waiting on", "What, and when", "", (text) =>
               registry.set(addWait, { group: group.id, text }),
             );
+          } else if (value === "comment") {
+            this.#ask(
+              event,
+              "Tell the agent",
+              "Such as: close the tracking issue once these land",
+              "",
+              (text) =>
+                registry.set(commentAttention, { group: group.id, text }),
+            );
           } else if (value === "rename") {
             this.#ask(event, "Rename group", "Name", group.name, (name) =>
               registry.set(updateGroup, { id: group.id, name }),
@@ -539,6 +580,15 @@ export class UpkeepAttention extends LitElement {
           }
         }}
       ></gw-menu-button>
+      ${
+        group.followUp === null
+          ? nothing
+          : html`<p class="context">
+              ${icon(mdiRobotOutline)}
+              <span>${group.followUp.text}</span>
+            </p>`
+      }
+      ${this.#commentLines((comment) => comment.group === group.id)}
       ${
         group.waits.length === 0
           ? nothing
@@ -585,6 +635,162 @@ export class UpkeepAttention extends LitElement {
       ?.state;
 
     return state === "queued" || state === "running";
+  }
+
+  /** Your comments on an item or a group, and what the agent did about each. */
+  #commentLines(about: (comment: Domain.AttentionComment) => boolean) {
+    return this.#comments.filter(about).map(
+      (comment) =>
+        html`<p class="context">
+          ${icon(mdiCommentOutline)}
+          <span
+            >You said: ${comment.text}.
+            ${
+              comment.outcome === null
+                ? html`<span class="pending">Waiting for the agent.</span>`
+                : html`Agent: ${comment.outcome}`
+            }</span
+          >
+        </p>`,
+    );
+  }
+
+  /**
+   * What the context agent says about an item: its note, a group it suggests,
+   * and your comments with what it did about them.
+   */
+  #context(item: Domain.AttentionItem) {
+    const { note } = item;
+
+    const suggested = this.#groups.find((group) =>
+      group.items.some((link) => link.url === item.url && link.suggested),
+    );
+
+    return html`
+      ${
+        note === null
+          ? nothing
+          : html`<p class="context">
+              ${icon(mdiRobotOutline)}
+              <span
+                >${note.text}${
+                  note.recheckAt === null
+                    ? nothing
+                    : html` <span class="pending"
+                        >Recheck
+                        ${new Date(note.recheckAt).toLocaleDateString()}</span
+                      >`
+                }${
+                  note.fingerprint === item.fingerprint
+                    ? nothing
+                    : html` <span class="pending"
+                        >(before its last change)</span
+                      >`
+                }</span
+              >
+            </p>`
+      }
+      ${
+        suggested === undefined
+          ? nothing
+          : html`<p class="context">
+              ${icon(mdiFolderOutline)}
+              <span>The agent suggests ${suggested.name}</span>
+              <gw-button
+                size="xs"
+                appearance="plain"
+                icon=${mdiCheck}
+                @click=${() =>
+                  registry.set(linkAttention, {
+                    url: item.url,
+                    group: suggested.id,
+                  })}
+                >Accept</gw-button
+              >
+              <gw-button
+                size="xs"
+                appearance="plain"
+                variant="neutral"
+                icon=${mdiClose}
+                @click=${() =>
+                  registry.set(linkAttention, { url: item.url, group: null })}
+                >Dismiss</gw-button
+              >
+            </p>`
+      }
+      ${this.#commentLines((comment) => comment.url === item.url)}
+    `;
+  }
+
+  /** A button asking for a comment for the agent, about an item or a group. */
+  #commentButton(about: { readonly url: string } | { readonly group: string }) {
+    return html`<gw-button
+      size="xs"
+      appearance="plain"
+      variant="neutral"
+      icon=${mdiCommentOutline}
+      @click=${(event: Event) =>
+        this.#ask(
+          event,
+          "Tell the agent",
+          "Such as: waiting on the December release",
+          "",
+          (text) => registry.set(commentAttention, { ...about, text }),
+        )}
+      >Comment</gw-button
+    >`;
+  }
+
+  /** Standing instructions the agent follows, yours or from your comments. */
+  #rules(page: Domain.Attention) {
+    return html`<gw-expansion
+      heading=${`Agent rules (${page.rules.length})`}
+      description="Standing instructions the context agent follows on every run"
+    >
+      <gw-stack gap="s">
+        ${
+          page.rules.length === 0
+            ? html`<p class="description">
+                None yet. A comment that's a standing instruction becomes one.
+              </p>`
+            : html`<ul class="waits">
+                ${page.rules.map(
+                  (rule) =>
+                    html`<li>
+                      ${icon(mdiRobotOutline)}
+                      <span>${rule.text}</span>
+                      <gw-button
+                        size="xs"
+                        appearance="plain"
+                        variant="neutral"
+                        labels="hide"
+                        icon=${mdiClose}
+                        label="Remove"
+                        @click=${() => registry.set(removeRule, rule.id)}
+                      ></gw-button>
+                    </li>`,
+                )}
+              </ul>`
+        }
+        <div class="actions">
+          <gw-button
+            size="xs"
+            appearance="outlined"
+            variant="neutral"
+            icon=${mdiPlus}
+            @click=${(event: Event) =>
+              this.#ask(
+                event,
+                "New rule",
+                "Such as: skip threads I'm only subscribed to",
+                "",
+                (text) => registry.set(addRule, text),
+              )}
+            >Add a rule</gw-button
+          >
+        </div>
+      </gw-stack>
+    </gw-expansion>`;
   }
 
   /** Its status and type labels, then what GitHub says about it. */
@@ -638,6 +844,7 @@ export class UpkeepAttention extends LitElement {
           ${moved ? html`<gw-chip size="xs" tone="accent">Moved</gw-chip>` : nothing}
           ${this.#signals(item)}
         </div>
+        ${this.#context(item)}
         <div class="actions">
           ${
             item.notification?.unread === true
@@ -667,7 +874,7 @@ export class UpkeepAttention extends LitElement {
               })}
             >${item.hidden ? "Show" : "Hide"}</gw-button
           >
-          ${this.#groupMenu(item)}
+          ${this.#groupMenu(item)} ${this.#commentButton({ url: item.url })}
         </div>
       </div>
     </li>`;
@@ -782,6 +989,7 @@ export class UpkeepAttention extends LitElement {
       .toSorted((a, b) => b.activityAt - a.activityAt);
 
     this.#groups = page.groups;
+    this.#comments = page.comments;
 
     const groupOf = new Map(
       page.groups.flatMap((group) =>
@@ -971,6 +1179,7 @@ export class UpkeepAttention extends LitElement {
                       </gw-expansion>`
                 }
                 ${this.#releases(page, shown)} ${this.#gone(page)}
+                ${this.#rules(page)}
               `
         }
       </gw-stack>

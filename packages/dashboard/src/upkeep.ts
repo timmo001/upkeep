@@ -223,6 +223,32 @@ export const removeWait = UpkeepApi.runtime.fn((id: string) =>
   ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
 );
 
+/** Tell the context agent something about an item or a group. */
+export const commentAttention = UpkeepApi.runtime.fn(
+  (
+    payload:
+      | { readonly url: string; readonly text: string }
+      | { readonly group: string; readonly text: string },
+  ) =>
+    UpkeepApi.use((client) => client.attention.comment({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(Reactivity.invalidate([...attentionKey, ...runsKey])),
+    ),
+);
+
+/** Give the context agent a standing instruction. */
+export const addRule = UpkeepApi.runtime.fn((text: string) =>
+  UpkeepApi.use((client) =>
+    client.attention.addRule({ payload: { text } }),
+  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
+export const removeRule = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) =>
+    client.attention.removeRule({ params: { id } }),
+  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },
