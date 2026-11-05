@@ -178,6 +178,11 @@ export const branchFor = (
 const isRange = (value: string) =>
   semver.valid(value) === null && semver.validRange(value) !== null;
 
+/** How many numeric parts a version gives: 1 for `v7`, 3 for `7.0.1`. */
+const partsOf = (version: string) =>
+  /^v?(?<numbers>\d+(?:\.\d+)*)/.exec(version)?.groups?.numbers?.split(".")
+    .length;
+
 /** Renovate's bucket for an update, where only the newest release is kept. */
 const bucket = (settings: Settings, updateType: UpdateType, next: Version) => {
   if (updateType === "major" && settings.separateMajorMinor !== false)
@@ -259,9 +264,17 @@ export const updatesFor = (
     };
   }
 
+  // A tag like `v7` is a version of its own, not a range: Renovate only moves
+  // it to another tag of the same precision, such as `v8`, or to `v7`'s digest
+  const precision =
+    withSource.datasource === "github-tags" &&
+    /^v?\d+(?:\.\d+)?$/.test(withSource.currentValue)
+      ? partsOf(withSource.currentValue)
+      : undefined;
+
   const currentText =
     withSource.lockedVersion ??
-    (isRange(withSource.currentValue)
+    (precision === undefined && isRange(withSource.currentValue)
       ? semver.minVersion(withSource.currentValue)?.version
       : withSource.currentValue);
 
@@ -288,6 +301,8 @@ export const updatesFor = (
     const text = extract(release);
 
     if (text === undefined) continue;
+
+    if (precision !== undefined && partsOf(text) !== precision) continue;
 
     const next = parseVersion(text, versioning);
 
