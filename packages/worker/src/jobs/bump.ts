@@ -6,7 +6,13 @@
  * default branch, then its CI is watched. A consumer that fails is logged and
  * the rest carry on; the run fails at the end, naming them.
  */
-import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
+import {
+  Api,
+  GhCommandError,
+  Repository,
+  Search,
+  Workflow,
+} from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
   Cause,
@@ -559,6 +565,10 @@ export const usesMise = Effect.fnUntraced(function* (directory: string) {
 /** The first error in a cause, as one message. */
 export const reason = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
+
+  // gh's failures carry their reason in stderr, with no message
+  if (error instanceof GhCommandError)
+    return `gh: ${error.stderr.trim() || `exited with ${error.exitCode}`}`;
 
   return Predicate.isError(error) ? error.message : String(error);
 };
