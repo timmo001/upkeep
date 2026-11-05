@@ -169,6 +169,60 @@ export const markNotificationRead = UpkeepApi.runtime.fn((thread: string) =>
   ),
 );
 
+/** Start a group of work with the items given in it. */
+export const createGroup = UpkeepApi.runtime.fn(
+  (payload: { readonly name: string; readonly items: ReadonlyArray<string> }) =>
+    UpkeepApi.use((client) => client.attention.createGroup({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(Reactivity.invalidate(attentionKey)),
+    ),
+);
+
+/** Rename a group, or change its focus. */
+export const updateGroup = UpkeepApi.runtime.fn(
+  ({
+    id,
+    ...payload
+  }: {
+    readonly id: string;
+    readonly name?: string;
+    readonly focus?: Domain.AttentionFocus;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.attention.updateGroup({ params: { id }, payload }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
+/** Remove a group; its items go back to their sections. */
+export const deleteGroup = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) =>
+    client.attention.deleteGroup({ params: { id } }),
+  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
+/** Move an item into a group, or out of any with null. */
+export const linkAttention = UpkeepApi.runtime.fn(
+  (payload: { readonly url: string; readonly group: string | null }) =>
+    UpkeepApi.use((client) => client.attention.link({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(Reactivity.invalidate(attentionKey)),
+    ),
+);
+
+/** Note something outside GitHub a group waits on. */
+export const addWait = UpkeepApi.runtime.fn(
+  ({ group, text }: { readonly group: string; readonly text: string }) =>
+    UpkeepApi.use((client) =>
+      client.attention.addWait({ params: { id: group }, payload: { text } }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
+export const removeWait = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) =>
+    client.attention.removeWait({ params: { id } }),
+  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+);
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },

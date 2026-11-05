@@ -467,6 +467,15 @@ server, which sorts each item into a section by its signals, with no model:
 - **Your backlog** (your drafts, and your issues nobody else has joined) and
   **Watching** (everyone else's), folded away.
 
+Items that belong to one piece of work show together as a group. The job
+reads how they tie together on GitHub (stacked pull requests, the issues a
+pull request closes, parents, sub-issues and blockers) and the server forms a
+group from each set. You can also move an item into a group of your own from
+its Group menu, which GitHub's links then leave alone. A group sits in the
+section of its most urgent item, or set its focus to **Today** to pin it at
+the top, or **Parked** to fold it away. Its menu adds an outside wait, such as
+a release next month, or renames it.
+
 Each run sends the full set, and the server only logs what moved since the
 last one, which **Since you last looked** shows. Opening the page, or its
 Refresh button, queues a run when the last one is more than 5 minutes old;

@@ -2,38 +2,60 @@
  * `upkeep-attention`: what needs you on GitHub, in place of a daily brief.
  * What moved since you last looked comes first, then pull requests and issues
  * by section: what needs you, what's blocked, what's going stale and what
- * waits on others, with the rest folded away under Watching. A filter splits
+ * waits on others, with the rest folded away under Watching. Groups of work,
+ * from GitHub's links or made by hand, show as cards: pinned under Today,
+ * in the section of their most urgent item, or folded away when parked, with
+ * what each waits on outside GitHub. A filter splits
  * work from personal, defaulting by whether it's work time. Opening the page
  * notes the visit and queues a collection when the last one is old.
  */
 import {
   mdiBellOutline,
   mdiCheckCircleOutline,
+  mdiClockOutline,
+  mdiClose,
+  mdiDeleteOutline,
+  mdiDotsVertical,
   mdiEmailOpenOutline,
   mdiEyeOffOutline,
   mdiEyeOutline,
+  mdiFolderOutline,
+  mdiFolderPlusOutline,
+  mdiFolderRemoveOutline,
+  mdiPencil,
   mdiRecordCircleOutline,
   mdiRefresh,
   mdiSourcePull,
 } from "@mdi/js";
 import { Domain } from "@upkeep/api";
+import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import { Option, Schema } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
+import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
 import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
 import {
+  addWait,
   attention,
+  createGroup,
+  deleteGroup,
   hideAttention,
   jobs,
+  linkAttention,
   markNotificationRead,
   openAttention,
+  removeWait,
+  updateGroup,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/gw-expansion.ts";
+import "@timmo001/groundwork-ui/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
 import "@timmo001/groundwork-ui/layout.ts";
@@ -121,6 +143,54 @@ const kindIcons: Record<Domain.AttentionKind, string> = {
   notification: mdiBellOutline,
 };
 
+const focuses: ReadonlyArray<{
+  readonly value: Domain.AttentionFocus;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { value: "today", label: "Today", description: "Pinned at the top" },
+  {
+    value: "watching",
+    label: "Watching",
+    description: "In the section of its most urgent item",
+  },
+  { value: "parked", label: "Parked", description: "Folded away at the end" },
+];
+
+const isFocus = (value: string): value is Domain.AttentionFocus =>
+  focuses.some((focus) => focus.value === value);
+
+/** Sections from most to least urgent, which a group takes the first of. */
+const urgency: ReadonlyArray<Domain.AttentionSection> = [
+  "needs-you",
+  "blocked",
+  "stale",
+  "waiting",
+  "backlog",
+  "watching",
+];
+
+const decodeChoice = Schema.decodeUnknownOption(
+  Schema.Struct({ value: Schema.String }),
+);
+
+/** The value a menu item chosen carries. */
+const chosen = (event: Event) => {
+  const detail: unknown = event instanceof CustomEvent ? event.detail : null;
+
+  return Option.match(decodeChoice(detail), {
+    onNone: () => "",
+    onSome: ({ value }) => value,
+  });
+};
+
+/** A group with the items it shows now, and the section it sits in. */
+interface Block {
+  readonly group: Domain.AttentionGroup;
+  readonly items: ReadonlyArray<Domain.AttentionItem>;
+  readonly section: Domain.AttentionSection;
+}
+
 const inScope = (work: boolean, scope: Scope) =>
   scope === "all" || (scope === "work") === work;
 
@@ -207,6 +277,14 @@ export class UpkeepAttention extends LitElement {
         flex-wrap: wrap;
         gap: var(--gw-space-1);
       }
+
+      .waits li {
+        display: flex;
+        gap: var(--gw-space-2);
+        align-items: center;
+        color: var(--gw-color-text-secondary);
+        font-size: var(--gw-font-size-s);
+      }
     `,
   ];
 
@@ -216,6 +294,217 @@ export class UpkeepAttention extends LitElement {
 
   /** The scope picked, or none to follow work time. */
   #scope: Scope | undefined;
+
+  /** Every group, for each item's Group menu. */
+  #groups: ReadonlyArray<Domain.AttentionGroup> = [];
+
+  #prompt: GwPopover | undefined;
+
+  #promptInput: GwInput | undefined;
+
+  /** What to do with the text the prompt asked for, once saved. */
+  #onSave: ((text: string) => void) | undefined;
+
+  /** Ask for a line of text beside the control clicked, such as a name. */
+  #ask(
+    event: Event,
+    heading: string,
+    label: string,
+    value: string,
+    save: (text: string) => void,
+  ) {
+    if (this.#prompt === undefined || this.#promptInput === undefined) return;
+
+    this.#prompt.heading = heading;
+    this.#promptInput.label = label;
+    this.#promptInput.value = value;
+    this.#onSave = save;
+    this.#prompt.show(
+      event.currentTarget instanceof Element ? event.currentTarget : undefined,
+    );
+  }
+
+  #asked() {
+    const text = this.#promptInput?.value.trim() ?? "";
+
+    if (this.#prompt?.returnValue === "save" && text !== "") {
+      this.#onSave?.(text);
+    }
+
+    this.#onSave = undefined;
+  }
+
+  /** The popover the prompts share, kept outside the page header. */
+  #promptPopover() {
+    return html`<gw-popover
+      ${ref((element) => {
+        this.#prompt = element instanceof GwPopover ? element : undefined;
+      })}
+      @close=${() => this.#asked()}
+    >
+      <gw-input
+        ${ref((element) => {
+          this.#promptInput = element instanceof GwInput ? element : undefined;
+        })}
+      ></gw-input>
+      <gw-button slot="actions" size="small" value="save">Save</gw-button>
+    </gw-popover>`;
+  }
+
+  /** An item's Group menu: move it into a group, a new one, or out. */
+  #groupMenu(item: Domain.AttentionItem) {
+    const current = this.#groups.find((group) =>
+      group.items.some((link) => link.url === item.url && !link.suggested),
+    );
+
+    const byYou = current?.items.some(
+      (link) => link.url === item.url && link.source !== "github",
+    );
+
+    return html`<gw-menu-button
+      size="xs"
+      appearance="plain"
+      icon=${mdiFolderOutline}
+      label="Group"
+      heading=${current === undefined ? "Group" : `In ${current.name}`}
+      empty="No groups yet"
+      .items=${this.#groups
+        .toSorted((a, b) => a.name.localeCompare(b.name))
+        .map((group) => ({
+          value: group.id,
+          label: group.name,
+          checked: group.id === current?.id,
+        }))}
+      .actions=${[
+        { value: "new", label: "New group", icon: mdiFolderPlusOutline },
+        ...(byYou === true
+          ? [
+              {
+                value: "none",
+                label: "Out of this group",
+                icon: mdiFolderRemoveOutline,
+              },
+            ]
+          : []),
+      ]}
+      @select=${(event: Event) => {
+        const value = chosen(event);
+
+        if (value === "new") {
+          this.#ask(event, "New group", "Name", item.title, (name) =>
+            registry.set(createGroup, { name, items: [item.url] }),
+          );
+        } else if (value === "none") {
+          registry.set(linkAttention, { url: item.url, group: null });
+        } else if (value !== "" && value !== current?.id) {
+          registry.set(linkAttention, { url: item.url, group: value });
+        }
+      }}
+    ></gw-menu-button>`;
+  }
+
+  /** A group as a card: its items, what it waits on, and its controls. */
+  #block(block: Block, since: number | null) {
+    const { group } = block;
+
+    const focus =
+      focuses.find((each) => each.value === group.focus) ?? focuses[1];
+
+    return html`<gw-card
+      heading=${group.name}
+      level="3"
+      description=${`${group.source === "github" ? "Linked on GitHub" : "Grouped by you"}, ${plural(block.items.length, "item")}`}
+    >
+      <gw-menu-button
+        slot="actions"
+        size="xs"
+        appearance="plain"
+        heading="Focus"
+        label=${focus?.label ?? ""}
+        .items=${focuses.map((each) => ({
+          value: each.value,
+          label: each.label,
+          description: each.description,
+          checked: each.value === group.focus,
+        }))}
+        @select=${(event: Event) => {
+          const value = chosen(event);
+
+          if (isFocus(value)) {
+            registry.set(updateGroup, { id: group.id, focus: value });
+          }
+        }}
+      ></gw-menu-button>
+      <gw-menu-button
+        slot="actions"
+        size="xs"
+        appearance="plain"
+        labels="hide"
+        icon=${mdiDotsVertical}
+        label="More"
+        .items=${[
+          {
+            value: "wait",
+            label: "Add an outside wait",
+            icon: mdiClockOutline,
+          },
+          { value: "rename", label: "Rename", icon: mdiPencil },
+          ...(group.source === "github"
+            ? []
+            : [
+                {
+                  value: "remove",
+                  label: "Remove group",
+                  icon: mdiDeleteOutline,
+                },
+              ]),
+        ]}
+        @select=${(event: Event) => {
+          const value = chosen(event);
+
+          if (value === "wait") {
+            this.#ask(event, "Waiting on", "What, and when", "", (text) =>
+              registry.set(addWait, { group: group.id, text }),
+            );
+          } else if (value === "rename") {
+            this.#ask(event, "Rename group", "Name", group.name, (name) =>
+              registry.set(updateGroup, { id: group.id, name }),
+            );
+          } else if (value === "remove") {
+            registry.set(deleteGroup, group.id);
+          }
+        }}
+      ></gw-menu-button>
+      ${
+        group.waits.length === 0
+          ? nothing
+          : html`<ul class="waits">
+              ${group.waits.map(
+                (wait) =>
+                  html`<li>
+                    ${icon(mdiClockOutline)}
+                    <span
+                      >Waiting on
+                      ${wait.url === null ? wait.text : externalLink(wait.url, wait.text)}</span
+                    >
+                    <gw-button
+                      size="xs"
+                      appearance="plain"
+                      variant="neutral"
+                      labels="hide"
+                      icon=${mdiClose}
+                      label="Remove"
+                      @click=${() => registry.set(removeWait, wait.id)}
+                    ></gw-button>
+                  </li>`,
+              )}
+            </ul>`
+      }
+      <ul class="items">
+        ${block.items.map((item) => this.#item(item, since))}
+      </ul>
+    </gw-card>`;
+  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -294,6 +583,7 @@ export class UpkeepAttention extends LitElement {
               })}
             >${item.hidden ? "Show" : "Hide"}</gw-button
           >
+          ${this.#groupMenu(item)}
         </div>
       </div>
     </li>`;
@@ -371,10 +661,52 @@ export class UpkeepAttention extends LitElement {
       .filter((item) => item.hidden && inScope(item.work, scope))
       .toSorted((a, b) => b.activityAt - a.activityAt);
 
-    const of = (section: Domain.AttentionSection) =>
-      shown.filter((item) => item.section === section).toSorted(order(section));
+    this.#groups = page.groups;
 
-    const needs = of("needs-you").length;
+    const groupOf = new Map(
+      page.groups.flatMap((group) =>
+        group.items.flatMap((link) =>
+          link.suggested ? [] : [[link.url, group.id] as const],
+        ),
+      ),
+    );
+
+    const rank = (section: Domain.AttentionSection) => urgency.indexOf(section);
+
+    // Each group with what it shows now; one with nothing in scope stays out,
+    // unless it's new and empty, waiting for its first item
+    const blocks = page.groups.flatMap((group): Array<Block> => {
+      const items = shown
+        .filter((item) => groupOf.get(item.url) === group.id)
+        .toSorted(
+          (a, b) =>
+            rank(a.section) - rank(b.section) || b.activityAt - a.activityAt,
+        );
+
+      if (items.length === 0 && group.items.length > 0) return [];
+
+      return [{ group, items, section: items[0]?.section ?? "waiting" }];
+    });
+
+    const placed = (section: Domain.AttentionSection) =>
+      blocks.filter(
+        (block) =>
+          block.group.focus === "watching" && block.section === section,
+      );
+
+    const pinned = blocks.filter((block) => block.group.focus === "today");
+    const parked = blocks.filter((block) => block.group.focus === "parked");
+
+    const of = (section: Domain.AttentionSection) =>
+      shown
+        .filter((item) => item.section === section && !groupOf.has(item.url))
+        .toSorted(order(section));
+
+    const count = (section: Domain.AttentionSection) =>
+      of(section).length +
+      placed(section).reduce((total, block) => total + block.items.length, 0);
+
+    const needs = shown.filter((item) => item.section === "needs-you").length;
     const collecting = this.#collecting();
 
     // A refresh this soon after the last collection would queue nothing
@@ -443,14 +775,29 @@ export class UpkeepAttention extends LitElement {
               )
             : html`
                 ${this.#changes(page, scope)}
+                ${
+                  pinned.length === 0
+                    ? nothing
+                    : html`<gw-stack gap="s">
+                        <gw-section-title
+                          >Today (${pinned.length})</gw-section-title
+                        >
+                        <p class="description">Groups you set to today</p>
+                        ${pinned.map((block) => this.#block(block, page.since))}
+                      </gw-stack>`
+                }
                 ${sections.map((section) => {
                   const items = of(section.id);
 
                   return html`<gw-stack gap="s">
                     <gw-section-title
-                      >${section.heading} (${items.length})</gw-section-title
+                      >${section.heading}
+                      (${count(section.id)})</gw-section-title
                     >
                     <p class="description">${section.description}</p>
+                    ${placed(section.id).map((block) =>
+                      this.#block(block, page.since),
+                    )}
                     ${
                       items.length === 0
                         ? nothing
@@ -466,14 +813,31 @@ export class UpkeepAttention extends LitElement {
                   const items = of(section.id);
 
                   return html`<gw-expansion
-                    heading=${`${section.heading} (${items.length})`}
+                    heading=${`${section.heading} (${count(section.id)})`}
                     description=${section.description}
                   >
-                    <ul class="items">
-                      ${items.map((item) => this.#item(item, page.since))}
-                    </ul>
+                    <gw-stack gap="s">
+                      ${placed(section.id).map((block) =>
+                        this.#block(block, page.since),
+                      )}
+                      <ul class="items">
+                        ${items.map((item) => this.#item(item, page.since))}
+                      </ul>
+                    </gw-stack>
                   </gw-expansion>`;
                 })}
+                ${
+                  parked.length === 0
+                    ? nothing
+                    : html`<gw-expansion
+                        heading=${`Parked (${parked.length})`}
+                        description="Groups put away for now"
+                      >
+                        <gw-stack gap="s">
+                          ${parked.map((block) => this.#block(block, page.since))}
+                        </gw-stack>
+                      </gw-expansion>`
+                }
                 ${
                   hidden.length === 0
                     ? nothing
@@ -489,6 +853,7 @@ export class UpkeepAttention extends LitElement {
               `
         }
       </gw-stack>
+      ${this.#promptPopover()}
     `;
   }
 
