@@ -253,26 +253,34 @@ const applyGroup = Effect.fnUntraced(function* (
   yield* Bump.checkout(repo, branch, directory, context.root);
 
   const files = new Set(group.updates.map((update) => update.dependency.file));
+  const edits = new Map<string, string>();
 
   for (const file of files) {
-    const target = path.join(directory, file);
-    let text = yield* fs.readFileString(target);
+    let text = yield* fs.readFileString(path.join(directory, file));
 
     for (const update of group.updates) {
       if (update.dependency.file !== file) continue;
 
       const edit = Applier.apply(update, text);
 
-      if (Applier.Edit.$is("Unsupported")(edit))
-        return yield* new DepsError({
-          message: `${update.dependency.depName} in ${file}: ${edit.reason}`,
-        });
+      // Something Upkeep can't do yet isn't a fault to heal; the updater
+      // still has the group
+      if (Applier.Edit.$is("Unsupported")(edit)) {
+        yield* RunLog.warn(
+          `${repo}: renovate/${group.branch} left to the updater: ${update.dependency.depName} in ${file}: ${edit.reason}`,
+        );
+
+        return false;
+      }
 
       text = edit.text;
     }
 
-    yield* fs.writeFileString(target, text);
+    edits.set(file, text);
   }
+
+  for (const [file, text] of edits)
+    yield* fs.writeFileString(path.join(directory, file), text);
 
   const edited = (yield* Bump.run("git", ["diff", "--name-only"], options))
     .split("\n")

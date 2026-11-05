@@ -160,6 +160,8 @@ export interface Dependency {
   readonly sourceUrl?: string | null | undefined;
   readonly versioning?: string | undefined;
   readonly extractVersion?: string | undefined;
+  /** The text a custom regex matched, which an update rewrites in place. */
+  readonly replaceString?: string | undefined;
 }
 
 export interface Release {

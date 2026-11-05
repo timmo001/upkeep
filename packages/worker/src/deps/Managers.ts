@@ -232,15 +232,37 @@ const upstreams = new Map([
   ["yq", "mikefarah/yq"],
   ["pnpm", "pnpm/pnpm"],
   ["zig", "ziglang/zig"],
+  ["zls", "zigtools/zls"],
   ["actionlint", "rhysd/actionlint"],
   ["shellcheck", "koalaman/shellcheck"],
   ["shfmt", "mvdan/sh"],
   ["ripgrep", "BurntSushi/ripgrep"],
   ["just", "casey/just"],
+  ["yamllint", "adrienverge/yamllint"],
+  ["bat", "sharkdp/bat"],
+  ["eza", "eza-community/eza"],
+  ["fd", "sharkdp/fd"],
+  ["fzf", "junegunn/fzf"],
+  ["gdu", "dundee/gdu"],
+  ["gum", "charmbracelet/gum"],
+  ["lazygit", "jesseduffield/lazygit"],
+  ["starship", "starship/starship"],
+  ["watchexec", "watchexec/watchexec"],
+  ["zoxide", "ajeetdsouza/zoxide"],
+  ["yarn", "yarnpkg/berry"],
+  ["ollama", "ollama/ollama"],
+  ["claude", "anthropics/claude-code"],
+  ["copilot", "github/copilot-cli"],
+  ["ghui", "kitlangton/ghui"],
+  ["playwright", "microsoft/playwright"],
 ]);
 
 /** Tools whose versions are tags rather than releases. */
-const tagged = new Set(["go", "python", "node"]);
+const tagged = new Set(["go", "python", "node", "yamllint"]);
+
+/** An `http:` tool downloaded from a GitHub tag's source archive. */
+const tagArchive =
+  /^https:\/\/github\.com\/(?<repository>[\w.-]+\/[\w.-]+)\/archive\/refs\/tags\/v?\{\{ ?version ?\}\}\.(?:tar\.gz|zip)$/;
 
 const extractMise = (file: string, text: string): Extraction => {
   const config: unknown = Bun.TOML.parse(text);
@@ -269,13 +291,28 @@ const extractMise = (file: string, text: string): Extraction => {
       continue;
     }
 
+    // `latest`, `lts`, `system`, `ref:` and the like follow on their own
+    if (!/^v?\d/.test(currentValue)) continue;
+
     const [backend = "", ...rest] = depName.split(":");
     const tool = rest.join(":");
+
+    const url =
+      Predicate.isObject(value) &&
+      "url" in value &&
+      Predicate.isString(value.url)
+        ? value.url
+        : undefined;
+
+    const archive =
+      backend === "http" && url !== undefined
+        ? tagArchive.exec(url)?.groups?.repository
+        : undefined;
 
     const repository =
       backend === "aqua" || backend === "github" || backend === "ubi"
         ? tool
-        : upstreams.get(depName);
+        : (archive ?? upstreams.get(depName));
 
     const base = {
       manager: "mise",
@@ -304,7 +341,10 @@ const extractMise = (file: string, text: string): Extraction => {
     dependencies.push({
       ...base,
       packageName: repository,
-      datasource: tagged.has(depName) ? "github-tags" : "github-releases",
+      datasource:
+        archive !== undefined || tagged.has(depName)
+          ? "github-tags"
+          : "github-releases",
       sourceUrl: `https://github.com/${repository}`,
       extractVersion:
         "(?:^|[^0-9])v?(?<version>[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
@@ -415,8 +455,17 @@ export const render = (
 
 type RegexManager = Extract<CustomManager, { type: "regex" }>;
 
+interface RegexMatch {
+  readonly groups: Record<string, string>;
+  /** The innermost matched text; none for `combination`, as in Renovate. */
+  readonly text?: string | undefined;
+}
+
 /** Each match's captures, carrying the enclosing ones down for `recursive`. */
-export const regexMatches = (text: string, manager: RegexManager) => {
+export const regexMatches = (
+  text: string,
+  manager: RegexManager,
+): Array<RegexMatch> => {
   if (manager.strategy === "recursive") {
     let regions: Array<{ text: string; groups: Record<string, string> }> = [
       { text, groups: {} },
@@ -430,7 +479,7 @@ export const regexMatches = (text: string, manager: RegexManager) => {
         })),
       );
 
-    return regions.map((region) => region.groups);
+    return regions;
   }
 
   if (manager.strategy === "combination") {
@@ -440,13 +489,14 @@ export const regexMatches = (text: string, manager: RegexManager) => {
       for (const match of text.matchAll(new RegExp(pattern, "g")))
         Object.assign(groups, cleanGroups(match.groups));
 
-    return Object.keys(groups).length === 0 ? [] : [groups];
+    return Object.keys(groups).length === 0 ? [] : [{ groups }];
   }
 
   return manager.patterns.flatMap((pattern) =>
-    [...text.matchAll(new RegExp(pattern, "g"))].map((match) =>
-      cleanGroups(match.groups),
-    ),
+    [...text.matchAll(new RegExp(pattern, "g"))].map((match) => ({
+      groups: cleanGroups(match.groups),
+      text: match[0],
+    })),
   );
 };
 
@@ -465,7 +515,7 @@ const extractRegex = (
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
 
-  for (const groups of regexMatches(text, manager)) {
+  for (const { groups, text: replaceString } of regexMatches(text, manager)) {
     const field = (name: keyof RegexManager["templates"]) => {
       const template = manager.templates[name];
 
@@ -496,6 +546,7 @@ const extractRegex = (
       currentDigest: groups.currentDigest,
       versioning: field("versioning"),
       extractVersion: field("extractVersion"),
+      replaceString,
     });
   }
 

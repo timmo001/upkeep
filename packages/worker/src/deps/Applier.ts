@@ -22,11 +22,12 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 /**
  * The value an update writes in place of the current one: the new version
  * with the current one's range operator, `v` prefix and precision, such as
- * `^4.1.1` to `^4.1.2` or `22` to `24`. None for a range it can't carry over.
+ * `^4.1.1` to `^4.1.2` or `22` to `24`. A prerelease such as `0.0.0-alpha.4`
+ * takes the new version whole. None for a range it can't carry over.
  */
 export const newValue = (current: string, to: string) => {
   const parts =
-    /^(?<operator>\^|~|>=|=)?(?<v>v?)(?<version>\d+(?:\.\d+)*)$/.exec(
+    /^(?<operator>\^|~|>=|=)?(?<v>v?)(?<version>\d+(?:\.\d+)*)(?<suffix>[-+][\da-z.+-]*)?$/i.exec(
       current,
     )?.groups;
 
@@ -37,7 +38,7 @@ export const newValue = (current: string, to: string) => {
   const precision = parts.version.split(".").length;
 
   const version =
-    operator === "" && precision < 3
+    operator === "" && precision < 3 && parts.suffix === undefined
       ? bare.split(".").slice(0, precision).join(".")
       : bare;
 
@@ -86,14 +87,24 @@ const editMise = (update: Update, text: string): Edit => {
     `^\\s*(?:"${escape(dependency.depName)}"|'${escape(dependency.depName)}'|${escape(dependency.depName)})\\s*=`,
   );
 
+  // Or its own table, `[tools."name"]` with a `version = ...` line
+  const table = new RegExp(
+    `^\\s*\\[\\s*tools\\.(?:"${escape(dependency.depName)}"|'${escape(dependency.depName)}'|${escape(dependency.depName)})\\s*\\]`,
+  );
+
   const quoted = new RegExp(`(["'])${escape(dependency.currentValue)}\\1`);
+  let inTable = false;
 
   return edited(
     text
       .split("\n")
-      .map((line) =>
-        key.test(line) ? line.replace(quoted, `$1${value}$1`) : line,
-      )
+      .map((line) => {
+        if (/^\s*\[/.test(line)) inTable = table.test(line);
+
+        return key.test(line) || (inTable && /^\s*version\s*=/.test(line))
+          ? line.replace(quoted, `$1${value}$1`)
+          : line;
+      })
       .join("\n"),
   );
 };
@@ -141,6 +152,44 @@ const editAction = (update: Update, text: string): Edit => {
   return edited(text.replace(pattern, `$1${update.digest}$2${comment}`));
 };
 
+/**
+ * A custom regex match, rewritten in place as Renovate does: the digest and
+ * the value are swapped within the matched text where they were captured.
+ */
+const editRegex = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+  const matched = dependency.replaceString;
+
+  if (matched === undefined || !text.includes(matched))
+    return unsupported("the matched text isn't in the file any more");
+
+  let replacement = matched;
+
+  if (dependency.currentDigest !== undefined) {
+    if (update.digest === undefined) return unsupported("no commit to pin to");
+
+    replacement = replacement.replaceAll(
+      dependency.currentDigest,
+      update.digest.slice(0, dependency.currentDigest.length),
+    );
+  }
+
+  if (
+    update.updateType !== "digest" &&
+    dependency.currentValue !== "" &&
+    replacement.includes(dependency.currentValue)
+  )
+    replacement = replacement.replaceAll(
+      dependency.currentValue,
+      newValue(dependency.currentValue, update.to) ?? update.to,
+    );
+
+  if (replacement === matched)
+    return unsupported("nothing in the match to update");
+
+  return edited(text.replaceAll(matched, replacement));
+};
+
 /** Write an update into its dependency's file. */
 export const apply = (update: Update, text: string): Edit => {
   if (update.lockfile)
@@ -154,6 +203,8 @@ export const apply = (update: Update, text: string): Edit => {
       return editMise(update, text);
     case "github-actions":
       return editAction(update, text);
+    case "custom.regex":
+      return editRegex(update, text);
     default:
       return unsupported(
         `${update.dependency.manager} updates aren't applied yet`,
