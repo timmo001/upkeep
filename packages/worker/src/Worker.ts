@@ -3,7 +3,9 @@
  * one while sending heartbeats and its log, and reports how it ended. Jobs
  * run in lanes, one run per lane at a time, so a long heal doesn't hold up
  * the schedule. Nothing a run or the server does stops a lane, so a worker
- * keeps going through a failed job or a server restart.
+ * keeps going through a failed job or a server restart. A run that fails while
+ * GitHub's rate limit is spent runs again once it resets, and no lane takes
+ * new work until then.
  */
 import type { Gh } from "@timmo001/effect-gh";
 import { Catalogue, Client, Domain } from "@upkeep/api";
@@ -15,12 +17,14 @@ import {
   Exit,
   Option,
   Record,
+  Ref,
   Schema,
 } from "effect";
 import type { FileSystem, Path } from "effect";
 import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
-import { pretty } from "./Failure";
+import { pretty, reason } from "./Failure";
+import * as RateLimits from "./RateLimits";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 import * as Status from "./Status";
@@ -106,11 +110,15 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
   };
 };
 
+/** How many times a run that failed on a spent rate limit runs again. */
+const limitWaits = 2;
+
 /** Run one claimed run to the end and report how it went. */
 const execute = Effect.fnUntraced(function* (
   handler: Handler,
   run: Domain.Run,
   heartbeatInterval: Duration.Input,
+  hold: (until: number) => Effect.Effect<void>,
 ) {
   const client = yield* Client;
   const params = { id: run.id };
@@ -140,7 +148,52 @@ const execute = Effect.fnUntraced(function* (
     Effect.annotateLogs({ run: run.id }),
   );
 
-  return yield* handler(run.release).pipe(
+  // A run that failed while GitHub's rate limit was spent most likely failed
+  // on it, so it runs again once the limit resets rather than failing and
+  // using up a heal. A heal is left alone: it waits for its agent itself, and
+  // mustn't start a second one.
+  const attempt = (
+    waited: number,
+  ): Effect.Effect<
+    Effect.Success<ReturnType<Handler>>,
+    unknown,
+    Effect.Services<ReturnType<Handler>>
+  > =>
+    handler(run.release).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          if (
+            waited >= limitWaits ||
+            run.job === Catalogue.heal.id ||
+            Cause.hasInterruptsOnly(cause)
+          )
+            return yield* Effect.failCause(cause);
+
+          const reset = yield* RateLimits.spentUntil();
+
+          if (Option.isNone(reset)) return yield* Effect.failCause(cause);
+
+          yield* hold(reset.value);
+
+          const delay = RateLimits.waitUntil(
+            reset.value,
+            yield* Clock.currentTimeMillis,
+          );
+
+          yield* RunLog.use((log) =>
+            log.write(
+              "warn",
+              `Failed while GitHub's rate limit was spent, ${reason(cause)}. Running again after it resets at ${RateLimits.at(reset.value)}, in ${Duration.format(delay)}`,
+            ),
+          );
+          yield* Effect.sleep(delay);
+
+          return yield* attempt(waited + 1);
+        }),
+      ),
+    );
+
+  return yield* attempt(0).pipe(
     Effect.raceFirst(heartbeats),
     Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id)]),
     Effect.onExit((exit) =>
@@ -174,6 +227,25 @@ export const work = Effect.fn("Worker.work")(function* (
 
   const status = yield* Status.make;
 
+  // When a run finds GitHub's rate limit spent, no lane takes new work until
+  // it resets, since nearly every job reads GitHub.
+  const heldUntil = yield* Ref.make(0);
+
+  const hold = (until: number) =>
+    Ref.update(heldUntil, (current) => Math.max(current, until));
+
+  const holdOff = Effect.gen(function* () {
+    const until = yield* Ref.get(heldUntil);
+    const now = yield* Clock.currentTimeMillis;
+
+    if (until <= now) return;
+
+    yield* Effect.logInfo(
+      `Holding off new runs until GitHub's rate limit resets at ${RateLimits.at(until)}`,
+    );
+    yield* Effect.sleep(RateLimits.waitUntil(until, now));
+  });
+
   yield* Effect.logInfo(`Waiting for runs of ${jobs.join(", ")}`);
   yield* status.write;
 
@@ -194,7 +266,8 @@ export const work = Effect.fn("Worker.work")(function* (
   );
 
   const lane = (laneJobs: ReadonlyArray<string>) => {
-    const next = client.work.claim({ payload: { jobs: laneJobs } }).pipe(
+    const next = holdOff.pipe(
+      Effect.andThen(client.work.claim({ payload: { jobs: laneJobs } })),
       Effect.tap(() => status.update({ reachable: true })),
       Effect.flatMap(({ run }) =>
         Option.match(Option.fromNullishOr(run), {
@@ -211,6 +284,7 @@ export const work = Effect.fn("Worker.work")(function* (
                   ),
                   claimed,
                   heartbeatInterval,
+                  hold,
                 ),
               ),
               Effect.flatMap((failed) => status.finished(claimed.job, failed)),

@@ -16,7 +16,6 @@ import {
   GhTimeoutError,
   isRateLimited,
   isTransient,
-  RateLimit,
 } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
@@ -34,6 +33,7 @@ import {
 import { Decision, DecisionModel } from "effect/ai";
 import { reason as failureReason } from "../Failure";
 import * as Inbox from "../Inbox";
+import * as RateLimits from "../RateLimits";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -351,9 +351,6 @@ const askPerson = (
 /** How many times a heal starts its agent again after a temporary failure. */
 const startRetries = 3;
 
-/** The longest a heal waits for GitHub's rate limit to reset. */
-const maxResetWait = Duration.hours(1);
-
 /**
  * How long to wait before starting the agent again: until GitHub's rate limit
  * resets, or a backoff of a minute, then two, then four, for a network error
@@ -375,31 +372,15 @@ const startDelay = Effect.fnUntraced(function* (
 
   if (!isRateLimited(error)) return Option.some(backoff);
 
-  // Reading the limits doesn't count against them.
-  const spent = yield* Effect.forEach(
-    ["core", "graphql"] as const,
-    (resource) => RateLimit.get(resource).pipe(Effect.option),
-  );
-
+  const reset = yield* RateLimits.spentUntil();
   const now = yield* Clock.currentTimeMillis;
-
-  const reset = Math.max(
-    ...spent.flatMap((limit) =>
-      Option.isSome(limit) && limit.value.remaining === 0
-        ? [limit.value.reset * 1000]
-        : [],
-    ),
-    0,
-  );
 
   // A secondary rate limit has no reset to wait for, only a backoff.
   return Option.some(
-    reset <= now
-      ? backoff
-      : Duration.min(
-          Duration.seconds(Math.ceil((reset - now) / 1000) + 5),
-          maxResetWait,
-        ),
+    Option.match(reset, {
+      onNone: () => backoff,
+      onSome: (time) => RateLimits.waitUntil(time, now),
+    }),
   );
 });
 

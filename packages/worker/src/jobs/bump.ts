@@ -21,6 +21,7 @@ import {
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
+import * as RateLimits from "../RateLimits";
 import * as RunLog from "../RunLog";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as Settings from "../settings";
@@ -488,7 +489,10 @@ export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
   for (let poll = 0; poll < 60; poll++) {
     yield* Effect.sleep("30 seconds");
 
-    const runs = yield* Workflow.list({ repo, commit: sha, limit: 50 });
+    const runs = yield* RateLimits.waitOut(
+      Workflow.list({ repo, commit: sha, limit: 50 }),
+      `${repo}: watching CI`,
+    );
 
     if (runs.length === 0) {
       if (poll >= 3) return 0;
