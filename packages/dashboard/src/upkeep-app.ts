@@ -118,7 +118,7 @@ export class UpkeepApp extends LitElement {
     const onAttention = Route.$is("Attention")(current);
 
     return html`
-      <gw-app-bar menu-label="Pages">
+      <gw-app-bar menu-label="Pages" menu-below="900">
         <a slot="brand" class="brand" href=${homeHref}
           ><img src=${logo} alt="" width="24" height="24" />Upkeep${
             AsyncResult.isSuccess(this.#version.value)

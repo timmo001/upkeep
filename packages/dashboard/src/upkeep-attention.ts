@@ -332,7 +332,8 @@ export class UpkeepAttention extends LitElement {
 
       .since {
         display: flex;
-        gap: var(--gw-space-3);
+        flex-wrap: wrap;
+        gap: var(--gw-space-1) var(--gw-space-3);
         align-items: center;
         min-width: 0;
       }
@@ -341,10 +342,11 @@ export class UpkeepAttention extends LitElement {
         flex: none;
       }
 
-      /* The links take what room is left, cut off at the end */
+      /* The links take what room is left, cut off at the end, or a line of
+         their own on a narrow screen rather than widening the page */
       .since > .since-links {
-        flex: 1;
-        min-width: 0;
+        flex: 1 1 0;
+        min-width: 10rem;
         overflow: hidden;
         font-size: var(--gw-font-size-s);
         text-overflow: ellipsis;
@@ -417,6 +419,12 @@ export class UpkeepAttention extends LitElement {
         align-items: center;
         color: var(--gw-color-text-secondary);
         font-size: var(--gw-font-size-s);
+      }
+
+      /* The scope and Collect controls drop below the title when they don't
+         fit beside it, rather than squeezing it */
+      gw-page-header {
+        flex-wrap: wrap;
       }
     `,
   ];
