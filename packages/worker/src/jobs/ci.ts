@@ -9,20 +9,13 @@
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Cause, Effect, Path, Schedule, Schema } from "effect";
+import { Effect, Path, Schedule, Schema } from "effect";
+import { pretty, reason } from "../Failure";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
-import {
-  cacheRoot,
-  check,
-  checkout,
-  install,
-  reason,
-  run,
-  usesMise,
-} from "./bump";
+import { cacheRoot, check, checkout, install, run, usesMise } from "./bump";
 
 const RepositoryInfo = Schema.Struct({
   archived: Schema.Boolean,
@@ -247,7 +240,7 @@ const ciRepository = Effect.fnUntraced(function* (
     Effect.map((state) => ({ ok: true as const, state })),
     Effect.catchCause((cause) =>
       RunLog.warn(
-        `${repo}: couldn't read its CI, so it's left out: ${Cause.pretty(cause)}`,
+        `${repo}: couldn't read its CI, so it's left out: ${pretty(cause)}`,
       ).pipe(Effect.as({ ok: false as const })),
     ),
   );
@@ -300,9 +293,9 @@ export const ci = Effect.fnUntraced(function* () {
     (repo) =>
       ciRepository(repo, { root, settings, threads }).pipe(
         Effect.catchCause((cause) =>
-          RunLog.warn(
-            `${repo}: couldn't check its CI: ${Cause.pretty(cause)}`,
-          ).pipe(Effect.as("red" as const)),
+          RunLog.warn(`${repo}: couldn't check its CI: ${pretty(cause)}`).pipe(
+            Effect.as("red" as const),
+          ),
         ),
         Effect.tap((state) =>
           Effect.sync(() => {

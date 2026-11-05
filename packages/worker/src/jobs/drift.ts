@@ -15,10 +15,11 @@ import { Api, Search } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { Yaml } from "effect/encoding";
+import { reason } from "../Failure";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed } from "../Worker";
-import { checkout, reason, run, watch } from "./bump";
+import { checkout, run, watch } from "./bump";
 
 /** The file at a repository root that records its reviewed tool releases. */
 export const toolingFile = "tooling.yml";

@@ -15,6 +15,7 @@ import * as Managers from "../deps/Managers";
 import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
+import { ghReason, reason } from "../Failure";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -45,7 +46,7 @@ const missing = (cause: unknown) =>
 /** What went wrong in a GitHub call, in one line. */
 const ghMessage = (cause: unknown) =>
   cause instanceof GhCommandError
-    ? (cause.stderr.trim().split("\n")[0] ?? `gh exited ${cause.exitCode}`)
+    ? ghReason(cause)
     : cause instanceof Error
       ? cause.message
       : String(cause);
@@ -407,9 +408,9 @@ const applyRepository = Effect.fnUntraced(function* (
         }),
       ),
       Effect.catchCause((cause) =>
-        RunLog.warn(
-          `${repo}: renovate/${group.branch}: ${Bump.reason(cause)}`,
-        ).pipe(Effect.andThen(Effect.sync(() => failed.push(group.branch)))),
+        RunLog.warn(`${repo}: renovate/${group.branch}: ${reason(cause)}`).pipe(
+          Effect.andThen(Effect.sync(() => failed.push(group.branch))),
+        ),
       ),
     );
   }
@@ -429,7 +430,7 @@ const applyRepository = Effect.fnUntraced(function* (
         dryRun: false,
       }).pipe(
         Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: drift: ${Bump.reason(cause)}`).pipe(
+          RunLog.warn(`${repo}: drift: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push("drift"))),
           ),
         ),
@@ -503,7 +504,7 @@ export const deps = Effect.fnUntraced(function* () {
         if (outcome.failed.length > 0) failed.push(repo.full_name);
       }).pipe(
         Effect.catchCause((cause) =>
-          RunLog.warn(`${repo.full_name}: ${Bump.reason(cause)}`).pipe(
+          RunLog.warn(`${repo.full_name}: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push(repo.full_name))),
           ),
         ),

@@ -20,6 +20,7 @@ import {
 import type { FileSystem, Path } from "effect";
 import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
+import { pretty } from "./Failure";
 import { Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 import * as Status from "./Status";
@@ -96,7 +97,7 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
     outcome: "failed" as const,
     error: interrupted
       ? "The worker stopped before the run finished"
-      : Cause.pretty(exit.cause),
+      : pretty(exit.cause),
     interrupted,
     ...Option.match(failed, {
       onNone: () => ({}),

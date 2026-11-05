@@ -12,10 +12,11 @@ import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
 import { homedir } from "node:os";
 import { Clock, Effect, Schema } from "effect";
+import { reason } from "../Failure";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
-import { reason, run } from "./bump";
+import { run } from "./bump";
 
 /** How far back each run looks; commits the inbox has are skipped. */
 const lookbackHours = 48;

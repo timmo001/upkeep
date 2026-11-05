@@ -6,8 +6,9 @@
  */
 import { Graphql, Label } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Cause, Config, Data, Effect, Schema } from "effect";
+import { Config, Data, Effect, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { pretty } from "../Failure";
 import { listed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
@@ -243,7 +244,7 @@ export const labels = Effect.fnUntraced(function* () {
         }),
       ),
       Effect.catchCause((cause) =>
-        RunLog.warn(`${entry.repo}: ${Cause.pretty(cause)}`).pipe(
+        RunLog.warn(`${entry.repo}: ${pretty(cause)}`).pipe(
           Effect.andThen(Effect.sync(() => failed.push(entry.repo))),
         ),
       ),

@@ -7,7 +7,8 @@
  */
 import { Api } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Cause, Effect, Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { pretty } from "../Failure";
 import { summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 
@@ -119,9 +120,9 @@ export const notifications = Effect.fnUntraced(function* () {
   for (const thread of threads) {
     const outcome = yield* review(thread).pipe(
       Effect.catchCause((cause) =>
-        RunLog.warn(
-          `${label(thread)}: couldn't check: ${Cause.pretty(cause)}`,
-        ).pipe(Effect.as("unchecked" as const)),
+        RunLog.warn(`${label(thread)}: couldn't check: ${pretty(cause)}`).pipe(
+          Effect.as("unchecked" as const),
+        ),
       ),
     );
 

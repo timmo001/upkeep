@@ -12,6 +12,7 @@
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Config, Effect, Path, Schema } from "effect";
+import { reason } from "../Failure";
 import { attention, listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -22,7 +23,6 @@ import {
   checkout,
   commitAndPush,
   install,
-  reason,
   run,
   usesMise,
   watch,

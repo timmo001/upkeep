@@ -14,17 +14,9 @@ import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
-import {
-  Cause,
-  Clock,
-  Config,
-  Duration,
-  Effect,
-  Layer,
-  Option,
-  Schema,
-} from "effect";
+import { Clock, Config, Duration, Effect, Layer, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
+import { reason as failureReason } from "../Failure";
 import * as Inbox from "../Inbox";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -363,7 +355,7 @@ const handOff = Effect.fnUntraced(function* (
   ).pipe(
     Effect.catchCause((cause) =>
       Effect.succeed({
-        action: `Left for the digest: the agent couldn't start, ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+        action: `Left for the digest: the agent couldn't start, ${failureReason(cause)}`,
         session: null,
         attention: true,
         said: null,
@@ -510,7 +502,7 @@ export const heal = Effect.fnUntraced(function* () {
           choosing.pipe(
             Effect.catchCause((cause) =>
               RunLog.warn(
-                `The decision model couldn't choose: ${Cause.pretty(cause).split("\n")[0] ?? ""}`,
+                `The decision model couldn't choose: ${failureReason(cause)}`,
               ).pipe(
                 Effect.as(fallback(run, "the decision model couldn't choose")),
               ),

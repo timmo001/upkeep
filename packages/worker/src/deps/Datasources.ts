@@ -7,6 +7,7 @@ import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Cache, Context, Effect, Layer, Schema } from "effect";
 import { HttpClient } from "effect/http";
 import semver from "semver";
+import { ghReason } from "../Failure";
 import {
   type Dependency,
   DepsError,
@@ -72,7 +73,7 @@ const failed = (datasource: string) => (cause: unknown) =>
   new DepsError({
     message: `${datasource} lookup failed: ${
       cause instanceof GhCommandError
-        ? (cause.stderr.trim().split("\n")[0] ?? `gh exited ${cause.exitCode}`)
+        ? ghReason(cause)
         : cause instanceof Error
           ? cause.message
           : String(cause)
