@@ -2,14 +2,14 @@
  * The summary job: on request from the dashboard, ask an agent through
  * OpenCode for a longer write-up of what's in the inbox than the few
  * sentences the dashboard writes itself. It covers what's unread, or the
- * whole inbox when everything has been read, and its write-up becomes the
- * run's summary, which the inbox shows. It uses the first of the heal
- * agents in the worker's settings.
+ * whole inbox when everything has been read, records that period on the run
+ * and names it in the write-up, which becomes the run's summary and the
+ * inbox shows. It uses the first of the heal agents in the worker's settings.
  */
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
-import { Effect, Schema } from "effect";
+import { Clock, Effect, Schema } from "effect";
 import { Reporter, summary as report } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -46,18 +46,36 @@ const describeEntry = (entry: Domain.Entry) =>
       : []),
   ].join("\n");
 
+const { describePeriod, periodDay } = Domain;
+
+/**
+ * What the summary covers: the unread entries, from the oldest change among
+ * them or the inbox's window, whichever is earlier, or every entry in the
+ * window when nothing is unread. It ends now.
+ */
+const periodOf = (
+  inbox: Domain.Inbox,
+  unread: ReadonlyArray<Domain.Entry>,
+  now: number,
+): Domain.Period => ({
+  from: Math.min(inbox.since, ...unread.map((entry) => entry.lastAt)),
+  to: now,
+  unread: unread.length > 0,
+});
+
 /** The prompt: how to write it, then the entries. */
 const promptFor = (
   entries: ReadonlyArray<Domain.Entry>,
   routine: number,
-  unreadOnly: boolean,
+  period: Domain.Period,
 ) =>
   [
     "You're writing a summary of a developer's inbox in Upkeep, a tool that keeps their repositories and their consumers up to date.",
-    `Below are the ${unreadOnly ? "unread entries" : "entries from the last week"}: what needs them, releases of their repositories and where they went, dependency updates and tool moves that needed a change, fixes Upkeep pushed, and commits pushed outside Upkeep, by them or anyone else.`,
+    `Below are ${describePeriod(period)}: what needs them, releases of their repositories and where they went, dependency updates and tool moves that needed a change, fixes Upkeep pushed, and commits pushed outside Upkeep, by them or anyone else.`,
     `There were also ${routine} version bumps that changed no code; mention them only as a count.`,
     "",
-    "Write a few short paragraphs in plain UK English, most important first: anything that needs them, then what was released and where it went, then their own work, then anything from outside worth knowing. Name repositories by their short names. Group related changes rather than listing commits. Don't invent anything that isn't below, don't use headings or em dashes, and keep it under 250 words.",
+    `Start with a sentence that names the period it covers, such as "Between ${periodDay(period.from)} and ${periodDay(period.to)}", never "this week".`,
+    "Then write a few short paragraphs in plain UK English, most important first: anything that needs them, then what was released and where it went, then their own work, then anything from outside worth knowing. Name repositories by their short names. Group related changes rather than listing commits. Don't invent anything that isn't below, don't use headings or em dashes, and keep it under 250 words.",
     "Reply with the summary only.",
     "",
     ...entries.map(describeEntry),
@@ -78,10 +96,10 @@ export const summary = Effect.fnUntraced(function* () {
 
   if (agent === undefined) return yield* new NoAgent();
 
-  const { entries } = yield* reporter.inbox();
-  const unread = entries.filter((entry) => entry.readAt === null);
-  const unreadOnly = unread.length > 0;
-  const shown = unreadOnly ? unread : entries;
+  const inbox = yield* reporter.inbox();
+  const unread = inbox.entries.filter((entry) => entry.readAt === null);
+  const period = periodOf(inbox, unread, yield* Clock.currentTimeMillis);
+  const shown = period.unread ? unread : inbox.entries;
   const worth = shown.filter((entry) => !entry.routine);
   const routine = shown.length - worth.length;
 
@@ -90,8 +108,10 @@ export const summary = Effect.fnUntraced(function* () {
       ? agent.model
       : `${agent.model}#${agent.variant}`;
 
+  yield* reporter.report({ period });
+
   yield* RunLog.info(
-    `Asking ${model} to write up ${worth.length} ${unreadOnly ? "unread " : ""}entries`,
+    `Asking ${model} to write up ${worth.length} entries, ${describePeriod(period)}`,
   );
 
   const output = yield* run(
@@ -102,7 +122,7 @@ export const summary = Effect.fnUntraced(function* () {
       model,
       "--title",
       "Upkeep inbox summary",
-      promptFor(worth, routine, unreadOnly),
+      promptFor(worth, routine, period),
     ],
     { cwd: tmpdir(), trusted: tmpdir() },
   );

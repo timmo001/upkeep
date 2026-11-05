@@ -251,6 +251,42 @@ export const Change = Schema.Struct({
 
 export interface Change extends Schema.Schema.Type<typeof Change> {}
 
+/**
+ * The stretch of the inbox a summary covers: from `from` to `to`, and
+ * whether it's only the unread entries in it or every entry.
+ */
+export const Period = Schema.Struct({
+  from: Schema.Finite,
+  to: Schema.Finite,
+  unread: Schema.Boolean,
+});
+
+export interface Period extends Schema.Schema.Type<typeof Period> {}
+
+const periodDate = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "long",
+});
+
+/** A period's end as the summary names it, such as `5 November`. */
+export const periodDay = (millis: number) => periodDate.format(millis);
+
+/**
+ * A period in words, such as "the unread entries from 29 October to 5
+ * November" or "the last 7 days, 29 October to 5 November".
+ */
+export const describePeriod = (period: Period) => {
+  const from = periodDay(period.from);
+  const to = periodDay(period.to);
+  const dates = from === to ? `on ${to}` : `from ${from} to ${to}`;
+
+  if (period.unread) return `the unread entries ${dates}`;
+
+  const days = Math.max(1, Math.round((period.to - period.from) / 86_400_000));
+
+  return `the last ${days === 1 ? "day" : `${days} days`}, ${dates}`;
+};
+
 export const Run = Schema.Struct({
   id: Schema.String,
   job: JobId,
@@ -273,6 +309,8 @@ export const Run = Schema.Struct({
   changes: Schema.Array(Change),
   /** It left something for a person, such as a fix an agent couldn't finish. */
   attention: Schema.Boolean,
+  /** For a summary run: the stretch of the inbox it covers. */
+  period: Schema.NullOr(Period),
 });
 
 export interface Run extends Schema.Schema.Type<typeof Run> {}

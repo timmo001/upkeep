@@ -566,7 +566,7 @@ const InboxHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       get: Effect.fn(function* ({ query }) {
         const now = yield* Clock.currentTimeMillis;
-        const days = Math.min(Math.max(query.days ?? 7, 1), 30);
+        const days = Math.min(Math.max(query.days ?? Api.inboxDays, 1), 30);
 
         return yield* store.inbox(now - days * 86_400_000).pipe(Effect.orDie);
       }),
@@ -778,7 +778,9 @@ const WorkHandlers = HttpApiBuilder.group(
       inbox: Effect.fn(function* () {
         const now = yield* Clock.currentTimeMillis;
 
-        return yield* store.inbox(now - 7 * 86_400_000).pipe(Effect.orDie);
+        return yield* store
+          .inbox(now - Api.inboxDays * 86_400_000)
+          .pipe(Effect.orDie);
       }),
       known: ({ payload }) =>
         store.known(payload.commits).pipe(

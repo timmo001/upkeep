@@ -227,6 +227,12 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // The stretch of the inbox a summary run covers, as JSON
+  "0013_run_periods": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN period TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -258,6 +264,7 @@ const RunRow = Schema.Struct({
   summary: Schema.NullOr(Schema.String),
   changes: Schema.fromJsonString(Schema.Array(Domain.Change)),
   attention: Schema.Number,
+  period: Schema.NullOr(Schema.fromJsonString(Domain.Period)),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -265,6 +272,10 @@ const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
 /** A heal's target as it's kept: `upkeep`, or the consumer's `owner/name`. */
 const targetColumn = (target: Domain.Target) =>
   target.kind === "upkeep" ? "upkeep" : target.repo;
+
+/** A summary's period as it's kept: JSON, or NULL for other runs. */
+const periodColumn = (period: Domain.Period | null) =>
+  period === null ? null : JSON.stringify(period);
 
 const targetOf = (column: string): Domain.Target =>
   column === "upkeep" ? { kind: "upkeep" } : { kind: "consumer", repo: column };
@@ -898,6 +909,7 @@ export class Store extends Context.Service<
                 : [...current.changes, update.change],
             ),
             attention: (update.attention ?? current.attention) ? 1 : 0,
+            period: periodColumn(update.period ?? current.period),
           })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));

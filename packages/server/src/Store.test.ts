@@ -73,6 +73,32 @@ test("only the worker running a run can report on it", () =>
     }),
   ));
 
+test("a summary's period is kept through later reports", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "summary",
+        trigger: "manual",
+        release: null,
+      });
+
+      const id = Option.getOrThrow(
+        yield* store.claim(["summary"], "desktop"),
+      ).id;
+
+      expect((yield* store.run(id)).period).toBeNull();
+
+      const period = { from: 1000, to: 2000, unread: true };
+
+      yield* store.report(id, "desktop", { period });
+      yield* store.report(id, "desktop", { summary: "Between ..." });
+
+      expect((yield* store.run(id)).period).toEqual(period);
+    }),
+  ));
+
 test("a lost or interrupted run is requeued once, then fails", () =>
   run(
     Effect.gen(function* () {

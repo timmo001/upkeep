@@ -27,6 +27,7 @@ import {
   LogLine,
   Outcome,
   Parked,
+  Period,
   Precedent,
   Release,
   RepoName,
@@ -173,12 +174,14 @@ export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}
 
 /**
  * What a run reports as it goes: `summary` replaces its summary, `change` is
- * added to its changes and `attention` marks it as needing a person.
+ * added to its changes, `attention` marks it as needing a person and
+ * `period` sets the stretch of the inbox a summary run covers.
  */
 export const RunReport = Schema.Struct({
   summary: Schema.optionalKey(Schema.String),
   change: Schema.optionalKey(Change),
   attention: Schema.optionalKey(Schema.Boolean),
+  period: Schema.optionalKey(Period),
 });
 
 export interface RunReport extends Schema.Schema.Type<typeof RunReport> {}
@@ -253,6 +256,12 @@ export const maxReleases = 1000;
 
 /** The most commits one request to the inbox carries, either way. */
 export const maxCommits = 500;
+
+/**
+ * How many days of read entries the inbox shows by default, for the
+ * dashboard and the summary job alike.
+ */
+export const inboxDays = 7;
 
 /** A tracked repository's title, from its README's first heading. */
 export const RepoTitle = Schema.Struct({
@@ -403,8 +412,8 @@ export class ActivityGroup extends HttpApiGroup.make("activity")
 export class InboxGroup extends HttpApiGroup.make("inbox")
   .add(
     /**
-     * Every entry that's unread or changed in the last `days`, 7 by default,
-     * newest first.
+     * Every entry that's unread or changed in the last `days`, `inboxDays`
+     * by default, newest first.
      */
     HttpApiEndpoint.get("get", "/", {
       query: { days: Schema.optional(Schema.FiniteFromString) },
@@ -566,7 +575,7 @@ export class WorkGroup extends HttpApiGroup.make("work")
     }),
     /**
      * The inbox, as the dashboard reads it: entries unread or changed in the
-     * last 7 days, for the summary job to write up.
+     * last `inboxDays`, for the summary job to write up.
      */
     HttpApiEndpoint.get("inbox", "/inbox", {
       success: Inbox,

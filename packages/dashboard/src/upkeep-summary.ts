@@ -5,7 +5,7 @@
  * until it's opened, or that it's being written, while the run goes.
  */
 import { mdiTextBoxEditOutline } from "@mdi/js";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { AtomController, registry } from "./AtomController.ts";
@@ -108,7 +108,13 @@ export class UpkeepSummary extends LitElement {
         <span class="muted"
           >${
             wrote && run.finishedAt !== null
-              ? html`An agent wrote the summary below ${time(run.finishedAt)}.`
+              ? html`An agent summarised
+                ${
+                  run.period === null
+                    ? "the inbox"
+                    : Domain.describePeriod(run.period)
+                }
+                ${time(run.finishedAt)}.`
               : "Written from what Upkeep recorded. No agent was used."
           }</span
         >
