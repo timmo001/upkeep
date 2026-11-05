@@ -251,7 +251,7 @@ export const needsReview = (
     ` Once it's reviewed, ${tool.update === undefined ? "" : `run \`${tool.update} ${tag}\`, `}set its \`reviewed\` to ${tag} in ${toolingFile}, and push to the default branch.`,
   ].join("");
 
-const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
+export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.orElse(() =>
     Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
   ),
@@ -322,7 +322,7 @@ interface DriftContext {
 }
 
 /** Check one repository's tools, pushing the pin moves that need no review. */
-const driftRepository = Effect.fnUntraced(function* (
+export const driftRepository = Effect.fnUntraced(function* (
   repo: string,
   context: DriftContext,
 ) {

@@ -415,9 +415,14 @@ edits the `package.json`, mise config or workflow the update was read from,
 installs where a `package.json` changed, runs `mise lock` where a mise config
 with a `mise.lock` changed, and checks the result as a bump does (with the
 same per-repository checks). The checked commit is pushed to the default
-branch and its CI watched. Groups Renovate automerges are left to it, and a
-group that fails is logged and left while the rest go on. Clones are kept in
-`upkeep/deps` in the XDG cache directory.
+branch and its CI watched, and once CI passes Renovate's open pull request
+for the group is closed with a link to the commit. Groups Renovate automerges
+are left to it, and a group that fails is logged and left while the rest go
+on. After a repository's updates land, its `tooling.yml`, if it has one, is
+checked as `drift` would, so a tool bump and its review go out together. The
+run fails at the end naming each repository with a failed group, and a heal
+for each one applies that group by hand, migrating what the new versions
+need. Clones are kept in `upkeep/deps` in the XDG cache directory.
 
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:

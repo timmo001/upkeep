@@ -20,6 +20,7 @@ import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
 import * as Bump from "./bump";
+import * as Drift from "./drift";
 
 const User = Schema.Struct({ login: Schema.String });
 
@@ -338,7 +339,49 @@ const applyGroup = Effect.fnUntraced(function* (
       : `${repo}: CI passed`,
   );
 
+  yield* closeRenovate(repo, group, sha);
+
   return true;
+});
+
+const PullRequests = Schema.Array(Schema.Struct({ number: Schema.Number }));
+
+/** Close the updater's open pull request for a group Upkeep landed. */
+const closeRenovate = Effect.fnUntraced(function* (
+  repo: string,
+  group: Planner.Group,
+  sha: string,
+) {
+  const owner = repo.slice(0, repo.indexOf("/"));
+
+  const open = yield* Api.json(
+    {
+      endpoint: `repos/${repo}/pulls`,
+      method: "GET",
+      query: { state: "open", head: `${owner}:renovate/${group.branch}` },
+    },
+    PullRequests,
+  );
+
+  for (const pr of open) {
+    yield* Api.empty({
+      endpoint: `repos/${repo}/issues/${pr.number}/comments`,
+      method: "POST",
+      body: {
+        body: `Upkeep landed this update in https://github.com/${repo}/commit/${sha}.`,
+      },
+    });
+
+    yield* Api.empty({
+      endpoint: `repos/${repo}/pulls/${pr.number}`,
+      method: "PATCH",
+      body: { state: "closed" },
+    });
+
+    yield* RunLog.info(
+      `${repo}#${pr.number}: closed, landed in ${sha.slice(0, 7)}`,
+    );
+  }
 });
 
 /**
@@ -369,6 +412,29 @@ const applyRepository = Effect.fnUntraced(function* (
         ).pipe(Effect.andThen(Effect.sync(() => failed.push(group.branch)))),
       ),
     );
+  }
+
+  // A tool bump and its tooling.yml review go out together
+  if (applied > 0 && !context.dryRun) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    const tooling = path.join(context.root, repo, Drift.toolingFile);
+
+    if (yield* fs.exists(tooling)) {
+      yield* RunLog.info(`${repo}: checking tool drift after the updates`);
+
+      yield* Drift.driftRepository(repo, {
+        root: yield* Drift.cacheRoot,
+        dryRun: false,
+      }).pipe(
+        Effect.catchCause((cause) =>
+          RunLog.warn(`${repo}: drift: ${Bump.reason(cause)}`).pipe(
+            Effect.andThen(Effect.sync(() => failed.push("drift"))),
+          ),
+        ),
+      );
+    }
   }
 
   return { applied, failed };
@@ -457,7 +523,7 @@ export const deps = Effect.fnUntraced(function* () {
 
   if (failed.length > 0)
     return yield* new ConsumersFailed({
-      action: "read the dependencies of",
+      action: "update the dependencies of",
       repos: failed.toSorted(),
     });
 });
