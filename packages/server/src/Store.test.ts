@@ -457,6 +457,45 @@ test("a release's bumps across repositories land in one inbox entry", () =>
     }),
   ));
 
+test("every version of the same update shares one inbox entry", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const update = (sha: string, subject: string) => ({
+        repo: "timmo001/a",
+        sha,
+        subject,
+        url: "",
+        at: 1,
+        group: `update:${subject}`,
+        title: subject,
+        kind: "update" as const,
+        routine: true,
+      });
+
+      yield* store.seen([
+        update("a1", "Update Upkeep to 0.7.1 (#3)"),
+        update("a2", "Update Upkeep to 0.7.2"),
+        update("a3", "Update timmo001/checks digest to c0562b3"),
+        update("a4", "Update timmo001/checks digest to 130f993"),
+        update("a5", "Update github actions"),
+      ]);
+
+      const { entries } = yield* store.inbox(0);
+
+      expect(
+        entries
+          .map((entry) => [entry.title, entry.items.length])
+          .toSorted(([a], [b]) => String(a).localeCompare(String(b))),
+      ).toEqual([
+        ["Update github actions", 1],
+        ["Update timmo001/checks", 2],
+        ["Update Upkeep", 2],
+      ]);
+    }),
+  ));
+
 test("a run's commit replaces the same commit the watch job found", () =>
   run(
     Effect.gen(function* () {

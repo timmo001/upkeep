@@ -26,6 +26,34 @@ export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   cause: Schema.Defect(),
 }) {}
 
+/** Move one inbox entry's items and history into another, then drop it. */
+const mergeEntry = (from: string, into: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`UPDATE entry_items SET entry_id = ${into} WHERE entry_id = ${from}`;
+    yield* sql`
+      UPDATE entries SET
+        count = entries.count + other.count,
+        first_at = min(entries.first_at, other.first_at),
+        last_at = max(entries.last_at, other.last_at),
+        routine = entries.routine AND other.routine,
+        you = entries.you OR other.you,
+        run = coalesce(other.run, entries.run),
+        read_at = CASE
+          WHEN entries.read_at IS NULL OR other.read_at IS NULL THEN NULL
+          ELSE max(entries.read_at, other.read_at)
+        END,
+        dismissed_at = CASE
+          WHEN entries.dismissed_at IS NULL OR other.dismissed_at IS NULL THEN NULL
+          ELSE max(entries.dismissed_at, other.dismissed_at)
+        END
+      FROM (SELECT * FROM entries WHERE id = ${from}) AS other
+      WHERE entries.id = ${into}
+    `;
+    yield* sql`DELETE FROM entries WHERE id = ${from}`;
+  });
+
 const migrations = SqliteMigrator.fromRecord({
   "0001_runs_releases_tokens": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -232,6 +260,39 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
 
     yield* sql`ALTER TABLE runs ADD COLUMN period TEXT`;
+  }),
+  // Every version of the same update shares one entry now, so merge the
+  // entries kept one per version, into the one with the key or the oldest
+  "0014_grouped_updates": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    const rows = yield* sql<{
+      id: string;
+      key: string;
+      title: string;
+    }>`
+      SELECT id, key, title FROM entries
+      WHERE kind = 'update'
+      ORDER BY first_at, id
+    `;
+
+    const groups = Map.groupBy(rows, (row) => Entries.updateKey(row.title));
+
+    for (const [key, group] of groups) {
+      // An entry that already has the key keeps it, so it can't clash
+      const target = group.find((row) => row.key === key) ?? group[0];
+
+      if (target === undefined) continue;
+
+      for (const row of group) {
+        if (row.id !== target.id) yield* mergeEntry(row.id, target.id);
+      }
+
+      yield* sql`
+        UPDATE entries SET key = ${key}, title = ${Entries.updateName(target.title)}
+        WHERE id = ${target.id}
+      `;
+    }
   }),
 });
 

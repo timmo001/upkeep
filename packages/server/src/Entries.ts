@@ -33,6 +33,20 @@ export const releaseTitle = (release: {
 export const withoutNumber = (subject: string) =>
   subject.replace(/\s*\(#\d+\)$/, "");
 
+/**
+ * An update's name without the version or digest it moves to, such as
+ * `Update Upkeep` from `Update Upkeep to 0.7.2 (#12)`, so every version of
+ * the same update shares one entry.
+ */
+export const updateName = (subject: string) =>
+  withoutNumber(subject).replace(
+    /\s+(?:(?:digest|action|Docker tag)\s+)?to\s+v?[\w.+-]+$/i,
+    "",
+  );
+
+/** The entry every version of an update joins. */
+export const updateKey = (subject: string) => `update:${updateName(subject)}`;
+
 const jobName = (id: string) =>
   Catalogue.jobs.find((job) => job.id === id)?.name ?? id;
 
@@ -74,11 +88,15 @@ export const placement = (
   }
 
   if (change.group !== undefined) {
+    const kind = change.kind ?? "commit";
+    const title = change.title ?? change.subject;
+
     return {
       ...commit,
-      key: change.group,
-      kind: change.kind ?? "commit",
-      title: change.title ?? change.subject,
+      ...(kind === "update"
+        ? { key: updateKey(title), title: updateName(title) }
+        : { key: change.group, title }),
+      kind,
       routine: change.routine ?? false,
       you: change.you ?? false,
     };
@@ -103,17 +121,14 @@ export const placement = (
         routine: true,
       };
 
-    case Catalogue.stalledUpdates.id: {
-      const subject = withoutNumber(change.subject);
-
+    case Catalogue.stalledUpdates.id:
       return {
         ...commit,
-        key: `update:${subject}`,
+        key: updateKey(change.subject),
         kind: "update",
-        title: subject,
+        title: updateName(change.subject),
         routine: true,
       };
-    }
 
     default:
       return commit;
