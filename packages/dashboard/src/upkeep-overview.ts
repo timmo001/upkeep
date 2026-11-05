@@ -24,7 +24,7 @@ import {
   time,
   view,
 } from "./ui.ts";
-import { type CellContent, cell } from "./upkeep-cell.ts";
+import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
   agents,
   jobHref,
@@ -135,11 +135,14 @@ export class UpkeepOverview extends LitElement {
   #table(list: ReadonlyArray<Domain.JobStatus>) {
     const byId = new Map(list.map((job) => [job.id, job]));
 
+    // Every column but the job's name has a fixed width, so the columns keep
+    // their size as runs finish and jobs pause or park
     const draw =
-      (content: (job: Domain.JobStatus) => CellContent) => (row: TableRow) => {
+      (content: (job: Domain.JobStatus) => CellContent, size?: CellSize) =>
+      (row: TableRow) => {
         const job = byId.get(String(row.id));
 
-        return cell(job === undefined ? "" : content(job));
+        return cell(job === undefined ? "" : content(job), size);
       };
 
     const columns: TableColumn[] = [
@@ -177,23 +180,27 @@ export class UpkeepOverview extends LitElement {
         id: "starts",
         header: "Starts",
         sortable: false,
-        cell: draw((job) =>
-          starts(job).map(
-            (start, index) => html`${index === 0 ? "" : ", "}${start}`,
-          ),
+        cell: draw(
+          (job) =>
+            starts(job).map(
+              (start, index) => html`${index === 0 ? "" : ", "}${start}`,
+            ),
+          { width: "12rem" },
         ),
       },
       {
         id: "last",
         header: "Last run",
         searchable: false,
-        cell: draw((job) =>
-          job.lastRun === null
-            ? html`<span class="muted">Never</span>`
-            : html`<a href=${runHref(job.lastRun.id)}
-                  >${stateBadge(job.lastRun.state)}</a
-                >
-                ${time(job.lastRun.queuedAt)}`,
+        cell: draw(
+          (job) =>
+            job.lastRun === null
+              ? html`<span class="muted">Never</span>`
+              : html`<a href=${runHref(job.lastRun.id)}
+                    >${stateBadge(job.lastRun.state)}</a
+                  >
+                  ${time(job.lastRun.queuedAt)}`,
+          { width: "14rem" },
         ),
       },
       {
@@ -203,6 +210,8 @@ export class UpkeepOverview extends LitElement {
         searchable: false,
         cell: draw(
           (job) => html`<div class="actions">${jobActions(job)}</div>`,
+          // Wraps, so a parked job's third button doesn't widen the column
+          { width: "12rem", wrap: true },
         ),
       },
     ];

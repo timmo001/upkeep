@@ -102,6 +102,7 @@ export const shared = css`
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--gw-space-2);
     justify-content: end;
   }

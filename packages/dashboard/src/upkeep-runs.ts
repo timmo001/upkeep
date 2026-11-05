@@ -24,7 +24,7 @@ import {
   time,
   view,
 } from "./ui.ts";
-import { type CellContent, cell } from "./upkeep-cell.ts";
+import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-table.ts";
 
@@ -99,11 +99,15 @@ export class UpkeepRuns extends LitElement {
   #table(list: ReadonlyArray<Domain.Run>) {
     const byId = new Map(list.map((run) => [run.id, run]));
 
+    // Every column has a fixed width but the summary, which takes the rest,
+    // and every row one line, so the table keeps its shape whichever rows
+    // are on screen and as runs move on
     const draw =
-      (content: (run: Domain.Run) => CellContent) => (row: TableRow) => {
+      (content: (run: Domain.Run) => CellContent, size: CellSize) =>
+      (row: TableRow) => {
         const run = byId.get(String(row.id));
 
-        return cell(run === undefined ? "" : content(run));
+        return cell(run === undefined ? "" : content(run), size);
       };
 
     const columns: TableColumn[] = [
@@ -118,6 +122,7 @@ export class UpkeepRuns extends LitElement {
               title="Open the run and its log"
               >${stateBadge(run.state)}</a
             >`,
+          { width: "7rem" },
         ),
       },
       ...(this.job === ""
@@ -128,6 +133,7 @@ export class UpkeepRuns extends LitElement {
               cell: draw(
                 (run: Domain.Run) =>
                   html`<a href=${jobHref(run.job)}>${jobName(run.job)}</a>`,
+                { width: "7.5rem" },
               ),
             },
           ]
@@ -145,6 +151,7 @@ export class UpkeepRuns extends LitElement {
                       >${jobName(run.heal.job)}</a
                     >`
             }`,
+          { width: "5.5rem" },
         ),
       },
       {
@@ -155,22 +162,25 @@ export class UpkeepRuns extends LitElement {
           (run) =>
             html`${run.attention ? attentionBadge : null}
             ${run.summary?.split("\n")[0] ?? ""}`,
+          "fill",
         ),
       },
       {
         id: "release",
         header: "Release",
-        cell: draw((run) => release(run)),
+        cell: draw((run) => release(run), { width: "6.5rem" }),
       },
       {
         id: "worker",
         header: "Worker",
-        cell: draw((run) =>
-          run.state === "queued"
-            ? html`<span class="muted"
-                >waiting in the ${this.#laneOf(run.job)} lane</span
-              >`
-            : (run.worker ?? ""),
+        cell: draw(
+          (run) =>
+            run.state === "queued"
+              ? html`<span class="muted"
+                  >waiting in the ${this.#laneOf(run.job)} lane</span
+                >`
+              : (run.worker ?? ""),
+          { width: "6.5rem" },
         ),
       },
       {
@@ -182,14 +192,14 @@ export class UpkeepRuns extends LitElement {
         id: "queued",
         header: "Queued",
         searchable: false,
-        cell: draw((run) => time(run.queuedAt)),
+        cell: draw((run) => time(run.queuedAt), { width: "7rem" }),
       },
       {
         id: "took",
         header: "Took",
         sortable: false,
         searchable: false,
-        cell: draw((run) => duration(run)),
+        cell: draw((run) => duration(run), { width: "3.5rem" }),
       },
     ];
 
