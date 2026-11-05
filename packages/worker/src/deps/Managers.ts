@@ -2,10 +2,11 @@
  * The managers: find the dependencies in a repository's files, read from
  * their text without running a package manager. npm and Bun read
  * package.json beside a bun.lock, mise reads its TOML configs, GitHub
- * Actions reads workflows and actions, and custom regex managers read
- * whatever files a policy points them at.
+ * Actions reads workflows and actions, and custom regex and jsonata managers
+ * read whatever files a policy points them at.
  */
-import { Option, Predicate, Schema } from "effect";
+import jsonata from "jsonata";
+import { Cause, Effect, Match, Option, Predicate, Schema } from "effect";
 import { Yaml } from "effect/encoding";
 import type { CustomManager, Dependency, Policy } from "./Policy";
 import { matchesPattern } from "./Rules";
@@ -561,22 +562,131 @@ const extractRegex = (
   return { dependencies, notes };
 };
 
-/** Every dependency in a repository's files, by the policy's managers. */
-export const extract = (
-  policy: Policy,
-  files: ReadonlyMap<string, string>,
-): Extraction => {
+type JsonataManager = Extract<CustomManager, { type: "jsonata" }>;
+
+const formats = new Set(["json", "yaml", "toml"]);
+
+/** The fields a jsonata result fills in, the same as a manager's templates. */
+const JsonataResult = Schema.Struct({
+  depName: Schema.optional(Schema.String),
+  packageName: Schema.optional(Schema.String),
+  datasource: Schema.optional(Schema.String),
+  depType: Schema.optional(Schema.String),
+  currentValue: Schema.optional(Schema.String),
+  currentDigest: Schema.optional(Schema.String),
+  versioning: Schema.optional(Schema.String),
+  extractVersion: Schema.optional(Schema.String),
+});
+
+const decodeJsonataResults = Schema.decodeUnknownOption(
+  Schema.Union([Schema.Undefined, JsonataResult, Schema.Array(JsonataResult)]),
+);
+
+/**
+ * Each query's results, as Renovate reads them: an object or a list of
+ * objects whose fields the templates then fill in or override.
+ */
+const extractJsonata = Effect.fnUntraced(function* (
+  file: string,
+  text: string,
+  manager: JsonataManager,
+) {
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
 
+  if (!formats.has(manager.format))
+    return {
+      dependencies,
+      notes: [`${file}: jsonata can't read the ${manager.format} format`],
+    } satisfies Extraction;
+
+  const data = yield* Effect.try(() =>
+    Match.value(manager.format).pipe(
+      Match.when("yaml", () => Yaml.parse(text)),
+      Match.when("toml", () => Bun.TOML.parse(text)),
+      Match.orElse(() => JSON.parse(text)),
+    ),
+  );
+
+  for (const query of manager.patterns) {
+    const result = decodeJsonataResults(
+      yield* Effect.tryPromise(() => jsonata(query).evaluate(data)),
+    );
+
+    if (Option.isNone(result)) {
+      notes.push(`${file}: a jsonata query gave something other than results`);
+
+      continue;
+    }
+
+    for (const item of result.value === undefined
+      ? []
+      : Array.isArray(result.value)
+        ? result.value
+        : [result.value]) {
+      const values = Object.fromEntries(
+        Object.entries(item).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      );
+
+      const field = (name: keyof JsonataManager["templates"]) => {
+        const template = manager.templates[name];
+
+        const value =
+          template === undefined ? values[name] : render(template, values);
+
+        return value === "" ? undefined : value;
+      };
+
+      const depName = field("depName");
+      const datasource = field("datasource");
+
+      if (depName === undefined || datasource === undefined) {
+        notes.push(`${file}: a jsonata result has no depName or datasource`);
+
+        continue;
+      }
+
+      dependencies.push({
+        manager: "custom.jsonata",
+        file,
+        depName,
+        packageName: field("packageName") ?? depName,
+        datasource,
+        depType: field("depType") ?? "jsonata",
+        currentValue: field("currentValue") ?? "",
+        currentDigest: values.currentDigest,
+        versioning: field("versioning"),
+        extractVersion: field("extractVersion"),
+      });
+    }
+  }
+
+  return { dependencies, notes } satisfies Extraction;
+});
+
+/** Every dependency in a repository's files, by the policy's managers. */
+export const extract = Effect.fnUntraced(function* (
+  policy: Policy,
+  files: ReadonlyMap<string, string>,
+) {
+  const dependencies: Array<Dependency> = [];
+  const notes: Array<string> = [];
+
+  const add = (result: Extraction) => {
+    dependencies.push(...result.dependencies);
+    notes.push(...result.notes);
+  };
+
+  const unread = (file: string, cause: unknown) =>
+    notes.push(`${file} couldn't be read: ${String(cause)}`);
+
   const attempt = (file: string, run: () => Extraction) => {
     try {
-      const result = run();
-
-      dependencies.push(...result.dependencies);
-      notes.push(...result.notes);
+      add(run());
     } catch (cause) {
-      notes.push(`${file} couldn't be read: ${String(cause)}`);
+      unread(file, cause);
     }
   };
 
@@ -603,8 +713,15 @@ export const extract = (
 
       if (manager.type === "jsonata") {
         if (enabled(policy, "custom.jsonata"))
-          notes.push(
-            `${file}: jsonata custom manager${manager.description === undefined ? "" : ` (${manager.description})`} isn't read yet`,
+          yield* extractJsonata(file, text, manager).pipe(
+            Effect.match({
+              onSuccess: add,
+              onFailure: (error) =>
+                unread(
+                  file,
+                  error instanceof Cause.UnknownError ? error.cause : error,
+                ),
+            }),
           );
 
         continue;
@@ -615,5 +732,5 @@ export const extract = (
     }
   }
 
-  return { dependencies, notes: [...new Set(notes)] };
-};
+  return { dependencies, notes: [...new Set(notes)] } satisfies Extraction;
+});

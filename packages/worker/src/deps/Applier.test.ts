@@ -142,3 +142,28 @@ test("a custom regex match moves its digest in place", () => {
     `owner/other@${"a".repeat(40)}\ntimmo001/agent-checks@${"b".repeat(40)}\n`,
   );
 });
+
+test("a jsonata result is only swapped when its value appears once", () => {
+  const bun: Dependency = {
+    manager: "custom.jsonata",
+    file: ".github/workflows/build.yml",
+    depName: "bun",
+    packageName: "bun",
+    datasource: "npm",
+    depType: "jsonata",
+    currentValue: "1.4.4",
+  };
+
+  const inputs = `bun-version:\n  default: "1.4.4"\nother-version:\n  default: "11.4.4"\n`;
+
+  expect(text(apply(update(bun, { to: "1.5.0" }), inputs))).toBe(
+    `bun-version:\n  default: "1.5.0"\nother-version:\n  default: "11.4.4"\n`,
+  );
+
+  expect(
+    apply(
+      update(bun, { to: "1.5.0" }),
+      `${inputs}node-version:\n  default: "1.4.4"\n`,
+    )._tag,
+  ).toBe("Unsupported");
+});

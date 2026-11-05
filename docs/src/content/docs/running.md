@@ -419,7 +419,8 @@ XDG config directory:
 
 In the repositories listed in `deps.apply` in the worker's config file, the
 `deps` job also applies each group of updates Upkeep owns, one at a time: it
-edits the `package.json`, mise config, workflow or custom regex match the
+edits the `package.json`, mise config, workflow, or custom regex or jsonata
+match the
 update was read from, installs where a `package.json` changed, runs
 `mise lock` where a mise config with a `mise.lock` changed, and checks the
 result as a bump does (with the same per-repository checks). The checked

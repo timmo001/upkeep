@@ -190,6 +190,37 @@ const editRegex = (update: Update, text: string): Edit => {
   return edited(text.replaceAll(matched, replacement));
 };
 
+/**
+ * A jsonata result, which has no matched text to rewrite: the current value
+ * is swapped where it stands, as long as it appears once in the file as a
+ * whole value, so a version elsewhere that happens to match isn't touched.
+ */
+const editJsonata = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+
+  if (update.updateType === "digest" || dependency.currentValue === "")
+    return unsupported("only versions are updated from a jsonata result");
+
+  const pattern = new RegExp(
+    `(?<![\\w.-])${escape(dependency.currentValue)}(?![\\w.-])`,
+    "g",
+  );
+
+  const found = text.match(pattern)?.length ?? 0;
+
+  if (found !== 1)
+    return unsupported(
+      `${dependency.currentValue} appears ${found} times in the file`,
+    );
+
+  return edited(
+    text.replace(
+      pattern,
+      newValue(dependency.currentValue, update.to) ?? update.to,
+    ),
+  );
+};
+
 /** Write an update into its dependency's file. */
 export const apply = (update: Update, text: string): Edit => {
   if (update.lockfile)
@@ -205,6 +236,8 @@ export const apply = (update: Update, text: string): Edit => {
       return editAction(update, text);
     case "custom.regex":
       return editRegex(update, text);
+    case "custom.jsonata":
+      return editJsonata(update, text);
     default:
       return unsupported(
         `${update.dependency.manager} updates aren't applied yet`,

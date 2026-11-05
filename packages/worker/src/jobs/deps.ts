@@ -158,7 +158,7 @@ const planRepository = Effect.fnUntraced(function* (
     if (Option.isSome(text)) files.set(file, text.value);
   }
 
-  const extraction = Managers.extract(policy, files);
+  const extraction = yield* Managers.extract(policy, files);
 
   const notes = [...policy.notes, ...extraction.notes];
 
