@@ -2,10 +2,20 @@
  * The datasources: where a dependency's releases come from. npm and PyPI
  * through their registries, GitHub releases, tags and refs through the GitHub
  * API. Lookups are cached for the run, so a package many repositories use is
- * read once.
+ * read once, and GitHub responses are kept between runs and asked for again
+ * conditionally, so what hasn't changed costs no rate limit.
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
-import { Cache, Context, Effect, Layer, Schema } from "effect";
+import {
+  Cache,
+  Config,
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Schema,
+} from "effect";
 import { HttpClient } from "effect/http";
 import semver from "semver";
 import { ghReason } from "../Failure";
@@ -69,6 +79,33 @@ const Commit = Schema.Struct({
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
+/**
+ * GitHub responses kept between runs by URL, with the validators to send
+ * back: a 304 costs no rate limit, so an unchanged repository is read free.
+ */
+const Kept = Schema.Record(
+  Schema.String,
+  Schema.Struct({
+    validators: Schema.Struct({
+      etag: Schema.optionalKey(Schema.String),
+      lastModified: Schema.optionalKey(Schema.String),
+    }),
+    value: Schema.Json,
+  }),
+);
+
+type Kept = typeof Kept.Type;
+
+const keptFile = Config.String("XDG_CACHE_HOME").pipe(
+  Config.orElse(() =>
+    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
+  ),
+  Config.map((root) => `${root}/upkeep/deps/github.json`),
+);
+
+/** A page size GitHub allows, so most lists are one request. */
+const perPage = 100;
+
 /** A repository's URL as `https://github.com/owner/name`, from npm's forms. */
 export const sourceUrl = (repository: string) =>
   repository
@@ -124,9 +161,100 @@ export class Datasources extends Context.Service<
     Effect.gen(function* () {
       const gh = yield* Gh;
       const http = yield* HttpClient.HttpClient;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const file = yield* keptFile;
 
       const provide = <A, E>(effect: Effect.Effect<A, E, Gh>) =>
         Effect.provideService(effect, Gh, gh);
+
+      const earlier: Kept = yield* fs.readFileString(file).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Kept))),
+        Effect.orElseSucceed(() => ({})),
+      );
+
+      // Only what this run read is written back, so dropped dependencies go
+      const kept: Record<string, Kept[string]> = {};
+
+      yield* Effect.addFinalizer(() =>
+        fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fs.writeFileString(`${file}.tmp`, JSON.stringify(kept)),
+            ),
+            Effect.andThen(fs.rename(`${file}.tmp`, file)),
+            Effect.ignore,
+          ),
+      );
+
+      /**
+       * A GitHub GET sent with the last run's validators, answered from what
+       * was kept when GitHub says nothing changed. One that can never change,
+       * such as a commit by its SHA, isn't asked again at all.
+       */
+      const get = Effect.fnUntraced(function* (
+        endpoint: string,
+        options: {
+          readonly page?: number;
+          readonly immutable?: boolean;
+        } = {},
+      ) {
+        const query =
+          options.page === undefined
+            ? undefined
+            : { per_page: perPage, page: options.page };
+
+        const key =
+          query === undefined
+            ? endpoint
+            : `${endpoint}?per_page=${query.per_page}&page=${query.page}`;
+
+        const previous = earlier[key];
+
+        if (previous !== undefined && options.immutable === true) {
+          kept[key] = previous;
+
+          return previous.value;
+        }
+
+        const response = yield* provide(
+          Api.conditional(
+            { endpoint, ...(query !== undefined && { query }) },
+            Schema.Json,
+            previous?.validators,
+          ),
+        );
+
+        const current = Api.Conditional.$match(response, {
+          Modified: ({ validators, value }) => ({ validators, value }),
+          NotModified: () => previous,
+        });
+
+        if (current === undefined)
+          return yield* new DepsError({
+            message: `GitHub said ${endpoint} hadn't changed, with nothing kept`,
+          });
+
+        kept[key] = current;
+
+        return current.value;
+      });
+
+      /** Every page of a GitHub list, each page its own conditional GET. */
+      const list = Effect.fnUntraced(function* (endpoint: string) {
+        const items: Array<Schema.Json> = [];
+
+        for (let page = 1; ; page += 1) {
+          const batch = yield* Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Json),
+          )(yield* get(endpoint, { page }));
+
+          items.push(...batch);
+
+          if (batch.length < perPage) return items;
+        }
+      });
 
       const npm = Effect.fnUntraced(function* (name: string) {
         const response = yield* http.get(
@@ -193,32 +321,21 @@ export class Datasources extends Context.Service<
       });
 
       const releases = Effect.fnUntraced(function* (repository: string) {
-        const pages = yield* provide(
-          Api.pages(
-            {
-              endpoint: `repos/${repository}/releases`,
-              method: "GET",
-              query: { per_page: 100 },
-            },
-            Schema.Array(GithubRelease),
-          ),
-        );
+        const all = yield* Schema.decodeUnknownEffect(
+          Schema.Array(GithubRelease),
+        )(yield* list(`repos/${repository}/releases`));
 
-        return pages.flat().filter((release) => !release.draft);
+        return all.filter((release) => !release.draft);
       });
 
       const commitDate = Effect.fnUntraced(function* (
         repository: string,
         ref: string,
       ) {
-        const commit = yield* provide(
-          Api.json(
-            {
-              endpoint: `repos/${repository}/commits/${encodeURIComponent(ref)}`,
-              method: "GET",
-            },
-            Commit,
-          ),
+        const commit = yield* Schema.decodeUnknownEffect(Commit)(
+          yield* get(`repos/${repository}/commits/${encodeURIComponent(ref)}`, {
+            immutable: /^[a-f\d]{40}$/i.test(ref),
+          }),
         );
 
         return { sha: commit.sha, date: commit.commit.committer?.date };
@@ -228,18 +345,11 @@ export class Datasources extends Context.Service<
         repository: string,
         current: string,
       ) {
-        const [published, pages] = yield* Effect.all(
+        const [published, all] = yield* Effect.all(
           [
             releases(repository),
-            provide(
-              Api.pages(
-                {
-                  endpoint: `repos/${repository}/tags`,
-                  method: "GET",
-                  query: { per_page: 100 },
-                },
-                Schema.Array(Tag),
-              ),
+            list(`repos/${repository}/tags`).pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Tag))),
             ),
           ],
           { concurrency: 2 },
@@ -252,8 +362,7 @@ export class Datasources extends Context.Service<
         const floor = semver.coerce(current)?.version;
 
         // Tags newer than the version in use, which an update can pick
-        const newer = pages
-          .flat()
+        const newer = all
           .map((tag) => ({ tag, version: semver.coerce(tag.name)?.version }))
           .filter(
             ({ version }) =>
@@ -267,7 +376,7 @@ export class Datasources extends Context.Service<
           .map(({ tag }) => tag.name);
 
         return yield* Effect.forEach(
-          pages.flat(),
+          all,
           Effect.fnUntraced(function* (tag) {
             let date = dates.get(tag.name) ?? undefined;
 
@@ -319,11 +428,8 @@ export class Datasources extends Context.Service<
             if (datasource === "git-refs") {
               const branch =
                 ref === "HEAD" || /^[a-f\d]{7,40}$/i.test(ref)
-                  ? (yield* provide(
-                      Api.json(
-                        { endpoint: `repos/${repository}`, method: "GET" },
-                        RepositoryInfo,
-                      ),
+                  ? (yield* Schema.decodeUnknownEffect(RepositoryInfo)(
+                      yield* get(`repos/${repository}`),
                     )).default_branch
                   : ref;
 

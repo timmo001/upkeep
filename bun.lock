@@ -134,7 +134,7 @@
       "dependencies": {
         "@effect/ai-cloudflare": "4.1.2",
         "@effect/ai-typesafe": "4.1.2",
-        "@timmo001/effect-gh": "0.10.1",
+        "@timmo001/effect-gh": "0.11.0",
         "@upkeep/api": "workspace:*",
         "effect": "4.1.2",
         "jsonata": "2.2.2",
@@ -927,7 +927,7 @@
 
     "@timmo001/docs-kit": ["@timmo001/docs-kit@0.9.36", "", { "dependencies": { "@timmo001/groundwork-tokens": "0.9.36", "@timmo001/groundwork-ui": "0.9.36", "sharp": "0.35.5" }, "peerDependencies": { "blume": "^2.2.6" } }, "sha512-JuJinirXl2lRpFjwy9LHBB0XinGfDyV58P06iIXFXvGhRcnrn7E3qSOr1zx1vppg61nTcJycO2XWubrxwAJwtA=="],
 
-    "@timmo001/effect-gh": ["@timmo001/effect-gh@0.10.1", "", { "dependencies": { "graphql": "17.0.2" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-SI81hYfVZSsWNUwvKTh8POESH4Y2oOhoPkmSJeRKZoLZKSLRZraYy8VDki/66VSJ2fBrnmiiZd7yjGRbMWn3jA=="],
+    "@timmo001/effect-gh": ["@timmo001/effect-gh@0.11.0", "", { "dependencies": { "graphql": "17.0.2" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-ZH8/XQfTofligREhSUdohXegTclxXF7mADXHB2xKLIsHK0DR2VqjOEhQlx0cRY7I4MafWWYCME5uhZKZyuT2nQ=="],
 
     "@timmo001/effect-triage": ["@timmo001/effect-triage@0.21.0", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-jD/tcQ1W2az/nvjjguEtFCcj1Tut8sNDtVpfpr0vNnKkDKfVU/b8/DBrRqCyxIUxzmpW1bngJZvcJF5ps0TVXQ=="],
 
