@@ -335,7 +335,10 @@ export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.map((root) => `${root}/upkeep/bump`),
 );
 
-/** A clean checkout of the default branch, reusing the last one. */
+/**
+ * A clean checkout of the default branch, reusing the last one, with its
+ * submodules when it has any.
+ */
 export const checkout = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
@@ -343,25 +346,30 @@ export const checkout = Effect.fnUntraced(function* (
   trusted: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const options = { cwd: directory, trusted };
 
-  if (!(yield* fs.exists(directory))) {
+  if (yield* fs.exists(directory)) {
+    yield* run("git", ["fetch", "--quiet", "origin", branch], options);
+    yield* run(
+      "git",
+      ["checkout", "--quiet", "--force", "-B", branch, `origin/${branch}`],
+      options,
+    );
+    yield* run("git", ["clean", "--quiet", "-fdx"], options);
+  } else
     yield* Repository.clone({
       repository: repo,
       directory,
       gitArgs: ["--quiet", "--filter=blob:none"],
     });
 
-    return;
-  }
-
-  yield* run("git", ["fetch", "--quiet", "origin", branch], options);
-  yield* run(
-    "git",
-    ["checkout", "--quiet", "--force", "-B", branch, `origin/${branch}`],
-    options,
-  );
-  yield* run("git", ["clean", "--quiet", "-fdx"], options);
+  if (yield* fs.exists(path.join(directory, ".gitmodules")))
+    yield* run(
+      "git",
+      ["submodule", "update", "--quiet", "--init", "--recursive", "--force"],
+      options,
+    );
 });
 
 /**
