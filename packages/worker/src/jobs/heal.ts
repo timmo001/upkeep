@@ -11,10 +11,26 @@ import {
   CloudflareDecisionModel,
 } from "@effect/ai-cloudflare";
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
+import {
+  GhCommandError,
+  GhTimeoutError,
+  isRateLimited,
+  isTransient,
+  RateLimit,
+} from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
-import { Clock, Config, Duration, Effect, Layer, Option, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Config,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import { reason as failureReason } from "../Failure";
 import * as Inbox from "../Inbox";
@@ -332,10 +348,66 @@ const askPerson = (
   );
 };
 
+/** How many times a heal starts its agent again after a temporary failure. */
+const startRetries = 3;
+
+/** The longest a heal waits for GitHub's rate limit to reset. */
+const maxResetWait = Duration.hours(1);
+
+/**
+ * How long to wait before starting the agent again: until GitHub's rate limit
+ * resets, or a backoff of a minute, then two, then four, for a network error
+ * or a GitHub outage. None for a failure waiting won't fix.
+ */
+const startDelay = Effect.fnUntraced(function* (
+  cause: Cause.Cause<unknown>,
+  attempt: number,
+) {
+  const error = Cause.squash(cause);
+
+  if (
+    !(error instanceof GhCommandError || error instanceof GhTimeoutError) ||
+    !isTransient(error)
+  )
+    return Option.none<Duration.Duration>();
+
+  const backoff = Duration.minutes(2 ** attempt);
+
+  if (!isRateLimited(error)) return Option.some(backoff);
+
+  // Reading the limits doesn't count against them.
+  const spent = yield* Effect.forEach(
+    ["core", "graphql"] as const,
+    (resource) => RateLimit.get(resource).pipe(Effect.option),
+  );
+
+  const now = yield* Clock.currentTimeMillis;
+
+  const reset = Math.max(
+    ...spent.flatMap((limit) =>
+      Option.isSome(limit) && limit.value.remaining === 0
+        ? [limit.value.reset * 1000]
+        : [],
+    ),
+    0,
+  );
+
+  // A secondary rate limit has no reset to wait for, only a backoff.
+  return Option.some(
+    reset <= now
+      ? backoff
+      : Duration.min(
+          Duration.seconds(Math.ceil((reset - now) / 1000) + 5),
+          maxResetWait,
+        ),
+  );
+});
+
 /**
  * Hand a fix to an agent. A person hears about it only when the agent leaves
- * it unfixed, with the session to pick it up from; an agent that couldn't
- * start is left for the digest.
+ * it unfixed, with the session to pick it up from. An agent that couldn't
+ * start after a temporary failure, such as GitHub's rate limit, starts again
+ * once it's passed; one that still can't is left for the digest.
  */
 const handOff = Effect.fnUntraced(function* (
   healing: Healing,
@@ -345,14 +417,48 @@ const handOff = Effect.fnUntraced(function* (
   const reporter = yield* Reporter;
   const { run } = healing;
 
-  const result = yield* fix(
-    healing.heal,
-    run,
-    relevant(healing.heal, healing.log),
-    healing.precedents,
-    agent,
-    (update) => reporter.heal(update),
-  ).pipe(
+  // Once there's a session the agent has started, so it isn't started again.
+  let started = false;
+
+  const start = (
+    attempt: number,
+  ): Effect.Effect<
+    Effect.Success<ReturnType<typeof fix>>,
+    unknown,
+    Effect.Services<ReturnType<typeof fix>>
+  > =>
+    fix(
+      healing.heal,
+      run,
+      relevant(healing.heal, healing.log),
+      healing.precedents,
+      agent,
+      (update) => {
+        if (update.session !== undefined) started = true;
+
+        return reporter.heal(update);
+      },
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const delay =
+            started || attempt >= startRetries
+              ? Option.none<Duration.Duration>()
+              : yield* startDelay(cause, attempt);
+
+          if (Option.isNone(delay)) return yield* Effect.failCause(cause);
+
+          yield* RunLog.warn(
+            `The agent couldn't start, ${failureReason(cause)}. Trying again in ${Duration.format(delay.value)}`,
+          );
+          yield* Effect.sleep(delay.value);
+
+          return yield* start(attempt + 1);
+        }),
+      ),
+    );
+
+  const result = yield* start(0).pipe(
     Effect.catchCause((cause) =>
       Effect.succeed({
         action: `Left for the digest: the agent couldn't start, ${failureReason(cause)}`,
