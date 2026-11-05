@@ -2,7 +2,8 @@
  * The Upkeep server: the HTTP API workers and the CLI talk to, the dashboard,
  * the scheduler that queues jobs on their cron, the sweep that fails runs
  * whose worker went quiet, the one that unparks jobs once their triage issue
- * is resolved, and the one that prunes old runs.
+ * is resolved, the one that queues heals held back by the heal limit, and the
+ * one that prunes old runs.
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
@@ -139,8 +140,8 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
 /**
  * Queue a heal for each target of a failed or lost run: each failed consumer
  * of a bump, or Upkeep itself. A failed heal never queues another. A target
- * past its heals for the day gets no more: a consumer is skipped, and a job
- * failing in itself is parked.
+ * past its heals for the day gets no more for now: a consumer's heal waits
+ * until its heals free up, and a job failing in itself is parked.
  */
 const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
@@ -172,8 +173,14 @@ const heal = Effect.fn("heal")(function* (
       // One consumer failing all day mustn't stop the job for the others, so
       // only a job failing in itself is parked.
       if (target.kind === "consumer") {
+        yield* store.wait(
+          run.job,
+          target.repo,
+          run.id,
+          Option.getOrNull(issues[index] ?? Option.none()),
+        );
         yield* Effect.logWarning(
-          `Skipped a heal of ${run.job} for ${target.repo}: past ${limit} heals in 24 hours`,
+          `Held a heal of ${run.job} for ${target.repo} until its heals free up: past ${limit} heals in 24 hours`,
         ).pipe(Effect.annotateLogs({ run: run.id }));
 
         continue;
@@ -192,6 +199,9 @@ const heal = Effect.fn("heal")(function* (
 
       continue;
     }
+
+    if (target.kind === "consumer")
+      yield* store.stopWaiting(run.job, target.repo);
 
     yield* queue({
       job: Catalogue.heal.id,
@@ -234,6 +244,101 @@ export const unparkResolved = Layer.effectDiscard(
   }),
 );
 
+/**
+ * Drop the waiting heals a finished run settles: a later run of the same job,
+ * for the same released repository, that reached the consumer without it
+ * failing. A run that failed in itself says nothing about its consumers.
+ */
+const settleWaiting = Effect.fn("settleWaiting")(function* (
+  run: Domain.Run,
+  consumers: ReadonlyArray<string>,
+) {
+  if (run.job === Catalogue.heal.id) return;
+
+  if (
+    run.state !== "succeeded" &&
+    !(run.state === "failed" && consumers.length > 0)
+  )
+    return;
+
+  const store = yield* Store;
+  const failed = new Set(consumers.map((repo) => repo.toLowerCase()));
+
+  for (const waiting of yield* store.waiting()) {
+    if (
+      waiting.job !== run.job ||
+      waiting.run === run.id ||
+      failed.has(waiting.repo.toLowerCase())
+    )
+      continue;
+
+    const held = yield* store
+      .run(waiting.run)
+      .pipe(Effect.catchTag("RunNotFound", () => Effect.succeed(null)));
+
+    if (held !== null && held.release?.repo !== run.release?.repo) continue;
+
+    if (yield* store.stopWaiting(waiting.job, waiting.repo)) {
+      yield* Effect.logInfo(
+        `Dropped a waiting heal of ${waiting.job} for ${waiting.repo}: a later run reached it`,
+      ).pipe(Effect.annotateLogs({ run: run.id }));
+    }
+  }
+});
+
+/**
+ * Queue each waiting heal once its consumer's heals in the last 24 hours drop
+ * under the limit, once a minute. One whose failed run has been pruned is
+ * dropped.
+ */
+export const healWaiting = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+
+    yield* Effect.gen(function* () {
+      const limit = yield* healsPerDay;
+      const now = yield* Clock.currentTimeMillis;
+      const since = now - Duration.toMillis("1 day");
+
+      for (const waiting of yield* store.waiting()) {
+        const target: Domain.Target = { kind: "consumer", repo: waiting.repo };
+
+        if ((yield* store.healsSince(waiting.job, target, since)) >= limit)
+          continue;
+
+        const held = yield* store
+          .run(waiting.run)
+          .pipe(Effect.catchTag("RunNotFound", () => Effect.succeed(null)));
+
+        if (held === null) {
+          yield* store.stopWaiting(waiting.job, waiting.repo);
+          yield* Effect.logInfo(
+            `Dropped a waiting heal of ${waiting.job} for ${waiting.repo}: its run is gone`,
+          );
+
+          continue;
+        }
+
+        const queued = yield* queue({
+          job: Catalogue.heal.id,
+          trigger: "heal",
+          release: held.release,
+          heal: { of: held.id, job: waiting.job, target, issue: waiting.issue },
+        });
+
+        // A paused or parked heal stays waiting until it's let go.
+        if (Option.isSome(queued))
+          yield* store.stopWaiting(waiting.job, waiting.repo);
+      }
+    }).pipe(
+      Effect.provideService(Store, store),
+      Effect.catchCause(Effect.logError),
+      Effect.repeat(Schedule.spaced(Duration.minutes(1))),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 /** A heal run's record and the run it's healing. Other runs aren't found. */
 const healedRun = Effect.fnUntraced(function* (id: string) {
   const store = yield* Store;
@@ -255,6 +360,7 @@ const JobsHandlers = HttpApiBuilder.group(
         const latest = yield* store.latestRuns().pipe(Effect.orDie);
         const parked = yield* store.parked().pipe(Effect.orDie);
         const paused = yield* store.paused().pipe(Effect.orDie);
+        const waiting = yield* store.waiting().pipe(Effect.orDie);
 
         return Catalogue.jobs.map((job): Domain.JobStatus => ({
           id: job.id,
@@ -267,6 +373,9 @@ const JobsHandlers = HttpApiBuilder.group(
           lastRun: latest.get(job.id) ?? null,
           parked: parked.get(job.id) ?? null,
           paused: paused.get(job.id) ?? null,
+          waiting: waiting
+            .filter((entry) => entry.job === job.id)
+            .map(({ run, repo, at }) => ({ run, repo, at })),
         }));
       }),
       run: Effect.fn(function* ({ params, payload }) {
@@ -477,6 +586,11 @@ const WorkHandlers = HttpApiBuilder.group(
 
         yield* Effect.logInfo(`Run ${payload.outcome}`).pipe(
           Effect.annotateLogs({ run: params.id, worker: worker.name }),
+        );
+
+        yield* settleWaiting(ended, payload.consumers ?? []).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchCause(Effect.logError),
         );
 
         yield* heal(ended, payload.consumers ?? []).pipe(
@@ -1029,8 +1143,8 @@ export interface ServeOptions {
 
 /**
  * Serve the API and the dashboard over plain HTTP, with the scheduler and the
- * lost-run, unpark and prune sweeps. For HTTPS, put it behind a reverse proxy,
- * which handles TLS.
+ * lost-run, unpark, waiting heal and prune sweeps. For HTTPS, put it behind a
+ * reverse proxy, which handles TLS.
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
@@ -1057,6 +1171,7 @@ export const layer = (options: ServeOptions) =>
     scheduler,
     lostRuns,
     unparkResolved,
+    healWaiting,
     pruneRuns,
   ).pipe(
     Layer.provide([Tokens.layer, Triage.layer]),

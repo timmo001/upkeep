@@ -1,11 +1,12 @@
 /**
- * `upkeep-job`: one job, what starts it, whether it's parked, and its runs.
+ * `upkeep-job`: one job, what starts it, whether it's parked, the heals of
+ * its consumers waiting on the heal limit, and its runs.
  */
 import { mdiArrowLeft } from "@mdi/js";
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { empty, shared, time, view } from "./ui.ts";
-import { jobs, jobsHref } from "./upkeep.ts";
+import { jobs, jobsHref, runHref } from "./upkeep.ts";
 import { jobActions } from "./upkeep-overview.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
@@ -70,6 +71,26 @@ export class UpkeepJob extends LitElement {
             : html`<gw-alert class="message" tone="neutral" heading="Paused">
                 ${job.paused.by} paused it ${time(job.paused.at)}. Nothing
                 queues it until it's resumed, but it can still be run by hand.
+              </gw-alert>`
+        }
+        ${
+          (job.waiting ?? []).length === 0
+            ? null
+            : html`<gw-alert
+                class="message"
+                tone="neutral"
+                heading="Heals waiting"
+              >
+                ${(job.waiting ?? []).map(
+                  (waiting, index) =>
+                    html`${index === 0 ? "" : ", "}<a
+                        href=${runHref(waiting.run)}
+                        >${waiting.repo}</a
+                      >
+                      since ${time(waiting.at)}`,
+                )}.
+                Each used its heals for the last 24 hours, so its heal is queued
+                once one frees up.
               </gw-alert>`
         }
         <upkeep-runs .job=${job.id}></upkeep-runs>

@@ -265,9 +265,11 @@ model and variant used, what was done, the commit if there was one and the
 OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
 
 A job gets `UPKEEP_HEALS_PER_DAY` heals for each target in any 24 hours, a
-rolling window rather than the calendar day. A repository past that gets no
-more heals until its oldest one is a day old, while the job carries on for the
-others. A job failing in itself past that is parked instead. The server stops
+rolling window rather than the calendar day. A repository past that has its
+heal held, while the job carries on for the others: the server queues it once
+the repository's oldest heal is a day old, unless a later run of the job
+reaches that repository first. The job's dashboard page lists the heals
+waiting. A job failing in itself past that is parked instead. The server stops
 queueing a parked job on its schedule or on releases, though it can still be
 run by hand, and `upkeep status --json` shows why it's parked.
 `upkeep unpark <job>` lets it be queued again.

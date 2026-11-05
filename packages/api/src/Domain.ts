@@ -179,6 +179,20 @@ export const Parked = Schema.Struct({
 export interface Parked extends Schema.Schema.Type<typeof Parked> {}
 
 /**
+ * A heal of a consumer held back by the heal limit, queued once that
+ * consumer's heals free up. A later run of the job that reaches the consumer
+ * drops it.
+ */
+export const WaitingHeal = Schema.Struct({
+  /** The failed run it heals. */
+  run: Schema.String,
+  repo: Schema.String,
+  at: Schema.Finite,
+});
+
+export interface WaitingHeal extends Schema.Schema.Type<typeof WaitingHeal> {}
+
+/**
  * A job someone turned off: nothing queues it by schedule, release or heal
  * until it's resumed, though it can still be run by hand. Pausing `heal`
  * stops every heal.
@@ -355,6 +369,8 @@ export const JobStatus = Schema.Struct({
   parked: Schema.NullOr(Parked),
   /** Set while the job is paused. */
   paused: Schema.NullOr(Paused),
+  /** Heals of its consumers waiting on the heal limit; missing from older servers. */
+  waiting: Schema.optionalKey(Schema.Array(WaitingHeal)),
 });
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}

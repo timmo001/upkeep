@@ -231,6 +231,31 @@ test("a heal's record fills in as its worker reports", () =>
     }),
   ));
 
+test("a newer waiting heal replaces the older one for the same consumer", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.wait("bump", "timmo001/a", "run-1", null);
+      yield* store.wait("bump", "timmo001/A", "run-2", "issue-2");
+      yield* store.wait("bump", "timmo001/b", "run-3", null);
+
+      expect(
+        (yield* store.waiting()).map(({ repo, run, issue }) => [
+          repo,
+          run,
+          issue,
+        ]),
+      ).toEqual([
+        ["timmo001/a", "run-2", "issue-2"],
+        ["timmo001/b", "run-3", null],
+      ]);
+      expect(yield* store.stopWaiting("bump", "timmo001/a")).toBe(true);
+      expect(yield* store.stopWaiting("bump", "timmo001/a")).toBe(false);
+      expect((yield* store.waiting()).length).toBe(1);
+    }),
+  ));
+
 test("a parked job stays parked until it's unparked", () =>
   run(
     Effect.gen(function* () {

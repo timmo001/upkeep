@@ -212,6 +212,21 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE repos ADD COLUMN name TEXT`;
     yield* sql`ALTER TABLE repos ADD COLUMN named_by TEXT`;
   }),
+  // A consumer's heal held back by the heal limit, one per job and consumer
+  "0012_waiting_heals": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE waiting_heals (
+        job TEXT NOT NULL,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        run_id TEXT NOT NULL,
+        issue TEXT,
+        waiting_at INTEGER NOT NULL,
+        PRIMARY KEY (job, repo)
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -309,6 +324,17 @@ const decodeParked = Schema.decodeUnknownEffect(
 const decodePaused = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ job: Schema.String, ...Domain.Paused.fields })),
 );
+
+/** A waiting heal as it's kept, with its job and triage issue. */
+const WaitingRow = Schema.Struct({
+  job: Domain.JobId,
+  ...Domain.WaitingHeal.fields,
+  issue: Schema.NullOr(Schema.String),
+});
+
+export interface Waiting extends Schema.Schema.Type<typeof WaitingRow> {}
+
+const decodeWaiting = Schema.decodeUnknownEffect(Schema.Array(WaitingRow));
 
 const EntryRow = Schema.Struct({
   ...Domain.Entry.fields,
@@ -442,6 +468,20 @@ export class Store extends Context.Service<
     unpark(job: string): Effect.Effect<boolean, StoreError>;
     /** The parked jobs, by job ID. */
     parked(): Effect.Effect<ReadonlyMap<string, Domain.Parked>, StoreError>;
+    /**
+     * Hold a consumer's heal until its heals free up, replacing an older one
+     * for the same job and consumer.
+     */
+    wait(
+      job: Domain.JobId,
+      repo: string,
+      run: string,
+      issue: string | null,
+    ): Effect.Effect<void, StoreError>;
+    /** Drop a waiting heal, returning whether there was one. */
+    stopWaiting(job: string, repo: string): Effect.Effect<boolean, StoreError>;
+    /** Every waiting heal, oldest first. */
+    waiting(): Effect.Effect<ReadonlyArray<Waiting>, StoreError>;
     /** Pause a job, keeping when and by whom when it's already paused. */
     pause(job: string, by: string): Effect.Effect<void, StoreError>;
     /** Resume a paused job, returning whether it was paused. */
@@ -1006,6 +1046,45 @@ export class Store extends Context.Service<
       return new Map(
         rows.map(({ job, ...entry }): [string, Domain.Parked] => [job, entry]),
       );
+    }, Effect.mapError(storeError));
+
+    const wait = Effect.fn("Store.wait")(function* (
+      job: Domain.JobId,
+      repo: string,
+      runId: string,
+      issue: string | null,
+    ) {
+      yield* sql`
+        INSERT INTO waiting_heals ${sql.insert({
+          job,
+          repo,
+          runId,
+          issue,
+          waitingAt: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (job, repo) DO UPDATE
+        SET run_id = excluded.run_id, issue = excluded.issue,
+          waiting_at = excluded.waiting_at
+      `;
+    }, Effect.mapError(storeError));
+
+    const stopWaiting = Effect.fn("Store.stopWaiting")(function* (
+      job: string,
+      repo: string,
+    ) {
+      const rows = yield* sql`
+        DELETE FROM waiting_heals WHERE job = ${job} AND repo = ${repo}
+        RETURNING job
+      `;
+
+      return rows.length > 0;
+    }, Effect.mapError(storeError));
+
+    const waiting = Effect.fn("Store.waiting")(function* () {
+      return yield* sql`
+        SELECT job, repo, run_id AS run, issue, waiting_at AS at
+        FROM waiting_heals ORDER BY waiting_at
+      `.pipe(Effect.flatMap(decodeWaiting));
     }, Effect.mapError(storeError));
 
     const pause = Effect.fn("Store.pause")(function* (job: string, by: string) {
@@ -1680,6 +1759,9 @@ export class Store extends Context.Service<
       park,
       unpark,
       parked,
+      wait,
+      stopWaiting,
+      waiting,
       pause,
       resume,
       paused,

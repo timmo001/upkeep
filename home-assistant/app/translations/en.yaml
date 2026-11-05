@@ -11,8 +11,8 @@ configuration:
     name: Heals per day
     description: >-
       How many heals one job can have for each repository, or for itself, in
-      any 24 hours. A repository past it is skipped; a job failing in itself
-      is parked.
+      any 24 hours. A repository past it has its heal held until one frees
+      up; a job failing in itself is parked.
   keep_days:
     name: Days to keep runs
     description: >-
