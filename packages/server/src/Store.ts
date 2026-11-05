@@ -463,6 +463,14 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // An attention item's labels, as JSON, for its status and type
+  "0021_attention_labels": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      ALTER TABLE attention_items ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -615,6 +623,7 @@ const AttentionRow = Schema.Struct({
   youActedLast: Schema.Number,
   involved: Schema.Number,
   signals: Schema.fromJsonString(Schema.Array(Domain.Signal)),
+  labels: Schema.fromJsonString(Schema.Array(Schema.String)),
   notification: Schema.NullOr(
     Schema.fromJsonString(Domain.AttentionNotification),
   ),
@@ -635,6 +644,10 @@ const decodeAttentionChanges = Schema.decodeUnknownEffect(
       gone: Schema.Number,
     }),
   ),
+);
+
+const decodeAttentionReleases = Schema.decodeUnknownEffect(
+  Domain.Attention.fields.releases,
 );
 
 const decodeAttentionGroups = Schema.decodeUnknownEffect(
@@ -1816,8 +1829,19 @@ export class Store extends Context.Service<
             before !== undefined &&
             before.found.fingerprint === item.fingerprint &&
             before.found.work === item.work
-          )
+          ) {
+            // Labels kept before workers sent them fill in quietly
+            const labels = JSON.stringify(item.labels);
+
+            if (JSON.stringify(before.found.labels) !== labels) {
+              yield* sql`
+                UPDATE attention_items SET labels = ${labels}
+                WHERE url = ${item.url}
+              `;
+            }
+
             continue;
+          }
 
           const what = Attention.whatMoved(before?.found, item);
 
@@ -1829,6 +1853,7 @@ export class Store extends Context.Service<
               youActedLast: item.youActedLast ? 1 : 0,
               involved: item.involved ? 1 : 0,
               signals: JSON.stringify(item.signals),
+              labels: JSON.stringify(item.labels),
               notification:
                 item.notification === null
                   ? null
@@ -1929,6 +1954,10 @@ export class Store extends Context.Service<
         LIMIT 1000
       `.pipe(Effect.flatMap(decodeAttentionChanges));
 
+      const releases = yield* sql`
+        SELECT repo, tag, url, seen_at FROM releases ORDER BY seen_at DESC
+      `.pipe(Effect.flatMap(decodeAttentionReleases));
+
       const links = yield* sql`
         SELECT url, group_id, source, suggested FROM attention_links
         ORDER BY created_at
@@ -1999,6 +2028,7 @@ export class Store extends Context.Service<
         groups,
         comments,
         rules,
+        releases,
         refreshAt: refreshAt !== null && refreshAt > now ? refreshAt : null,
         changes: changes.map((change) => ({
           ...change,

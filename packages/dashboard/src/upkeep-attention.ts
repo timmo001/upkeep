@@ -26,6 +26,7 @@ import {
   mdiRecordCircleOutline,
   mdiRefresh,
   mdiSourcePull,
+  mdiTagOutline,
 } from "@mdi/js";
 import { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
@@ -216,13 +217,54 @@ interface Block {
 const inScope = (work: boolean, scope: Scope) =>
   scope === "all" || (scope === "work") === work;
 
-/** Most recent first, except stale items, which show the longest quiet first. */
-const order = (section: Domain.AttentionSection) =>
-  section === "stale"
-    ? (a: Domain.AttentionItem, b: Domain.AttentionItem) =>
-        a.activityAt - b.activityAt
-    : (a: Domain.AttentionItem, b: Domain.AttentionItem) =>
-        b.activityAt - a.activityAt;
+/** Where an item's status label puts it: most pressing first, none mid-way. */
+const statusRank = (item: Domain.AttentionItem) => {
+  const status = Domain.statusOf(item.labels);
+
+  return status === null
+    ? Domain.statusLabels.indexOf("blocked") - 0.5
+    : Domain.statusLabels.indexOf(status);
+};
+
+/**
+ * Most recent first, except stale items, which show the longest quiet first,
+ * and the backlog, which goes by status label first.
+ */
+const order =
+  (section: Domain.AttentionSection) =>
+  (a: Domain.AttentionItem, b: Domain.AttentionItem) => {
+    if (section === "stale") return a.activityAt - b.activityAt;
+
+    if (section === "backlog") {
+      return statusRank(a) - statusRank(b) || b.activityAt - a.activityAt;
+    }
+
+    return b.activityAt - a.activityAt;
+  };
+
+/** The shared type labels worth a chip, as they match without case. */
+const typeLabels: ReadonlySet<string> = new Set([
+  "bug",
+  "bug fix",
+  "feature",
+  "enhancement",
+  "refactor",
+  "performance",
+  "breaking change",
+  "security",
+]);
+
+/** How each status label's chip reads at a glance. */
+const statusTones: Record<Domain.StatusLabel, string> = {
+  "needs decision": "accent",
+  blocked: "danger",
+  "in progress": "warning",
+  ready: "success",
+  planned: "neutral",
+  "needs research": "neutral",
+  "on hold": "neutral",
+  future: "neutral",
+};
 
 /** How many of each section's changes show before the rest fold away. */
 const maxChanges = 15;
@@ -545,15 +587,35 @@ export class UpkeepAttention extends LitElement {
     return state === "queued" || state === "running";
   }
 
+  /** Its status and type labels, then what GitHub says about it. */
   #signals(item: Domain.AttentionItem) {
-    return item.signals.map(
-      (signal) =>
-        html`<gw-chip size="xs" tone=${tones[signal.kind]}
-          >${Domain.signalLabel(signal.kind)}${
-            signal.detail === null ? nothing : html` (${signal.detail})`
-          }</gw-chip
-        >`,
-    );
+    const status = Domain.statusOf(item.labels);
+
+    const labels = item.labels.filter((label) => {
+      const name = label.toLowerCase();
+
+      return name === status || typeLabels.has(name);
+    });
+
+    return [
+      ...labels.map((label) => {
+        const name = label.toLowerCase();
+
+        return html`<gw-chip
+          size="xs"
+          tone=${name === status && status !== null ? statusTones[status] : "neutral"}
+          >${label}</gw-chip
+        >`;
+      }),
+      ...item.signals.map(
+        (signal) =>
+          html`<gw-chip size="xs" tone=${tones[signal.kind]}
+            >${Domain.signalLabel(signal.kind)}${
+              signal.detail === null ? nothing : html` (${signal.detail})`
+            }</gw-chip
+          >`,
+      ),
+    ];
   }
 
   #item(item: Domain.AttentionItem, since: number | null) {
@@ -609,6 +671,47 @@ export class UpkeepAttention extends LitElement {
         </div>
       </div>
     </li>`;
+  }
+
+  /** The latest release of each repository with something in scope. */
+  #releases(
+    page: Domain.Attention,
+    shown: ReadonlyArray<Domain.AttentionItem>,
+  ) {
+    const repos = new Set(shown.map((item) => item.repo.toLowerCase()));
+
+    const releases = page.releases.filter((release) =>
+      repos.has(release.repo.toLowerCase()),
+    );
+
+    return releases.length === 0
+      ? nothing
+      : html`<gw-expansion
+          heading=${`Latest releases (${releases.length})`}
+          description="Of the repositories above, newest first"
+        >
+          <ul class="changes">
+            ${releases.map(
+              (release) =>
+                html`<li>
+                  ${icon(mdiTagOutline)}
+                  <div class="body">
+                    <span class="title"
+                      >${externalLink(release.url, `${release.repo} ${release.tag}`)}</span
+                    >
+                    <div class="meta">
+                      <span>${time(release.seenAt)}</span>
+                      ${
+                        page.since !== null && release.seenAt > page.since
+                          ? html`<gw-chip size="xs" tone="accent">New</gw-chip>`
+                          : nothing
+                      }
+                    </div>
+                  </div>
+                </li>`,
+            )}
+          </ul>
+        </gw-expansion>`;
   }
 
   /** What went over the last week, whatever the scope, as a history. */
@@ -867,7 +970,7 @@ export class UpkeepAttention extends LitElement {
                         </ul>
                       </gw-expansion>`
                 }
-                ${this.#gone(page)}
+                ${this.#releases(page, shown)} ${this.#gone(page)}
               `
         }
       </gw-stack>

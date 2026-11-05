@@ -17,9 +17,10 @@ const found = (
   number: number,
   signals: ReadonlyArray<Domain.Signal> = [],
   notification: Domain.AttentionNotification | null = null,
+  issue?: { readonly labels: ReadonlyArray<string>; readonly at: number },
 ): Domain.AttentionFound => ({
   url: `https://github.com/timmo001/a/pull/${number}`,
-  kind: "pull",
+  kind: issue === undefined ? "pull" : "issue",
   repo: "timmo001/a",
   number,
   title: `Pull ${number}`,
@@ -27,13 +28,54 @@ const found = (
   yours: true,
   work: false,
   youActedLast: true,
-  involved: true,
-  activityAt: 0,
+  // An issue nobody else joined, so only its labels keep it out of the backlog
+  involved: issue === undefined,
+  activityAt: issue?.at ?? 0,
   updatedAt: 0,
   signals,
+  labels: issue?.labels ?? [],
   notification,
   fingerprint: JSON.stringify(signals),
 });
+
+test("status labels move your own items between sections, and fill in quietly", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const now = Date.now();
+
+      const issue = (number: number, labels: ReadonlyArray<string>) =>
+        found(number, [], null, { labels, at: now });
+
+      // An older worker sent no labels; the next collection fills them in
+      yield* store.recordAttention(
+        snapshot([issue(1, []), issue(2, []), issue(3, []), issue(4, [])]),
+      );
+
+      yield* store.recordAttention(
+        snapshot([
+          issue(1, ["Needs Decision"]),
+          issue(2, ["blocked"]),
+          issue(3, ["In Progress", "Bug"]),
+          issue(4, ["On Hold"]),
+        ]),
+      );
+
+      const page = yield* store.attention();
+
+      expect(page.items.map((item) => [item.number, item.section])).toEqual(
+        expect.arrayContaining([
+          [1, "needs-you"],
+          // Waiting on something else, with nothing to fix
+          [2, "backlog"],
+          [3, "waiting"],
+          [4, "backlog"],
+        ]),
+      );
+
+      expect(page.changes).toHaveLength(0);
+    }),
+  ));
 
 const snapshot = (
   items: ReadonlyArray<Domain.AttentionFound>,

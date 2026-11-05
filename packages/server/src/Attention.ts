@@ -29,30 +29,44 @@ const blocking: ReadonlySet<Domain.SignalKind> = new Set([
  * An item's section. What needs you comes first, then what's blocked. Your
  * drafts, and your issues nobody else has taken part in, are your backlog;
  * the rest of your own have gone quiet or wait on someone else. Everything
- * else is only watched.
+ * else is only watched. On your own, the shared status labels say more: a
+ * decision waits on you, In Progress isn't backlog, and Blocked, On Hold or
+ * Future is. The Blocked label means waiting on something else, so unlike
+ * failing checks it has nothing for you to fix.
  */
 export const sectionOf = (
   item: Pick<
     Domain.AttentionFound,
-    "kind" | "signals" | "yours" | "activityAt" | "involved"
+    "kind" | "signals" | "labels" | "yours" | "activityAt" | "involved"
   >,
   now: number,
   staleDays: number,
 ): Domain.AttentionSection => {
   const quiet = now - item.activityAt >= staleDays * day;
   const kinds = new Set(item.signals.map((signal) => signal.kind));
+  const status = item.yours ? Domain.statusOf(item.labels) : null;
 
   // A reply left longer than the stale window has gone quiet instead
   if (quiet) kinds.delete("new-comment");
 
-  if ([...kinds].some((kind) => needsYou.has(kind))) return "needs-you";
+  if (
+    [...kinds].some((kind) => needsYou.has(kind)) ||
+    status === "needs decision"
+  )
+    return "needs-you";
 
   if (item.yours && [...kinds].some((kind) => blocking.has(kind)))
     return "blocked";
 
   if (!item.yours) return "watching";
 
-  if (kinds.has("draft") || (item.kind === "issue" && !item.involved))
+  if (
+    status === "blocked" ||
+    status === "on hold" ||
+    status === "future" ||
+    (status !== "in progress" &&
+      (kinds.has("draft") || (item.kind === "issue" && !item.involved)))
+  )
     return "backlog";
 
   return quiet ? "stale" : "waiting";

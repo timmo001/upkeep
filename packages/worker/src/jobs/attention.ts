@@ -365,6 +365,9 @@ export const read = (
       activityAt,
       updatedAt: time(node.updatedAt),
       signals,
+      labels: (node.labels?.nodes ?? []).flatMap((label) =>
+        label === null ? [] : [label.name],
+      ),
       notification: null,
     },
     base,
@@ -755,6 +758,7 @@ export const attention = Effect.fnUntraced(function* () {
         activityAt: notification.updatedAt,
         updatedAt: notification.updatedAt,
         signals: extra,
+        labels: [],
         notification,
       },
       base: null,

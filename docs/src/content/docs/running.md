@@ -467,6 +467,15 @@ server, which sorts each item into a section by its signals, with no model:
 - **Your backlog** (your drafts, and your issues nobody else has joined) and
   **Watching** (everyone else's), folded away.
 
+On your own items, the shared status labels say more: **Needs Decision** puts
+one under Needs you, **In Progress** keeps it out of the backlog, and
+**Blocked**, **On Hold** or **Future** puts it there, since a Blocked label
+waits on something else rather than on a fix. The backlog is ordered by
+status: In Progress, Ready and Planned first, then unlabelled items, with
+Blocked, On Hold and Future last. Each item shows its
+status and type labels, and the latest release of each repository with
+something on the page is folded away under **Latest releases**.
+
 Items that belong to one piece of work show together as a group. The job
 reads how they tie together on GitHub (stacked pull requests, the issues a
 pull request closes, parents, sub-issues and blockers) and the server forms a

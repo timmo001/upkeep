@@ -3,7 +3,7 @@
  * log, the releases that start them and the inbox of what changed. Times are
  * milliseconds since the Unix epoch.
  */
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 /** A job's ID, such as `releases`, used in commands and URLs. */
 export const JobId = Schema.String.check(
@@ -554,6 +554,31 @@ export const Signal = Schema.Struct({
 
 export interface Signal extends Schema.Schema.Type<typeof Signal> {}
 
+/**
+ * The shared status labels from timmo001/groundwork's conventions, as they
+ * match without case, from what's most pressing to what's put off. An item
+ * without one sits between Needs Research and Blocked, which waits on
+ * something else, so there's nothing to do on it yet.
+ */
+export const statusLabels = [
+  "needs decision",
+  "in progress",
+  "ready",
+  "planned",
+  "needs research",
+  "blocked",
+  "on hold",
+  "future",
+] as const;
+
+export type StatusLabel = (typeof statusLabels)[number];
+
+/** An item's status label, the most pressing when it has several. */
+export const statusOf = (labels: ReadonlyArray<string>) =>
+  statusLabels.find((status) =>
+    labels.some((label) => label.toLowerCase() === status),
+  ) ?? null;
+
 /** Where an item sits on the Attention page, from its signals and age. */
 export const AttentionSection = Schema.Literals([
   "needs-you",
@@ -601,6 +626,10 @@ export const AttentionFound = Schema.Struct({
   activityAt: Schema.Finite,
   updatedAt: Schema.Finite,
   signals: Schema.Array(Signal),
+  /** Its labels' names; empty from a worker older than labels. */
+  labels: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
   notification: Schema.NullOr(AttentionNotification),
   /** What can change it, so an unchanged item is left alone. */
   fingerprint: Schema.String,
@@ -748,6 +777,10 @@ export const Attention = Schema.Struct({
   rules: Schema.Array(AttentionRule),
   /** What moved since you last looked, and what went over the last week. */
   changes: Schema.Array(AttentionChange),
+  /** Each tracked repository's latest release, and when Upkeep saw it. */
+  releases: Schema.Array(
+    Schema.Struct({ ...Release.fields, seenAt: Schema.Finite }),
+  ),
   /** When you last looked before this visit, or null the first time. */
   since: Schema.NullOr(Schema.Finite),
   /** When a worker last sent what it found, or null before the first. */
