@@ -226,6 +226,8 @@ upkeep run releases --local
 upkeep runs --job releases --state failed
 upkeep log <run> --follow
 upkeep cancel <run>
+upkeep retry <run>
+upkeep dismiss <run>
 upkeep runs --job heal
 upkeep unpark <job>
 upkeep pause heal
@@ -240,6 +242,12 @@ an admin token.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.
+
+`upkeep retry` runs a finished run again: its job for the same release, or a
+heal as the same heal, even when the job is parked. `upkeep dismiss` clears
+what a run left for a person, and its inbox entry. Retrying a run dismisses
+it too. The run page in the dashboard has the same buttons, and dismissing a
+heal's inbox entry dismisses every heal it stands for.
 
 `upkeep pause <job>` turns a job off without stopping the server or worker:
 nothing queues it on its schedule, on releases or as a heal until

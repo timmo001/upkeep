@@ -19,6 +19,8 @@ export const access = {
   log: "read",
   run: "write",
   cancel: "write",
+  retry: "write",
+  dismiss: "write",
   unpark: "write",
   pause: "write",
   resume: "write",

@@ -79,6 +79,30 @@ const Cancel = Tool.make("cancel", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
+const Retry = Tool.make("retry", {
+  description:
+    "Run a finished run again: its job for the same release, or for a heal, the same heal, even when the job is parked. The old run is dismissed. Returns the new run.",
+  parameters: Schema.Struct({ run: Schema.String }),
+  success: Domain.Run,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
+const Dismiss = Tool.make("dismiss", {
+  description:
+    "Clear what a run left for a person: it stops needing attention and its inbox entry is dismissed",
+  parameters: Schema.Struct({ run: Schema.String }),
+  success: Domain.Run,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const Unpark = Tool.make("unpark", {
   description:
     "Let a parked job be queued again by its schedule, releases and heals",
@@ -180,6 +204,8 @@ export const Tools = Toolkit.make(
   Log,
   Run,
   Cancel,
+  Retry,
+  Dismiss,
   Unpark,
   Pause,
   Resume,
@@ -263,6 +289,18 @@ export const toolsLayer = Tools.toLayer(
         onServer(
           Client.use((client) =>
             client.runs.cancel({ params: { id: input.run } }),
+          ),
+        ),
+      retry: (input: { readonly run: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.runs.retry({ params: { id: input.run } }),
+          ),
+        ),
+      dismiss: (input: { readonly run: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.runs.dismiss({ params: { id: input.run } }),
           ),
         ),
       unpark: (input: { readonly job: string }) =>

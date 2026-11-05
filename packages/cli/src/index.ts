@@ -372,6 +372,62 @@ const cancel = Command.make(
   ),
 );
 
+const retry = Command.make(
+  "retry",
+  {
+    run: Argument.String("run").pipe(Argument.withDescription("The run's ID")),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const queued = yield* client.runs.retry({ params: { id: input.run } });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(queued, null, 2));
+      }
+
+      yield* Console.log(`Queued ${queued.job} again as ${queued.id}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Run a finished run again, a heal as the same heal, and dismiss the old one",
+  ),
+);
+
+const dismiss = Command.make(
+  "dismiss",
+  {
+    run: Argument.String("run").pipe(Argument.withDescription("The run's ID")),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const dismissed = yield* client.runs.dismiss({
+        params: { id: input.run },
+      });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(dismissed, null, 2));
+      }
+
+      yield* Console.log(`Dismissed ${dismissed.job} run ${dismissed.id}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Clear what a run left for a person, and its inbox entry",
+  ),
+);
+
 const unpark = Command.make(
   "unpark",
   {
@@ -685,6 +741,8 @@ const upkeep = Command.make("upkeep").pipe(
     runs,
     log,
     cancel,
+    retry,
+    dismiss,
     unpark,
     pause,
     resume,

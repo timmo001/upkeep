@@ -231,6 +231,67 @@ test("a heal's record fills in as its worker reports", () =>
     }),
   ));
 
+test("dismissing a heal's entry or run clears what it needs", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      /** A finished heal of bump for `repo` that chose a fix and needs a person. */
+      const needing = Effect.fnUntraced(function* (repo: string) {
+        yield* store.queueRun({
+          job: "heal",
+          trigger: "heal",
+          release: null,
+          heal: {
+            of: `failed-${repo}`,
+            job: "bump",
+            target: { kind: "consumer", repo },
+          },
+        });
+
+        const id = Option.getOrThrow(
+          yield* store.claim(["heal"], "desktop"),
+        ).id;
+
+        yield* store.updateHeal(id, "desktop", { decision: "fix" });
+        yield* store.report(id, "desktop", { attention: true });
+        yield* store.finish(id, "desktop", "succeeded", null);
+
+        return id;
+      });
+
+      const first = yield* needing("timmo001/a");
+      const second = yield* needing("timmo001/b");
+
+      const needs = () =>
+        store
+          .inbox(0)
+          .pipe(
+            Effect.map(({ entries }) =>
+              entries.filter((entry) => entry.kind === "needs"),
+            ),
+          );
+
+      const [entry] = yield* needs();
+
+      expect(entry?.run).toBe(second);
+
+      yield* store.dismiss(entry?.id ?? "");
+
+      expect((yield* store.run(first)).attention).toBe(false);
+      expect((yield* store.run(second)).attention).toBe(false);
+
+      const third = yield* needing("timmo001/c");
+
+      expect((yield* needs()).length).toBe(1);
+
+      const dismissed = yield* store.dismissRun(third);
+
+      expect(dismissed.attention).toBe(false);
+      expect(yield* needs()).toEqual([]);
+    }),
+  ));
+
 test("a newer waiting heal replaces the older one for the same consumer", () =>
   run(
     Effect.gen(function* () {

@@ -23,11 +23,13 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `log`     | Read   | Prints a run's log                                      |
 | `run`     | Write  | Queues a run, reusing one of the same job still waiting |
 | `cancel`  | Write  | Drops a queued run, or stops a running one              |
+| `retry`   | Write  | Runs a finished run again, a heal as the same heal      |
+| `dismiss` | Write  | Clears what a run left for a person                     |
 | `unpark`  | Write  | Lets a parked job be queued again                       |
 | `pause`   | Write  | Turns a job off until it's resumed                      |
 | `resume`  | Write  | Turns a paused job back on                              |
 
-`runs`, `log`, `run`, `cancel`, `unpark`, `pause` and `resume` talk to the server in `UPKEEP_SERVER` as the admin in
+`runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause` and `resume` talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
 Managing tokens stays a CLI command for people, since it
 hands out secrets.

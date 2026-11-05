@@ -1,8 +1,9 @@
 /**
  * `upkeep-run`: one run, what started it, a heal's record when it's a heal,
- * and its log as it grows, with a button to cancel it while it's going.
+ * and its log as it grows, with a button to cancel it while it's going, and
+ * once it's ended, to run it again or dismiss what it left for a person.
  */
-import { mdiArrowLeft, mdiCancel } from "@mdi/js";
+import { mdiArrowLeft, mdiCancel, mdiCheck, mdiReplay } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
@@ -22,8 +23,10 @@ import {
 } from "./ui.ts";
 import {
   cancelRun,
+  dismissRun,
   jobHref,
   jobs,
+  retryRun,
   run,
   runHref,
   runLog,
@@ -243,7 +246,28 @@ export class UpkeepRun extends LitElement {
                   @click=${() => registry.set(cancelRun, current.id)}
                   >Cancel</gw-button
                 >`
-              : null
+              : html`${
+                    current.attention
+                      ? html`<gw-button
+                          slot="actions"
+                          size="small"
+                          appearance="outlined"
+                          variant="neutral"
+                          icon=${mdiCheck}
+                          @click=${() => registry.set(dismissRun, current.id)}
+                          >Dismiss</gw-button
+                        >`
+                      : null
+                  }
+                  <gw-button
+                    slot="actions"
+                    size="small"
+                    appearance="outlined"
+                    variant="neutral"
+                    icon=${mdiReplay}
+                    @click=${() => registry.set(retryRun, current.id)}
+                    >${current.heal === null ? "Run again" : "Heal again"}</gw-button
+                  >`
           }
         </gw-page-header>
         <dl>

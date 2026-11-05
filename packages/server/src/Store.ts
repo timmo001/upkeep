@@ -568,6 +568,13 @@ export class Store extends Context.Service<
     dismiss(
       id: string,
     ): Effect.Effect<Domain.Entry, Api.EntryNotFound | StoreError>;
+    /**
+     * Clear what a run left for a person: its attention, and the entry that
+     * raised it, while it's still about this run.
+     */
+    dismissRun(
+      id: string,
+    ): Effect.Effect<Domain.Run, Api.RunNotFound | StoreError>;
     /** Which of these commits are already in the inbox. */
     known(
       commits: ReadonlyArray<Api.CommitRef>,
@@ -1519,19 +1526,70 @@ export class Store extends Context.Service<
       `;
     }, Effect.mapError(storeError));
 
-    const dismiss = Effect.fn("Store.dismiss")(function* (id: string) {
-      const now = yield* Clock.currentTimeMillis;
+    const dismiss = Effect.fn("Store.dismiss")(
+      function* (id: string) {
+        const now = yield* Clock.currentTimeMillis;
 
-      const [entry] = yield* selectEntries(sql`
-        UPDATE entries SET dismissed_at = ${now}, read_at = coalesce(read_at, ${now})
-        WHERE id = ${id}
-        RETURNING ${entryColumns}
-      `).pipe(Effect.mapError(storeError));
+        const [entry] = yield* selectEntries(sql`
+          UPDATE entries SET dismissed_at = ${now}, read_at = coalesce(read_at, ${now})
+          WHERE id = ${id}
+          RETURNING ${entryColumns}
+        `).pipe(Effect.mapError(storeError));
 
-      if (entry === undefined) return yield* new Api.EntryNotFound({ id });
+        if (entry === undefined) return yield* new Api.EntryNotFound({ id });
 
-      return entry;
-    });
+        if (entry.kind !== "needs") return entry;
+
+        // A heal's entry is shared by every heal of its job that chose the
+        // same, so each of those runs is dealt with, not only the latest.
+        const [row] = yield* sql<{ key: string }>`
+          SELECT key FROM entries WHERE id = ${id}
+        `;
+
+        const heal = /^needs:heal:(.+):(\w+)$/.exec(row?.key ?? "");
+
+        yield* sql`
+          UPDATE runs SET attention = 0
+          WHERE attention = 1 AND (
+            id = ${entry.run}
+            ${
+              heal === null
+                ? sql``
+                : sql`OR (heal_job = ${heal[1]} AND coalesce(heal_decision, 'ask') = ${heal[2]})`
+            }
+          )
+        `;
+
+        return entry;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const dismissRun = Effect.fn("Store.dismissRun")(
+      function* (id: string) {
+        yield* run(id);
+
+        yield* sql`
+          UPDATE entries
+          SET dismissed_at = ${yield* Clock.currentTimeMillis}
+          WHERE run = ${id} AND kind = 'needs' AND dismissed_at IS NULL
+        `;
+
+        const [dismissed] = yield* selectRuns(sql`
+          UPDATE runs SET attention = 0 WHERE id = ${id} RETURNING *
+        `).pipe(Effect.mapError(storeError));
+
+        if (dismissed === undefined)
+          return yield* Effect.die(
+            new Error("The dismissed run wasn't returned"),
+          );
+
+        return dismissed;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
 
     const known = Effect.fn("Store.known")(function* (
       commits: ReadonlyArray<Api.CommitRef>,
@@ -1776,6 +1834,7 @@ export class Store extends Context.Service<
       inbox,
       markRead,
       dismiss,
+      dismissRun,
       known,
       seen,
       needs,

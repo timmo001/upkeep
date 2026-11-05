@@ -476,6 +476,64 @@ const RunsHandlers = HttpApiBuilder.group(
 
         return cancelled;
       }),
+      retry: Effect.fn(function* ({ params }) {
+        const admin = yield* Api.CurrentAdmin;
+
+        return yield* Effect.gen(function* () {
+          const found = yield* store.run(params.id);
+
+          if (found.state === "queued" || found.state === "running")
+            return yield* new Api.RunGoing({
+              id: params.id,
+              state: found.state,
+            });
+
+          const again = {
+            job: found.job,
+            trigger: "manual" as const,
+            release: found.release,
+          };
+
+          const queued = yield* found.heal === null
+            ? queue(again)
+            : queue({
+                ...again,
+                heal: {
+                  of: found.heal.of,
+                  job: found.heal.job,
+                  target: found.heal.target,
+                  issue: found.heal.issue,
+                },
+              });
+
+          yield* store.dismissRun(params.id);
+
+          yield* Effect.logInfo(`Ran ${found.job} again`).pipe(
+            Effect.annotateLogs({ run: params.id, admin: admin.name }),
+          );
+
+          return yield* Option.match(queued, {
+            onNone: () => Effect.die(new Error("A manual run wasn't queued")),
+            onSome: Effect.succeed,
+          });
+        }).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchTag("StoreError", Effect.die),
+        );
+      }),
+      dismiss: Effect.fn(function* ({ params }) {
+        const admin = yield* Api.CurrentAdmin;
+
+        const dismissed = yield* store
+          .dismissRun(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        yield* Effect.logInfo(`Dismissed ${dismissed.job}`).pipe(
+          Effect.annotateLogs({ run: params.id, admin: admin.name }),
+        );
+
+        return dismissed;
+      }),
     });
   }),
 );

@@ -116,6 +116,17 @@ export class RunFinished extends Schema.TaggedError<RunFinished>()(
   }
 }
 
+/** A run that hasn't ended yet, so it can't be run again. */
+export class RunGoing extends Schema.TaggedError<RunGoing>()(
+  "RunGoing",
+  { id: Schema.String, state: RunState },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `Run ${this.id} is still ${this.state}`;
+  }
+}
+
 /** A repository the server doesn't track. */
 export class RepoNotTracked extends Schema.TaggedError<RepoNotTracked>()(
   "RepoNotTracked",
@@ -341,6 +352,25 @@ export class RunsGroup extends HttpApiGroup.make("runs")
       params: { id: Schema.String },
       success: Cancelled,
       error: [RunNotFound, RunFinished],
+    }),
+    /**
+     * Run a finished run again: its job for the same release, or for a heal,
+     * the same heal. A parked job runs too, as it does when run by hand. The
+     * run is dismissed, as it's been dealt with. Returns the new run.
+     */
+    HttpApiEndpoint.post("retry", "/:id/retry", {
+      params: { id: Schema.String },
+      success: Run,
+      error: [RunNotFound, RunGoing],
+    }),
+    /**
+     * Clear what a run left for a person: the run stops needing attention
+     * and its inbox entry is dismissed.
+     */
+    HttpApiEndpoint.post("dismiss", "/:id/dismiss", {
+      params: { id: Schema.String },
+      success: Run,
+      error: RunNotFound,
     }),
   )
   .middleware(AdminAuthorization)

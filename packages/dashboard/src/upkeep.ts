@@ -215,6 +215,32 @@ export const cancelRun = UpkeepApi.runtime.fn((id: string) =>
   ),
 );
 
+/** Run a finished run again, then show the new run. */
+export const retryRun = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.runs.retry({ params: { id } })).pipe(
+    asDefects,
+    Effect.tap((queued) =>
+      Effect.sync(() => {
+        history.pushState(
+          null,
+          "",
+          new URL(runHref(queued.id), document.baseURI).href,
+        );
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }),
+    ),
+    Effect.ensuring(Reactivity.invalidate([...runsKey, ...inboxKey])),
+  ),
+);
+
+/** Clear what a run left for a person, and its inbox entry. */
+export const dismissRun = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.runs.dismiss({ params: { id } })).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate([...runsKey, ...inboxKey])),
+  ),
+);
+
 export type Route = Data.TaggedEnum<{
   Inbox: {};
   Repos: {};
