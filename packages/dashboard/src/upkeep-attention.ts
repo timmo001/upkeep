@@ -284,8 +284,8 @@ const statusTones: Record<Domain.StatusLabel, string> = {
   future: "neutral",
 };
 
-/** How many of each section's changes show before the rest fold away. */
-const maxChanges = 15;
+/** How many links to what moved the Since you last looked line shows. */
+const maxSummaryLinks = 5;
 
 export class UpkeepAttention extends LitElement {
   static override styles = [
@@ -328,6 +328,35 @@ export class UpkeepAttention extends LitElement {
 
       .title {
         font-weight: var(--gw-font-weight-strong);
+      }
+
+      .since {
+        display: flex;
+        gap: var(--gw-space-3);
+        align-items: center;
+        min-width: 0;
+      }
+
+      .since > * {
+        flex: none;
+      }
+
+      /* The links take what room is left, cut off at the end */
+      .since > .since-links {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        font-size: var(--gw-font-size-s);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .since-links > a + a {
+        margin-inline-start: var(--gw-space-3);
+      }
+
+      .since + .changes {
+        margin-top: var(--gw-space-2);
       }
 
       .body {
@@ -465,6 +494,9 @@ export class UpkeepAttention extends LitElement {
 
   /** Whether the prompt open now saves with nothing typed. */
   #optional = false;
+
+  /** Whether Since you last looked shows its full list. */
+  #sinceOpen = false;
 
   /** Workers that can open an agent, and the one used last here. */
   readonly #agents = new AtomController(this, () => agents, always);
@@ -1073,31 +1105,52 @@ export class UpkeepAttention extends LitElement {
       return !change.gone && (isWork === undefined || inScope(isWork, scope));
     });
 
-    return html`<gw-card
-      heading="Since you last looked"
-      description=${
-        page.since === null
-          ? "What moved lately. Next time, this starts from this visit."
-          : `What moved since ${new Date(page.since).toLocaleString()}`
-      }
-    >
+    const open = this.#sinceOpen && changes.length > 0;
+    const more = changes.length - maxSummaryLinks;
+
+    // One line of links to what moved, with the full list folded away
+    return html`<gw-card>
+      <div class="since">
+        <span class="title">Since you last looked</span>
+        <span class="meta"
+          >${
+            changes.length === 0
+              ? "Nothing moved"
+              : plural(changes.length, "change")
+          }${
+            page.since === null
+              ? nothing
+              : html`, since ${new Date(page.since).toLocaleString()}`
+          }</span
+        >
+        <span class="since-links">
+          ${changes
+            .slice(0, maxSummaryLinks)
+            .map((change) => externalLink(change.url, change.title))}
+        </span>
+        ${more > 0 ? html`<span class="meta">+${more}</span>` : nothing}
+        ${
+          changes.length === 0
+            ? nothing
+            : html`<gw-button
+                size="xs"
+                appearance="plain"
+                variant="neutral"
+                aria-expanded=${open ? "true" : "false"}
+                @click=${() => {
+                  this.#sinceOpen = !this.#sinceOpen;
+                  this.requestUpdate();
+                }}
+                >${open ? "Hide" : "Details"}</gw-button
+              >`
+        }
+      </div>
       ${
-        changes.length === 0
-          ? html`<p class="description">Nothing moved.</p>`
-          : html`<ul class="changes">
-                ${changes.slice(0, maxChanges).map(line)}
-              </ul>
-              ${
-                changes.length > maxChanges
-                  ? html`<gw-expansion
-                      heading=${`${plural(changes.length - maxChanges, "more change")}`}
-                    >
-                      <ul class="changes">
-                        ${changes.slice(maxChanges).map(line)}
-                      </ul>
-                    </gw-expansion>`
-                  : nothing
-              }`
+        open
+          ? html`<ul class="changes">
+              ${changes.map(line)}
+            </ul>`
+          : nothing
       }
     </gw-card>`;
   }
