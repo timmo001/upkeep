@@ -78,6 +78,16 @@ const Attention = Schema.Struct({
       command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
     }),
   ),
+  /**
+   * The OpenCode model and variant the context agent runs on, best a quick
+   * one; the first of `heal.agents` by default.
+   */
+  agent: Schema.optionalKey(
+    Schema.Struct({
+      model: Schema.String,
+      variant: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 
 export type Attention = typeof Attention.Type;

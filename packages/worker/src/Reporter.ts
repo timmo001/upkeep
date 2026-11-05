@@ -70,6 +70,12 @@ export class Reporter extends Context.Service<
       },
       unknown
     >;
+    /** The Attention page as the dashboard reads it, for the context agent. */
+    readonly attentionPage: () => Effect.Effect<Domain.Attention, unknown>;
+    /** Send what the context agent made of what it was given. */
+    readonly attentionContext: (
+      context: Api.AttentionContext,
+    ) => Effect.Effect<void, unknown>;
     /**
      * Report the run's summary, a commit it pushed, or that it needs a
      * person. A report that can't be sent is logged rather than failing the run.
@@ -149,6 +155,9 @@ export class Reporter extends Context.Service<
             return added;
           }),
           attention: (snapshot) => client.work.attention({ payload: snapshot }),
+          attentionPage: () => client.work.attentionPage(),
+          attentionContext: (context) =>
+            client.work.attentionContext({ payload: context }),
           report: (report) =>
             client.work
               .report({ params, payload: report })
@@ -203,6 +212,12 @@ export class Reporter extends Context.Service<
             Effect.provide(RunLog.RunLog.console),
             Effect.as({ added: 0, changed: 0, gone: 0 }),
           ),
+        attentionPage: () =>
+          Effect.fail("The context agent reads the page on a worker"),
+        attentionContext: (context) =>
+          RunLog.info(
+            `Would send ${context.notes.length} notes, ${context.followUps.length} follow-ups and ${context.comments.length} answers`,
+          ).pipe(Effect.provide(RunLog.RunLog.console)),
         report: () => Effect.void,
       }),
     );

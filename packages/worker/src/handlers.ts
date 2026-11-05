@@ -1,5 +1,6 @@
 /** What each job in the catalogue does on a worker, by job ID. */
 import { attention } from "./jobs/attention";
+import { attentionContext } from "./jobs/attention-context";
 import { bump } from "./jobs/bump";
 import { ci } from "./jobs/ci";
 import { command as runCommand } from "./jobs/command";
@@ -29,5 +30,6 @@ export const handlers: Handlers = {
   deps: () => deps(),
   ci: () => ci(),
   summary: () => summary(),
+  "attention-context": () => attentionContext(),
   command: (_release, command) => runCommand(command),
 };
