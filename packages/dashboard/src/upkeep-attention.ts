@@ -377,6 +377,12 @@ export class UpkeepAttention extends LitElement {
     const needs = of("needs-you").length;
     const collecting = this.#collecting();
 
+    // A refresh this soon after the last collection would queue nothing
+    const minutesLeft =
+      page.refreshAt === null
+        ? 0
+        : Math.ceil((page.refreshAt - Date.now()) / 60_000);
+
     return html`
       <gw-stack gap="l">
         <gw-page-header
@@ -417,9 +423,15 @@ export class UpkeepAttention extends LitElement {
             variant="neutral"
             icon=${mdiRefresh}
             ?loading=${collecting}
-            ?disabled=${collecting}
+            ?disabled=${collecting || minutesLeft > 0}
             @click=${() => registry.set(openAttention, undefined)}
-            >${collecting ? "Collecting" : "Refresh"}</gw-button
+            >${
+              collecting
+                ? "Collecting"
+                : minutesLeft > 0
+                  ? `Refresh in ${minutesLeft} min`
+                  : "Refresh"
+            }</gw-button
           >
         </gw-page-header>
 

@@ -291,6 +291,9 @@ export const inboxDays = 7;
 /** The most attention items one collection carries. */
 export const maxAttention = 2000;
 
+/** How old the attention job's last run is before a refresh runs it again. */
+export const attentionRefreshMs = 5 * 60_000;
+
 /**
  * What the attention job found: every item in scope. With `complete`, any
  * item it no longer found is gone, closed or no longer involving you; a run

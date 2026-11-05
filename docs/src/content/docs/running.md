@@ -468,8 +468,9 @@ server, which sorts each item into a section by its signals, with no model:
   **Watching** (everyone else's), folded away.
 
 Each run sends the full set, and the server only logs what moved since the
-last one, which **Since you last looked** shows. Opening the page queues a run
-when the last one is more than 5 minutes old. Notifications and base branches
+last one, which **Since you last looked** shows. Opening the page, or its
+Refresh button, queues a run when the last one is more than 5 minutes old;
+until then, the button is disabled and says how long is left. Notifications and base branches
 are read conditionally, so a quiet run costs little.
 
 The `attention` section of the worker's config file sets the rest. `searches`

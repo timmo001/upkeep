@@ -1872,11 +1872,32 @@ export class Store extends Context.Service<
         }),
       );
 
+      // The refresh endpoint's rule: a run waiting, running or finished
+      // within the window means a refresh would queue nothing
+      const [last] = yield* sql<{
+        state: string;
+        finishedAt: number | null;
+        queuedAt: number;
+      }>`
+        SELECT state, finished_at, queued_at FROM runs
+        WHERE job = ${Catalogue.attention.id}
+        ORDER BY queued_at DESC
+        LIMIT 1
+      `;
+
+      const refreshAt =
+        last === undefined ||
+        last.state === "queued" ||
+        last.state === "running"
+          ? null
+          : (last.finishedAt ?? last.queuedAt) + Api.attentionRefreshMs;
+
       return {
         items,
         groups,
         comments,
         rules,
+        refreshAt: refreshAt !== null && refreshAt > now ? refreshAt : null,
         changes: changes.map((change) => ({
           ...change,
           gone: change.gone !== 0,

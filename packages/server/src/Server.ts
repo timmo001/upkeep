@@ -881,9 +881,6 @@ const WorkHandlers = HttpApiBuilder.group(
   }),
 );
 
-/** How old the attention job's last run is before opening the page runs it. */
-const refreshAfterMs = 5 * 60_000;
-
 const AttentionHandlers = HttpApiBuilder.group(
   Api.Api,
   "attention",
@@ -902,7 +899,7 @@ const AttentionHandlers = HttpApiBuilder.group(
           last !== undefined &&
           (last.state === "queued" ||
             last.state === "running" ||
-            now - (last.finishedAt ?? last.queuedAt) < refreshAfterMs);
+            now - (last.finishedAt ?? last.queuedAt) < Api.attentionRefreshMs);
 
         if (fresh) return { run: null };
 

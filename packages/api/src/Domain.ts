@@ -737,6 +737,11 @@ export const Attention = Schema.Struct({
   since: Schema.NullOr(Schema.Finite),
   /** When a worker last sent what it found, or null before the first. */
   collectedAt: Schema.NullOr(Schema.Finite),
+  /**
+   * When a refresh can next queue a collection, or null when it can now or
+   * one is already waiting or running.
+   */
+  refreshAt: Schema.NullOr(Schema.Finite),
   /** Whether it's work time, as the worker last said, or null when unknown. */
   workTime: Schema.NullOr(Schema.Boolean),
   /** Days without activity before an item is going stale. */
