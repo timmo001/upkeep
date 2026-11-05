@@ -727,6 +727,9 @@ const attentionChangeDays = 30;
 /** How far back Since you last looked reaches the first time. */
 const firstLookHours = 24;
 
+/** How far back the page's history of what went reaches. */
+const goneDays = 7;
+
 /** How far back the inbox is filled from runs the first time it starts. */
 const backfillHours = 48;
 
@@ -1916,11 +1919,14 @@ export class Store extends Context.Service<
         };
       });
 
+      // What moved since you last looked, and what went over the last week
+      // whenever you looked, which the page keeps apart as a history
       const changes = yield* sql`
         SELECT url, repo, title, at, what, gone FROM attention_changes
-        WHERE at > ${since ?? now - firstLookHours * 3_600_000}
+        WHERE (gone = 0 AND at > ${since ?? now - firstLookHours * 3_600_000})
+          OR (gone = 1 AND at > ${now - goneDays * 86_400_000})
         ORDER BY at DESC
-        LIMIT 500
+        LIMIT 1000
       `.pipe(Effect.flatMap(decodeAttentionChanges));
 
       const links = yield* sql`

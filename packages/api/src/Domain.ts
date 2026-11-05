@@ -746,6 +746,7 @@ export const Attention = Schema.Struct({
   groups: Schema.Array(AttentionGroup),
   comments: Schema.Array(AttentionComment),
   rules: Schema.Array(AttentionRule),
+  /** What moved since you last looked, and what went over the last week. */
   changes: Schema.Array(AttentionChange),
   /** When you last looked before this visit, or null the first time. */
   since: Schema.NullOr(Schema.Finite),

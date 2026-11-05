@@ -184,6 +184,28 @@ const chosen = (event: Event) => {
   });
 };
 
+/** One thing that moved on an item, or its going. */
+const line = (change: Domain.AttentionChange) =>
+  html`<li>
+    ${icon(change.gone ? mdiCheckCircleOutline : mdiRefresh)}
+    <div class="body">
+      <span class=${change.gone ? "title gone" : "title"}
+        >${externalLink(change.url, change.title)}</span
+      >
+      <div class="meta">
+        <span>${change.repo}</span>
+        <span>${time(change.at)}</span>
+        ${
+          change.gone
+            ? html`<gw-chip size="xs" tone="success">Gone</gw-chip>`
+            : change.what.map(
+                (what) => html`<gw-chip size="xs">${what}</gw-chip>`,
+              )
+        }
+      </div>
+    </div>
+  </li>`;
+
 /** A group with the items it shows now, and the section it sits in. */
 interface Block {
   readonly group: Domain.AttentionGroup;
@@ -589,36 +611,31 @@ export class UpkeepAttention extends LitElement {
     </li>`;
   }
 
+  /** What went over the last week, whatever the scope, as a history. */
+  #gone(page: Domain.Attention) {
+    const gone = page.changes.filter((change) => change.gone);
+
+    return gone.length === 0
+      ? nothing
+      : html`<gw-expansion
+          heading=${`Gone (${gone.length})`}
+          description="Closed, or no longer involving you, over the last week"
+        >
+          <ul class="changes">
+            ${gone.map(line)}
+          </ul>
+        </gw-expansion>`;
+  }
+
   #changes(page: Domain.Attention, scope: Scope) {
     const work = new Map(page.items.map((item) => [item.url, item.work]));
 
-    // A change to an item that's gone shows whatever the scope
+    // What went is kept apart, under Gone
     const changes = page.changes.filter((change) => {
       const isWork = work.get(change.url);
 
-      return isWork === undefined || inScope(isWork, scope);
+      return !change.gone && (isWork === undefined || inScope(isWork, scope));
     });
-
-    const line = (change: Domain.AttentionChange) =>
-      html`<li>
-        ${icon(change.gone ? mdiCheckCircleOutline : mdiRefresh)}
-        <div class="body">
-          <span class=${change.gone ? "title gone" : "title"}
-            >${externalLink(change.url, change.title)}</span
-          >
-          <div class="meta">
-            <span>${change.repo}</span>
-            <span>${time(change.at)}</span>
-            ${
-              change.gone
-                ? html`<gw-chip size="xs" tone="success">Gone</gw-chip>`
-                : change.what.map(
-                    (what) => html`<gw-chip size="xs">${what}</gw-chip>`,
-                  )
-            }
-          </div>
-        </div>
-      </li>`;
 
     return html`<gw-card
       heading="Since you last looked"
@@ -850,6 +867,7 @@ export class UpkeepAttention extends LitElement {
                         </ul>
                       </gw-expansion>`
                 }
+                ${this.#gone(page)}
               `
         }
       </gw-stack>

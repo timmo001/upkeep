@@ -477,7 +477,9 @@ the top, or **Parked** to fold it away. Its menu adds an outside wait, such as
 a release next month, or renames it.
 
 Each run sends the full set, and the server only logs what moved since the
-last one, which **Since you last looked** shows. Opening the page, or its
+last one, which **Since you last looked** shows. What closed or no longer
+involves you is kept apart, folded away under **Gone** as a history of the
+last week. Opening the page, or its
 Refresh button, queues a run when the last one is more than 5 minutes old;
 until then, the button is disabled and says how long is left. Notifications and base branches
 are read conditionally, so a quiet run costs little.

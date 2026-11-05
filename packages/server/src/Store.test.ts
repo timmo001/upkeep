@@ -45,23 +45,25 @@ test("attention only logs what moved, and drops items only when complete", () =>
     Effect.gen(function* () {
       const store = yield* Store;
 
+      const all = [found(1), found(2), found(3)];
+
       // Everything is new on the first collection, so none of it is logged
-      yield* store.recordAttention(snapshot([found(1), found(2)]));
+      yield* store.recordAttention(snapshot(all));
       expect((yield* store.attention()).changes).toHaveLength(0);
 
-      const same = yield* store.recordAttention(snapshot([found(1), found(2)]));
+      const same = yield* store.recordAttention(snapshot(all));
 
       expect(same).toEqual({ added: 0, changed: 0, gone: 0 });
 
       // A partial collection keeps what it didn't find
       yield* store.recordAttention(snapshot([found(1)], false));
-      expect((yield* store.attention()).items).toHaveLength(2);
+      expect((yield* store.attention()).items).toHaveLength(3);
 
       const moved = yield* store.recordAttention(
         snapshot([found(1, [{ kind: "failing-checks", detail: null }])]),
       );
 
-      expect(moved).toEqual({ added: 0, changed: 1, gone: 1 });
+      expect(moved).toEqual({ added: 0, changed: 1, gone: 2 });
 
       const page = yield* store.attention();
 
@@ -75,6 +77,7 @@ test("attention only logs what moved, and drops items only when complete", () =>
         expect.arrayContaining([
           ["Pull 1", ["New: failing checks"], false],
           ["Pull 2", ["Closed, or no longer involves you"], true],
+          ["Pull 3", ["Closed, or no longer involves you"], true],
         ]),
       );
     }),
