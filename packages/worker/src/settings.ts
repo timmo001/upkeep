@@ -66,6 +66,14 @@ export const Settings = Schema.Struct({
        * matches and sets what an updater's rules do, such as `automerge`.
        */
       rules: Schema.optionalKey(Schema.Array(Rule)),
+      /**
+       * Repositories, as `owner/name`, whose updates Upkeep owns are applied,
+       * checked and pushed to the default branch, one group at a time. None
+       * by default, so the job only plans.
+       */
+      apply: Schema.optionalKey(Schema.Array(Schema.String)),
+      /** Log what applying would push instead of pushing it; on by default. */
+      dryRun: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   bump: Schema.optionalKey(

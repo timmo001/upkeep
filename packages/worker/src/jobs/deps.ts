@@ -2,22 +2,24 @@
  * The deps job: read each repository's dependency updater config, find its
  * dependencies and the releases its policy allows, and log the groups of
  * updates the updater would open, with who owns each: the updater when it
- * automerges the group, otherwise Upkeep. It changes nothing yet; this is
- * the read-only first stage of Upkeep's own dependency updater (#5).
+ * automerges the group, otherwise Upkeep. In the repositories set to apply,
+ * Upkeep's groups are applied, checked and pushed one at a time, as a dry
+ * run unless that's turned off (#5).
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Effect, Option, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import * as Applier from "../deps/Applier";
 import { Datasources } from "../deps/Datasources";
 import * as Managers from "../deps/Managers";
 import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
-import { listed, summary, trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
-import { reason } from "./bump";
+import * as Bump from "./bump";
 
 const User = Schema.Struct({ login: Schema.String });
 
@@ -208,11 +210,183 @@ const planRepository = Effect.fnUntraced(function* (
   return Option.some(groups);
 });
 
+/** The commit subject for a group, as Renovate titles its pull request. */
+const subject = (group: Planner.Group) => {
+  const names = new Set(
+    group.updates.map((update) => update.dependency.depName),
+  );
+
+  const [first] = group.updates;
+
+  if (names.size !== 1 || first === undefined) return `Update ${group.name}`;
+
+  return first.updateType === "digest"
+    ? `Update ${first.dependency.depName} digest to ${first.to}`
+    : `Update ${first.dependency.depName} to ${first.to}`;
+};
+
+interface ApplyContext {
+  /** Where clones live, which mise is told to trust. */
+  readonly root: string;
+  readonly checks: ReadonlyArray<string> | undefined;
+  readonly dryRun: boolean;
+}
+
+/**
+ * Apply one group in a clean checkout, refresh its lockfiles, run the
+ * repository's checks, then push the checked commit and watch its CI.
+ */
+const applyGroup = Effect.fnUntraced(function* (
+  repo: string,
+  branch: string,
+  group: Planner.Group,
+  context: ApplyContext,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = path.join(context.root, repo);
+  const options = { cwd: directory, trusted: context.root };
+
+  yield* Bump.checkout(repo, branch, directory, context.root);
+
+  const files = new Set(group.updates.map((update) => update.dependency.file));
+
+  for (const file of files) {
+    const target = path.join(directory, file);
+    let text = yield* fs.readFileString(target);
+
+    for (const update of group.updates) {
+      if (update.dependency.file !== file) continue;
+
+      const edit = Applier.apply(update, text);
+
+      if (Applier.Edit.$is("Unsupported")(edit))
+        return yield* new DepsError({
+          message: `${update.dependency.depName} in ${file}: ${edit.reason}`,
+        });
+
+      text = edit.text;
+    }
+
+    yield* fs.writeFileString(target, text);
+  }
+
+  const edited = (yield* Bump.run("git", ["diff", "--name-only"], options))
+    .split("\n")
+    .filter((file) => file !== "");
+
+  if (edited.length === 0) {
+    yield* RunLog.info(`${repo}: renovate/${group.branch} is already applied`);
+
+    return false;
+  }
+
+  const mise = yield* Bump.usesMise(directory);
+
+  yield* Bump.install(
+    directory,
+    edited.filter((file) => path.basename(file) === "package.json"),
+    { trusted: context.root, mise },
+  );
+
+  if (
+    edited.some((file) => /(?:^|\/)\.?mise\.toml$/.test(file)) &&
+    (yield* fs.exists(path.join(directory, "mise.lock")))
+  )
+    yield* Bump.run("mise", ["lock"], options);
+
+  const changed = (yield* Bump.run("git", ["diff", "--name-only"], options))
+    .split("\n")
+    .filter((file) => file !== "");
+
+  // Workflows alone are checked by CI once they're pushed
+  if (changed.some((file) => !file.startsWith(".github/"))) {
+    const ran = yield* Bump.check(context.checks, { ...options, mise });
+
+    yield* ran.length === 0
+      ? RunLog.warn(
+          `${repo}: has no check or build task, so nothing ran before the push`,
+        )
+      : RunLog.info(`${repo}: ${ran.join(", ")} passed`);
+  }
+
+  const message = subject(group);
+
+  if (context.dryRun) {
+    yield* RunLog.info(
+      `${repo}: would push "${message}" (${changed.join(", ")})`,
+    );
+
+    return true;
+  }
+
+  yield* Bump.run("git", ["add", "--", ...changed], options);
+
+  const sha = yield* Bump.commitAndPush(message, branch, options);
+
+  yield* pushed(repo, sha, message);
+
+  yield* RunLog.info(
+    `${repo}: pushed ${sha.slice(0, 7)} "${message}", watching CI`,
+  );
+
+  const runs = yield* Bump.watch(repo, sha);
+
+  yield* RunLog.info(
+    runs === 0
+      ? `${repo}: no CI ran on ${sha.slice(0, 7)}`
+      : `${repo}: CI passed`,
+  );
+
+  return true;
+});
+
+/**
+ * Apply each group Upkeep owns, in order. A group that fails is logged and
+ * left, and the rest still go. Returns how many applied and which failed.
+ */
+const applyRepository = Effect.fnUntraced(function* (
+  repo: string,
+  branch: string,
+  groups: ReadonlyArray<Planner.Group>,
+  context: ApplyContext,
+) {
+  let applied = 0;
+  const failed: Array<string> = [];
+
+  for (const group of groups) {
+    if (group.owner !== "upkeep") continue;
+
+    yield* applyGroup(repo, branch, group, context).pipe(
+      Effect.tap((done) =>
+        Effect.sync(() => {
+          if (done) applied += 1;
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        RunLog.warn(
+          `${repo}: renovate/${group.branch}: ${Bump.reason(cause)}`,
+        ).pipe(Effect.andThen(Effect.sync(() => failed.push(group.branch)))),
+      ),
+    );
+  }
+
+  return { applied, failed };
+});
+
 /** Plan every tracked repository with an updater config, two at a time. */
 export const deps = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
   const extras = settings.deps;
   const tracked = yield* trackedFor(Catalogue.deps.id);
+  const path = yield* Path.Path;
+
+  const applying = new Set(
+    (extras?.apply ?? []).map((repo) => repo.toLowerCase()),
+  );
+
+  const dryRun = extras?.dryRun !== false;
+  const root = path.join(path.dirname(yield* Bump.cacheRoot), "deps");
 
   const repos = (yield* repositories()).filter((repo) =>
     tracked(repo.full_name),
@@ -220,24 +394,50 @@ export const deps = Effect.fnUntraced(function* () {
 
   yield* RunLog.info(`Reading dependencies in ${repos.length} repositories`);
 
+  if (applying.size > 0)
+    yield* RunLog.info(
+      `${dryRun ? "Dry run: applying" : "Applying"} updates in ${[...applying].toSorted().join(", ")}`,
+    );
+
   const failed: Array<string> = [];
   let planned = 0;
   let groups = 0;
+  let applied = 0;
 
   yield* Effect.forEach(
     repos,
     (repo) =>
-      planRepository(repo.full_name, repo.default_branch, extras).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            if (Option.isSome(result)) {
-              planned += 1;
-              groups += result.value.length;
-            }
-          }),
-        ),
+      Effect.gen(function* () {
+        const result = yield* planRepository(
+          repo.full_name,
+          repo.default_branch,
+          extras,
+        );
+
+        if (Option.isNone(result)) return;
+
+        planned += 1;
+        groups += result.value.length;
+
+        if (!applying.has(repo.full_name.toLowerCase())) return;
+
+        const outcome = yield* applyRepository(
+          repo.full_name,
+          repo.default_branch,
+          result.value,
+          {
+            root,
+            checks: settings.bump?.repos?.[repo.full_name]?.checks,
+            dryRun,
+          },
+        );
+
+        applied += outcome.applied;
+
+        if (outcome.failed.length > 0) failed.push(repo.full_name);
+      }).pipe(
         Effect.catchCause((cause) =>
-          RunLog.warn(`${repo.full_name}: ${reason(cause)}`).pipe(
+          RunLog.warn(`${repo.full_name}: ${Bump.reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push(repo.full_name))),
           ),
         ),
@@ -246,7 +446,13 @@ export const deps = Effect.fnUntraced(function* () {
   ).pipe(Effect.provide([Datasources.layer, Updaters.layer]));
 
   yield* summary(
-    `Planned updates for ${planned} repositories, ${groups} groups, ${listed(failed.toSorted())} failed`,
+    [
+      `Planned updates for ${planned} repositories, ${groups} groups,`,
+      ...(applying.size > 0
+        ? [`${dryRun ? "would apply" : "applied"} ${applied},`]
+        : []),
+      `${listed(failed.toSorted())} failed`,
+    ].join(" "),
   );
 
   if (failed.length > 0)

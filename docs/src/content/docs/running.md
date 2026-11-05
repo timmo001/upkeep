@@ -366,7 +366,7 @@ by default.
 | `notifications`   | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
 | `stalled-updates` | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`           | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
-| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. It changes nothing yet.                                                                                                                                                                                                                                      |
+| `deps`            | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                                    |
 | `ci`              | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `summary`         | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 
@@ -403,6 +403,30 @@ XDG config directory:
     "repos": {
       "owner/name": { "checks": ["npm test", "npm run build"] }
     }
+  }
+}
+```
+
+### Deps
+
+In the repositories listed in `deps.apply` in the worker's config file, the
+`deps` job also applies each group of updates Upkeep owns, one at a time: it
+edits the `package.json`, mise config or workflow the update was read from,
+installs where a `package.json` changed, runs `mise lock` where a mise config
+with a `mise.lock` changed, and checks the result as a bump does (with the
+same per-repository checks). The checked commit is pushed to the default
+branch and its CI watched. Groups Renovate automerges are left to it, and a
+group that fails is logged and left while the rest go on. Clones are kept in
+`upkeep/deps` in the XDG cache directory.
+
+Applying is a dry run by default, logging what would be pushed. Set
+`deps.dryRun` to `false` to push:
+
+```json
+{
+  "deps": {
+    "apply": ["owner/name"],
+    "dryRun": false
   }
 }
 ```

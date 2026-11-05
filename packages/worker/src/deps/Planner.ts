@@ -110,6 +110,8 @@ export interface Update {
   readonly branch: string;
   /** In range, so only the lockfile moves. */
   readonly lockfile: boolean;
+  /** The full commit it moves to, when the dependency is pinned to one. */
+  readonly digest?: string | undefined;
 }
 
 /** Why a dependency has no update, when it's worth saying. */
@@ -259,6 +261,7 @@ export const updatesFor = (
           settings,
           branch: branchFor(withSource, settings, "digest", undefined, false),
           lockfile: false,
+          digest: head.digest,
         },
       ],
     };
@@ -361,6 +364,7 @@ export const updatesFor = (
         settings,
         branch: branchFor(withSource, settings, updateType, next, false),
         lockfile: false,
+        digest: release.digest,
         version: next,
       });
 
@@ -448,6 +452,8 @@ export const updatesFor = (
       settings,
       branch: branchFor(withSource, settings, updateType, next, lockfile),
       lockfile,
+      digest:
+        withSource.currentDigest === undefined ? undefined : release.digest,
       version: next,
     });
   }
