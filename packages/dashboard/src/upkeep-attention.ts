@@ -3,7 +3,7 @@
  * What moved since you last looked comes first, then pull requests and issues
  * by section: what needs you, what's blocked, what's going stale and what
  * waits on others, with the rest folded away under Watching. Groups of work,
- * from GitHub's links or made by hand, show as cards: pinned under Today,
+ * from GitHub's links or made by hand, show as folding panels: pinned under Today,
  * in the section of their most urgent item, or folded away when parked, with
  * what each waits on outside GitHub. A filter splits
  * work from personal, defaulting by whether it's work time. Opening the page
@@ -13,8 +13,6 @@ import {
   mdiBellOutline,
   mdiCheck,
   mdiCheckCircleOutline,
-  mdiChevronDown,
-  mdiChevronUp,
   mdiClockOutline,
   mdiClose,
   mdiCommentOutline,
@@ -36,6 +34,7 @@ import {
   mdiTagOutline,
 } from "@mdi/js";
 import { Domain } from "@upkeep/api";
+import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
@@ -67,7 +66,6 @@ import {
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/gw-expansion.ts";
 import "@timmo001/groundwork-ui/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
@@ -415,8 +413,11 @@ export class UpkeepAttention extends LitElement {
     ),
   );
 
-  #toggle(group: string) {
-    if (!this.#collapsed.delete(group)) this.#collapsed.add(group);
+  #setCollapsed(group: string, collapsed: boolean) {
+    if (this.#collapsed.has(group) === collapsed) return;
+
+    if (collapsed) this.#collapsed.add(group);
+    else this.#collapsed.delete(group);
 
     localStorage.setItem(collapsedKey, JSON.stringify([...this.#collapsed]));
     this.requestUpdate();
@@ -596,31 +597,30 @@ export class UpkeepAttention extends LitElement {
     ></gw-menu-button>`;
   }
 
-  /** A group as a card: its items, what it waits on, and its controls. */
+  /**
+   * A group as a panel that folds like the sections around it: its items,
+   * what it waits on, and its controls beside the heading.
+   */
   #block(block: Block, since: number | null) {
     const { group } = block;
 
     const focus =
       focuses.find((each) => each.value === group.focus) ?? focuses[1];
 
-    const collapsed = this.#collapsed.has(group.id);
-
-    return html`<gw-card
+    return html`<gw-expansion
       heading=${group.name}
-      level="3"
       description=${`${group.source === "github" ? "Linked on GitHub" : "Grouped by you"}, ${plural(block.items.length, "item")}`}
+      ?open=${!this.#collapsed.has(group.id)}
+      @toggle=${(event: Event) => {
+        // Expansions inside the group bubble their toggle up through it
+        if (
+          event.target === event.currentTarget &&
+          event.currentTarget instanceof GwExpansion
+        ) {
+          this.#setCollapsed(group.id, !event.currentTarget.open);
+        }
+      }}
     >
-      <gw-button
-        slot="actions"
-        size="xs"
-        appearance="plain"
-        variant="neutral"
-        labels="hide"
-        icon=${collapsed ? mdiChevronDown : mdiChevronUp}
-        label=${collapsed ? "Expand" : "Collapse"}
-        aria-expanded=${collapsed ? "false" : "true"}
-        @click=${() => this.#toggle(group.id)}
-      ></gw-button>
       <span slot="actions">${this.#startMenu({ group: group.id })}</span>
       <gw-menu-button
         slot="actions"
@@ -696,15 +696,15 @@ export class UpkeepAttention extends LitElement {
           }
         }}
       ></gw-menu-button>
-      ${collapsed ? nothing : this.#blockBody(block, since)}
-    </gw-card>`;
+      ${this.#blockBody(block, since)}
+    </gw-expansion>`;
   }
 
-  /** What a group card shows open: follow-up, comments, waits and items. */
+  /** What a group shows open: follow-up, comments, waits and items. */
   #blockBody(block: Block, since: number | null) {
     const { group } = block;
 
-    return html`
+    return html`<gw-stack gap="s">
       ${
         group.followUp === null
           ? nothing
@@ -742,7 +742,7 @@ export class UpkeepAttention extends LitElement {
       <ul class="items">
         ${block.items.map((item) => this.#item(item, since))}
       </ul>
-    `;
+    </gw-stack>`;
   }
 
   override connectedCallback() {
