@@ -88,6 +88,19 @@ const Attention = Schema.Struct({
       variant: Schema.optionalKey(Schema.String),
     }),
   ),
+  /**
+   * How this worker opens an agent for you from the Attention page, which it
+   * offers only with this set. `command` runs in the checkout with `{brief}`
+   * (the brief's file), `{directory}`, `{repo}` (`owner/name`), `{name}` and
+   * `{title}` replaced. `directory` is where your checkouts are, with
+   * `{owner}` and `{name}`; one that isn't there is cloned into the cache.
+   */
+  launch: Schema.optionalKey(
+    Schema.Struct({
+      command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+      directory: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 
 export type Attention = typeof Attention.Type;
@@ -197,6 +210,7 @@ export const agentSetup = (settings: Settings): Domain.AgentSetup => ({
     variant: agent.variant ?? null,
     for: agent.for,
   })),
+  launch: settings.attention?.launch !== undefined,
 });
 
 /** Read the settings, or the defaults when there's no file. */

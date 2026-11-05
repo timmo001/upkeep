@@ -490,6 +490,14 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE attention_groups ADD COLUMN follow_up TEXT`;
     yield* sql`ALTER TABLE attention_groups ADD COLUMN follow_up_at INTEGER`;
   }),
+  // Whether a worker can open an agent for you from the Attention page
+  "0023_worker_launch": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      ALTER TABLE worker_agents ADD COLUMN launch INTEGER NOT NULL DEFAULT 0
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -595,6 +603,7 @@ const decodeAgents = Schema.decodeUnknownEffect(
     Schema.Struct({
       ...Domain.WorkerAgents.fields,
       agents: Schema.fromJsonString(Schema.Array(Domain.Agent)),
+      launch: Schema.Number,
     }),
   ),
 );
@@ -1283,6 +1292,9 @@ export class Store extends Context.Service<
             WHERE state = 'queued' AND ${sql.in("job", jobs)}
               AND (trigger = 'manual'
                 OR job NOT IN (SELECT job FROM paused))
+              -- A command for one worker waits for that one
+              AND coalesce(json_extract(command, '$.worker'), ${worker})
+                = ${worker}
             ORDER BY queued_at, id LIMIT 1
           )
           RETURNING *
@@ -1696,18 +1708,28 @@ export class Store extends Context.Service<
           worker,
           decisions: setup.decisions,
           agents: JSON.stringify(setup.agents),
+          launch: setup.launch ? 1 : 0,
           at: yield* Clock.currentTimeMillis,
         })}
         ON CONFLICT (worker) DO UPDATE
         SET decisions = excluded.decisions, agents = excluded.agents,
-          at = excluded.at
+          launch = excluded.launch, at = excluded.at
       `;
     }, Effect.mapError(storeError));
 
     const agents = Effect.fn("Store.agents")(function* () {
       return yield* sql`
-        SELECT worker, decisions, agents, at FROM worker_agents ORDER BY worker
-      `.pipe(Effect.flatMap(decodeAgents));
+        SELECT worker, decisions, agents, launch, at
+        FROM worker_agents ORDER BY worker
+      `.pipe(
+        Effect.flatMap(decodeAgents),
+        Effect.map((rows) =>
+          rows.map(({ launch, ...row }): Domain.WorkerAgents => ({
+            ...row,
+            launch: launch !== 0,
+          })),
+        ),
+      );
     }, Effect.mapError(storeError));
 
     const attentionState = Effect.fnUntraced(function* () {

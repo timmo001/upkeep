@@ -390,6 +390,33 @@ test("a waiting run of the same job and release isn't queued twice", () =>
     }),
   ));
 
+test("a command for one worker waits for that one", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "command",
+        trigger: "manual",
+        release: null,
+        command: {
+          kind: "start-agent",
+          worker: "desktop",
+          url: "https://github.com/owner/repo/pull/1",
+          group: null,
+          prompt: null,
+        },
+      });
+
+      expect(Option.isNone(yield* store.claim(["command"], "laptop"))).toBe(
+        true,
+      );
+      expect(Option.isSome(yield* store.claim(["command"], "desktop"))).toBe(
+        true,
+      );
+    }),
+  ));
+
 test("only the worker running a run can report on it", () =>
   run(
     Effect.gen(function* () {

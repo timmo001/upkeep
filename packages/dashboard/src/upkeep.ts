@@ -169,6 +169,21 @@ export const markNotificationRead = UpkeepApi.runtime.fn((thread: string) =>
   ),
 );
 
+/** Open an agent on an item or a group, on the worker given. */
+export const startAgent = UpkeepApi.runtime.fn(
+  (payload: {
+    readonly worker: string;
+    readonly url: string | null;
+    readonly group: string | null;
+    readonly prompt: string | null;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.attention.command({
+        payload: { kind: "start-agent", ...payload },
+      }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(runsKey))),
+);
+
 /** Start a group of work with the items given in it. */
 export const createGroup = UpkeepApi.runtime.fn(
   (payload: { readonly name: string; readonly items: ReadonlyArray<string> }) =>

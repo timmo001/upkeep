@@ -506,13 +506,27 @@ the agent something, which queues a run; its answer shows under your comment,
 and a standing instruction becomes one of the **Agent rules**, which every
 run follows.
 
+**Start agent** on an item or a group opens an agent on it, on a worker you
+pick from those that can, the one used last first, with an optional prompt.
+The worker writes a brief of where it stands: its signals and description,
+unresolved review threads with their file and line, failing checks with the
+end of their logs, the issues it closes, the rest of its group, the context
+agent's notes, outside waits and your comments. It then runs its
+`attention.launch` command in the checkout, which opens the agent with the
+brief. Each group card also folds down to its heading, remembered in that
+browser.
+
 The `attention` section of the worker's config file sets the rest. `searches`
 are extra GitHub searches, with `{since}` replaced by the date `staleDays`
 ago. Items on a `work` site count as work, `exclude` sites are left out, and
 so are items carrying one of `ignoreLabels`. `workTime.command` prints
 `{ "work": true }` during work time, so the page opens on Work or Personal to
 match, or All without it. `agent` is the OpenCode model the context job runs
-on, best a quick one, or the first of `heal.agents` without it:
+on, best a quick one, or the first of `heal.agents` without it. `launch`
+lets the worker start agents: `command` runs in the checkout with `{brief}`
+(the brief's file), `{directory}`, `{repo}`, `{name}` and `{title}` filled
+in, and `directory` is where your checkouts are, with `{owner}` and `{name}`;
+a repository with no checkout there is cloned into the cache:
 
 ```json
 {
@@ -523,7 +537,11 @@ on, best a quick one, or the first of `heal.agents` without it:
     "ignoreLabels": ["wontfix"],
     "staleDays": 14,
     "workTime": { "command": ["work-time-check"] },
-    "agent": { "model": "provider/model", "variant": "high" }
+    "agent": { "model": "provider/model", "variant": "high" },
+    "launch": {
+      "command": ["open-agent", "--prompt-file", "{brief}", "{directory}"],
+      "directory": "~/repos/{name}"
+    }
   }
 }
 ```

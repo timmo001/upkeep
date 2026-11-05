@@ -151,6 +151,13 @@ export interface Agent extends Schema.Schema.Type<typeof Agent> {}
 export const AgentSetup = Schema.Struct({
   decisions: Schema.NullOr(Schema.String),
   agents: Schema.Array(Agent),
+  /**
+   * Whether it can open an agent for you from the Attention page, with
+   * `attention.launch` in its settings. Older workers don't say.
+   */
+  launch: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
 });
 
 export interface AgentSetup extends Schema.Schema.Type<typeof AgentSetup> {}
@@ -333,12 +340,24 @@ export const describePeriod = (period: Period) => {
 
 /**
  * Something the server asks a worker to do once, on demand, as a run of the
- * `command` job: `mark-read` marks a GitHub notification thread read.
+ * `command` job: `mark-read` marks a GitHub notification thread read, and
+ * `start-agent` opens an agent on one worker, which only that one claims.
  */
 export const Command = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("mark-read"),
     thread: Schema.String.check(Schema.isPattern(/^\d+$/)),
+  }),
+  /**
+   * Open an agent on an Attention item, or a group's items, on the worker
+   * named, with a brief of where it stands and your prompt.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("start-agent"),
+    worker: Schema.String,
+    url: Schema.NullOr(Schema.String),
+    group: Schema.NullOr(Schema.String),
+    prompt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4000))),
   }),
 ]);
 

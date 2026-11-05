@@ -13,6 +13,8 @@ import {
   mdiBellOutline,
   mdiCheck,
   mdiCheckCircleOutline,
+  mdiChevronDown,
+  mdiChevronUp,
   mdiClockOutline,
   mdiClose,
   mdiCommentOutline,
@@ -29,6 +31,7 @@ import {
   mdiRecordCircleOutline,
   mdiRefresh,
   mdiRobotOutline,
+  mdiRocketLaunchOutline,
   mdiSourcePull,
   mdiTagOutline,
 } from "@mdi/js";
@@ -46,6 +49,7 @@ import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
 import {
   addRule,
   addWait,
+  agents,
   attention,
   commentAttention,
   createGroup,
@@ -56,6 +60,7 @@ import {
   markNotificationRead,
   openAttention,
   removeRule,
+  startAgent,
   removeWait,
   updateGroup,
 } from "./upkeep.ts";
@@ -76,6 +81,14 @@ const scopes: ReadonlyArray<{ readonly value: Scope; readonly label: string }> =
     { value: "personal", label: "Personal" },
     { value: "all", label: "All" },
   ];
+
+const collapsedKey = "upkeep.attention.collapsed";
+
+const lastWorkerKey = "upkeep.attention.worker";
+
+const decodeCollapsed = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
 
 const isScope = (value: string): value is Scope =>
   scopes.some((scope) => scope.value === value);
@@ -358,6 +371,11 @@ export class UpkeepAttention extends LitElement {
         font-size: var(--gw-font-size-s);
       }
 
+      .context > span {
+        flex: 1 1 20ch;
+        min-width: 0;
+      }
+
       .context > .icon {
         color: var(--gw-color-text-secondary);
       }
@@ -389,6 +407,21 @@ export class UpkeepAttention extends LitElement {
   /** Your latest comments, shown on what each is about. */
   #comments: ReadonlyArray<Domain.AttentionComment> = [];
 
+  /** Groups folded down to their heading, kept in this browser. */
+  #collapsed = new Set(
+    Option.getOrElse(
+      decodeCollapsed(localStorage.getItem(collapsedKey) ?? "[]"),
+      (): ReadonlyArray<string> => [],
+    ),
+  );
+
+  #toggle(group: string) {
+    if (!this.#collapsed.delete(group)) this.#collapsed.add(group);
+
+    localStorage.setItem(collapsedKey, JSON.stringify([...this.#collapsed]));
+    this.requestUpdate();
+  }
+
   #prompt: GwPopover | undefined;
 
   #promptInput: GwInput | undefined;
@@ -418,11 +451,80 @@ export class UpkeepAttention extends LitElement {
   #asked() {
     const text = this.#promptInput?.value.trim() ?? "";
 
-    if (this.#prompt?.returnValue === "save" && text !== "") {
+    if (
+      this.#prompt?.returnValue === "save" &&
+      (text !== "" || this.#optional)
+    ) {
       this.#onSave?.(text);
     }
 
     this.#onSave = undefined;
+    this.#optional = false;
+  }
+
+  /** Whether the prompt open now saves with nothing typed. */
+  #optional = false;
+
+  /** Workers that can open an agent, and the one used last here. */
+  readonly #agents = new AtomController(this, () => agents, always);
+
+  /**
+   * Start an agent on an item or a group: a menu of the workers that can,
+   * the one used last first, then a prompt for what to ask it, which can be
+   * left empty for a look at where it stands.
+   */
+  #startMenu(about: { readonly url: string } | { readonly group: string }) {
+    const result = this.#agents.value;
+
+    const workers = AsyncResult.isSuccess(result)
+      ? result.value.filter((worker) => worker.launch)
+      : [];
+
+    if (workers.length === 0) return nothing;
+
+    const last = localStorage.getItem(lastWorkerKey);
+
+    const start = (event: Event, worker: string) => {
+      localStorage.setItem(lastWorkerKey, worker);
+      this.#ask(
+        event,
+        `Start an agent on ${worker}`,
+        "What to ask it, or leave empty for where it stands",
+        "",
+        (text) =>
+          registry.set(startAgent, {
+            worker,
+            url: "url" in about ? about.url : null,
+            group: "group" in about ? about.group : null,
+            prompt: text === "" ? null : text,
+          }),
+      );
+      this.#optional = true;
+    };
+
+    return html`<gw-menu-button
+      size="xs"
+      appearance="plain"
+      icon=${mdiRocketLaunchOutline}
+      label="Start agent"
+      heading="On which worker"
+      .items=${workers
+        .toSorted(
+          (a, b) =>
+            Number(b.worker === last) - Number(a.worker === last) ||
+            a.worker.localeCompare(b.worker),
+        )
+        .map((worker) => ({
+          value: worker.worker,
+          label: worker.worker,
+          checked: worker.worker === last,
+        }))}
+      @select=${(event: Event) => {
+        const value = chosen(event);
+
+        if (value !== "") start(event, value);
+      }}
+    ></gw-menu-button>`;
   }
 
   /** The popover the prompts share, kept outside the page header. */
@@ -501,11 +603,25 @@ export class UpkeepAttention extends LitElement {
     const focus =
       focuses.find((each) => each.value === group.focus) ?? focuses[1];
 
+    const collapsed = this.#collapsed.has(group.id);
+
     return html`<gw-card
       heading=${group.name}
       level="3"
       description=${`${group.source === "github" ? "Linked on GitHub" : "Grouped by you"}, ${plural(block.items.length, "item")}`}
     >
+      <gw-button
+        slot="actions"
+        size="xs"
+        appearance="plain"
+        variant="neutral"
+        labels="hide"
+        icon=${collapsed ? mdiChevronDown : mdiChevronUp}
+        label=${collapsed ? "Expand" : "Collapse"}
+        aria-expanded=${collapsed ? "false" : "true"}
+        @click=${() => this.#toggle(group.id)}
+      ></gw-button>
+      <span slot="actions">${this.#startMenu({ group: group.id })}</span>
       <gw-menu-button
         slot="actions"
         size="xs"
@@ -580,6 +696,15 @@ export class UpkeepAttention extends LitElement {
           }
         }}
       ></gw-menu-button>
+      ${collapsed ? nothing : this.#blockBody(block, since)}
+    </gw-card>`;
+  }
+
+  /** What a group card shows open: follow-up, comments, waits and items. */
+  #blockBody(block: Block, since: number | null) {
+    const { group } = block;
+
+    return html`
       ${
         group.followUp === null
           ? nothing
@@ -617,7 +742,7 @@ export class UpkeepAttention extends LitElement {
       <ul class="items">
         ${block.items.map((item) => this.#item(item, since))}
       </ul>
-    </gw-card>`;
+    `;
   }
 
   override connectedCallback() {
@@ -875,6 +1000,7 @@ export class UpkeepAttention extends LitElement {
             >${item.hidden ? "Show" : "Hide"}</gw-button
           >
           ${this.#groupMenu(item)} ${this.#commentButton({ url: item.url })}
+          ${this.#startMenu({ url: item.url })}
         </div>
       </div>
     </li>`;

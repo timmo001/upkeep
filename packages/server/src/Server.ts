@@ -930,7 +930,11 @@ const AttentionHandlers = HttpApiBuilder.group(
               ),
             ),
             // The page shows it read now, not after the next collection
-            Effect.tap(() => store.markAttentionRead(payload.thread)),
+            Effect.tap(() =>
+              payload.kind === "mark-read"
+                ? store.markAttentionRead(payload.thread)
+                : Effect.void,
+            ),
             Effect.orDie,
           ),
       hide: ({ payload }) =>
