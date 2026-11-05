@@ -316,8 +316,10 @@ const discover = Effect.fnUntraced(function* (
       continue;
     }
 
+    // gh escapes quotes inside a quoted term, and code search can then report
+    // matches but return no items, so the name goes in bare
     add(
-      yield* search({ query: `"${name}"`, owner, filename: "package.json" }),
+      yield* search({ query: name, owner, filename: "package.json" }),
       Edit.Dependency({ name, version }),
     );
   }
