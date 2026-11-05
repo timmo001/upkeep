@@ -617,6 +617,8 @@ export const AttentionItem = Schema.Struct({
   firstSeen: Schema.Finite,
   /** When its signals or fingerprint last moved. */
   changedAt: Schema.Finite,
+  /** Hidden until anything about it changes. */
+  hidden: Schema.Boolean,
 });
 
 export interface AttentionItem extends Schema.Schema.Type<

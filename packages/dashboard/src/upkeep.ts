@@ -150,6 +150,25 @@ export const openAttention = UpkeepApi.runtime.fn(() =>
   ),
 );
 
+/** Hide an attention item until anything about it changes, or show it. */
+export const hideAttention = UpkeepApi.runtime.fn(
+  (payload: { readonly url: string; readonly hidden: boolean }) =>
+    UpkeepApi.use((client) => client.attention.hide({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(Reactivity.invalidate(attentionKey)),
+    ),
+);
+
+/** Mark a notification read on GitHub, through a worker. */
+export const markNotificationRead = UpkeepApi.runtime.fn((thread: string) =>
+  UpkeepApi.use((client) =>
+    client.attention.command({ payload: { kind: "mark-read", thread } }),
+  ).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate([...attentionKey, ...runsKey])),
+  ),
+);
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },

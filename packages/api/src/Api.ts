@@ -501,11 +501,21 @@ export class AttentionGroup extends HttpApiGroup.make("attention")
     /**
      * Ask a worker to do something once, such as mark a notification read,
      * by queueing a run of the command job. The same command still waiting
-     * is returned instead of a second one.
+     * is returned instead of a second one. Marking read shows on the page at
+     * once: its items lose their unread and mention signals, and an item
+     * that's only the notification is hidden.
      */
     HttpApiEndpoint.post("command", "/commands", {
       payload: Command,
       success: Run,
+    }),
+    /**
+     * Hide an item until anything about it changes, or show it again. An
+     * item that's gone is left alone.
+     */
+    HttpApiEndpoint.post("hide", "/hide", {
+      payload: Schema.Struct({ url: Schema.String, hidden: Schema.Boolean }),
+      success: HttpApiSchema.NoContent,
     }),
   )
   .middleware(AdminAuthorization)

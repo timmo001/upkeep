@@ -9,6 +9,9 @@
 import {
   mdiBellOutline,
   mdiCheckCircleOutline,
+  mdiEmailOpenOutline,
+  mdiEyeOffOutline,
+  mdiEyeOutline,
   mdiRecordCircleOutline,
   mdiRefresh,
   mdiSourcePull,
@@ -20,7 +23,13 @@ import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
 import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
-import { attention, jobs, openAttention } from "./upkeep.ts";
+import {
+  attention,
+  hideAttention,
+  jobs,
+  markNotificationRead,
+  openAttention,
+} from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
@@ -192,6 +201,12 @@ export class UpkeepAttention extends LitElement {
       .gone {
         text-decoration: line-through;
       }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--gw-space-1);
+      }
     `,
   ];
 
@@ -249,6 +264,36 @@ export class UpkeepAttention extends LitElement {
           <span>active ${time(item.activityAt)}</span>
           ${moved ? html`<gw-chip size="xs" tone="accent">Moved</gw-chip>` : nothing}
           ${this.#signals(item)}
+        </div>
+        <div class="actions">
+          ${
+            item.notification?.unread === true
+              ? html`<gw-button
+                  size="xs"
+                  appearance="plain"
+                  variant="neutral"
+                  icon=${mdiEmailOpenOutline}
+                  @click=${() => {
+                    if (item.notification !== null) {
+                      registry.set(markNotificationRead, item.notification.id);
+                    }
+                  }}
+                  >Mark read</gw-button
+                >`
+              : nothing
+          }
+          <gw-button
+            size="xs"
+            appearance="plain"
+            variant="neutral"
+            icon=${item.hidden ? mdiEyeOutline : mdiEyeOffOutline}
+            @click=${() =>
+              registry.set(hideAttention, {
+                url: item.url,
+                hidden: !item.hidden,
+              })}
+            >${item.hidden ? "Show" : "Hide"}</gw-button
+          >
         </div>
       </div>
     </li>`;
@@ -319,7 +364,12 @@ export class UpkeepAttention extends LitElement {
       this.#scope ??
       (page.workTime === null ? "all" : page.workTime ? "work" : "personal");
 
-    const shown = page.items.filter((item) => inScope(item.work, scope));
+    const visible = page.items.filter((item) => !item.hidden);
+    const shown = visible.filter((item) => inScope(item.work, scope));
+
+    const hidden = page.items
+      .filter((item) => item.hidden && inScope(item.work, scope))
+      .toSorted((a, b) => b.activityAt - a.activityAt);
 
     const of = (section: Domain.AttentionSection) =>
       shown.filter((item) => item.section === section).toSorted(order(section));
@@ -345,7 +395,7 @@ export class UpkeepAttention extends LitElement {
             .options=${scopes.map((option) => ({
               value: option.value,
               label: `${option.label} ${
-                page.items.filter((item) => inScope(item.work, option.value))
+                visible.filter((item) => inScope(item.work, option.value))
                   .length
               }`,
             }))}
@@ -412,6 +462,18 @@ export class UpkeepAttention extends LitElement {
                     </ul>
                   </gw-expansion>`;
                 })}
+                ${
+                  hidden.length === 0
+                    ? nothing
+                    : html`<gw-expansion
+                        heading=${`Hidden (${hidden.length})`}
+                        description="Each comes back once anything about it changes"
+                      >
+                        <ul class="items">
+                          ${hidden.map((item) => this.#item(item, page.since))}
+                        </ul>
+                      </gw-expansion>`
+                }
               `
         }
       </gw-stack>

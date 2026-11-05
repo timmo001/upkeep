@@ -929,8 +929,12 @@ const AttentionHandlers = HttpApiBuilder.group(
                 Effect.annotateLogs({ run: run.id }),
               ),
             ),
+            // The page shows it read now, not after the next collection
+            Effect.tap(() => store.markAttentionRead(payload.thread)),
             Effect.orDie,
           ),
+      hide: ({ payload }) =>
+        store.hideAttention(payload.url, payload.hidden).pipe(Effect.orDie),
     });
   }),
 );

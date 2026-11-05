@@ -394,6 +394,13 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE runs ADD COLUMN command TEXT`;
   }),
+  // The fingerprint an attention item was hidden at, so it comes back once
+  // anything about it changes
+  "0019_attention_hidden": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE attention_items ADD COLUMN hidden TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -551,6 +558,7 @@ const AttentionRow = Schema.Struct({
   ),
   firstSeen: Schema.Finite,
   changedAt: Schema.Finite,
+  hidden: Schema.NullOr(Schema.String),
 });
 
 type AttentionRow = typeof AttentionRow.Type;
@@ -575,6 +583,7 @@ const toFound = ({
   involved,
   firstSeen,
   changedAt,
+  hidden,
   ...row
 }: AttentionRow) => ({
   found: {
@@ -586,6 +595,7 @@ const toFound = ({
   } satisfies Domain.AttentionFound,
   firstSeen,
   changedAt,
+  hidden: hidden === row.fingerprint,
 });
 
 /** Within this long of the last look, a look is the same visit. */
@@ -774,6 +784,17 @@ export class Store extends Context.Service<
      * the last starts a new visit, which shows what moved since that one.
      */
     looked(): Effect.Effect<void, StoreError>;
+    /** Hide an attention item until anything about it changes, or show it. */
+    hideAttention(
+      url: string,
+      hidden: boolean,
+    ): Effect.Effect<void, StoreError>;
+    /**
+     * Show a notification as read before the next collection does: its items
+     * lose their unread and mention signals, and one that's only the
+     * notification is hidden, as it won't be found again.
+     */
+    markAttentionRead(thread: string): Effect.Effect<void, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -1616,7 +1637,7 @@ export class Store extends Context.Service<
       `.pipe(Effect.flatMap(decodeAttention));
 
       const items = rows.map((row): Domain.AttentionItem => {
-        const { found, firstSeen, changedAt } = toFound(row);
+        const { found, firstSeen, changedAt, hidden } = toFound(row);
 
         const signals =
           found.yours && needing.has(found.repo.toLowerCase())
@@ -1629,6 +1650,7 @@ export class Store extends Context.Service<
           section: Attention.sectionOf({ ...found, signals }, now, staleDays),
           firstSeen,
           changedAt,
+          hidden,
         };
       });
 
@@ -1666,6 +1688,53 @@ export class Store extends Context.Service<
         }
 
         yield* setAttentionState("looked", `${now}`);
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const hideAttention = Effect.fn("Store.hideAttention")(function* (
+      url: string,
+      hidden: boolean,
+    ) {
+      yield* sql`
+          UPDATE attention_items
+          SET hidden = ${hidden ? sql`fingerprint` : null}
+          WHERE url = ${url}
+        `;
+    }, Effect.mapError(storeError));
+
+    // Signals only a notification gives, which reading it settles
+    const settled: ReadonlySet<Domain.SignalKind> = new Set([
+      "unread",
+      "mentioned",
+    ]);
+
+    const markAttentionRead = Effect.fn("Store.markAttentionRead")(
+      function* (thread: string) {
+        const rows = yield* sql`
+          SELECT * FROM attention_items
+          WHERE json_extract(notification, '$.id') = ${thread}
+        `.pipe(Effect.flatMap(decodeAttention));
+
+        for (const row of rows) {
+          const { found } = toFound(row);
+
+          const notification =
+            found.notification === null
+              ? null
+              : { ...found.notification, unread: false };
+
+          yield* sql`
+            UPDATE attention_items
+            SET notification = ${JSON.stringify(notification)},
+              signals = ${JSON.stringify(
+                found.signals.filter((signal) => !settled.has(signal.kind)),
+              )},
+              hidden = ${found.kind === "notification" ? sql`fingerprint` : sql`hidden`}
+            WHERE url = ${found.url}
+          `;
+        }
       },
       sql.withTransaction,
       Effect.mapError(storeError),
@@ -2377,6 +2446,8 @@ export class Store extends Context.Service<
       recordAttention,
       attention,
       looked,
+      hideAttention,
+      markAttentionRead,
       paused,
       cancel,
       log,

@@ -16,6 +16,7 @@ const run = <A, E>(effect: Effect.Effect<A, E, Store>) =>
 const found = (
   number: number,
   signals: ReadonlyArray<Domain.Signal> = [],
+  notification: Domain.AttentionNotification | null = null,
 ): Domain.AttentionFound => ({
   url: `https://github.com/timmo001/a/pull/${number}`,
   kind: "pull",
@@ -30,7 +31,7 @@ const found = (
   activityAt: 0,
   updatedAt: 0,
   signals,
-  notification: null,
+  notification,
   fingerprint: JSON.stringify(signals),
 });
 
@@ -76,6 +77,53 @@ test("attention only logs what moved, and drops items only when complete", () =>
           ["Pull 2", ["Closed, or no longer involves you"], true],
         ]),
       );
+    }),
+  ));
+
+test("a hidden item stays hidden until it changes, and marking read settles its notification", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const hiddenOf = (number: number) =>
+        store
+          .attention()
+          .pipe(
+            Effect.map(
+              (page) =>
+                page.items.find((item) => item.number === number)?.hidden,
+            ),
+          );
+
+      const mentioned = found(
+        2,
+        [
+          { kind: "unread", detail: null },
+          { kind: "mentioned", detail: null },
+        ],
+        { id: "42", reason: "mention", unread: true, updatedAt: 0 },
+      );
+
+      yield* store.recordAttention(snapshot([found(1), mentioned]));
+      yield* store.hideAttention(found(1).url, true);
+      yield* store.recordAttention(snapshot([found(1), mentioned]));
+      expect(yield* hiddenOf(1)).toBe(true);
+
+      yield* store.recordAttention(
+        snapshot([found(1, [{ kind: "conflicts", detail: null }]), mentioned]),
+      );
+      expect(yield* hiddenOf(1)).toBe(false);
+
+      yield* store.markAttentionRead("42");
+
+      const item = (yield* store.attention()).items.find(
+        (each) => each.number === 2,
+      );
+
+      expect(item?.signals).toEqual([]);
+      expect(item?.notification?.unread).toBe(false);
+      expect(item?.section).toBe("stale");
+      expect(item?.hidden).toBe(false);
     }),
   ));
 
