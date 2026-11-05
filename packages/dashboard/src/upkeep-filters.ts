@@ -1,6 +1,6 @@
 /**
  * `upkeep-filters`: how the inbox's feed is narrowed, as triage's issue list
- * does it. Kinds are tabs over the feed, each with its count and explained
+ * does it. Kinds are tabs over the feed, each with its unread and total counts, and explained
  * under them; the rest are groundwork filters in a sheet opened from the
  * Filters button, which counts the filters that are on: read or unread, and
  * which repositories. Each filter that's on shows as a chip that takes it
@@ -296,11 +296,21 @@ export class UpkeepFilters extends LitElement {
             size="small"
             label="Kind"
             value=${this.filters.kind}
-            .options=${kindTabs.map((tab) => ({
-              value: tab.value,
-              label: `${tab.label} ${counted.filter((entry) => matchesKind(entry, tab.value)).length}`,
-              hint: tab.description,
-            }))}
+            .options=${kindTabs.map((tab) => {
+              const ofKind = counted.filter((entry) =>
+                matchesKind(entry, tab.value),
+              );
+
+              const unread = ofKind.filter(
+                (entry) => readStateOf(entry) === "unread",
+              ).length;
+
+              return {
+                value: tab.value,
+                label: `${tab.label} ${unread}/${ofKind.length}`,
+                hint: `${unread} of ${ofKind.length} unread. ${tab.description}`,
+              };
+            })}
             @change=${(event: Event) => {
               const value =
                 event.currentTarget instanceof GwSegmented
