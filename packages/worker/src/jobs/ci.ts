@@ -6,11 +6,14 @@
  * a workflow passes again, its unread failure notifications are dismissed.
  * The run fails at the end, naming the repositories still red. One whose CI
  * couldn't be read, even after retries, is named but not counted red.
+ * Repository details and workflow lists are kept between runs and asked for
+ * conditionally, so unchanged ones cost no rate limit.
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Effect, Path, Schedule, Schema } from "effect";
 import { pretty, reason } from "../Failure";
+import * as Kept from "../Kept";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -190,24 +193,29 @@ const dismiss = Effect.fnUntraced(function* (
 });
 
 /** How a repository's default branch stands, or `undefined` when it's archived. */
-const readBranch = Effect.fnUntraced(function* (repo: string) {
-  const info = yield* Api.json(
-    { endpoint: `repos/${repo}`, method: "GET" },
-    RepositoryInfo,
-  );
+const readBranch = Effect.fnUntraced(function* (repo: string, kept: Kept.Kept) {
+  const info = yield* kept
+    .get({ endpoint: `repos/${repo}` })
+    .pipe(
+      Effect.flatMap(({ value }) =>
+        Schema.decodeUnknownEffect(RepositoryInfo)(value),
+      ),
+    );
 
   if (info.archived) return undefined;
 
   const branch = info.default_branch;
 
-  const { workflows } = yield* Api.json(
-    {
+  const { workflows } = yield* kept
+    .get({
       endpoint: `repos/${repo}/actions/workflows`,
-      method: "GET",
       query: { per_page: 100 },
-    },
-    Workflows,
-  );
+    })
+    .pipe(
+      Effect.flatMap(({ value }) =>
+        Schema.decodeUnknownEffect(Workflows)(value),
+      ),
+    );
 
   return {
     branch,
@@ -233,9 +241,10 @@ const ciRepository = Effect.fnUntraced(function* (
     readonly root: string;
     readonly settings: Settings.Settings;
     readonly threads: ReadonlyArray<Thread>;
+    readonly kept: Kept.Kept;
   },
 ) {
-  const read = yield* readBranch(repo).pipe(
+  const read = yield* readBranch(repo, context.kept).pipe(
     Effect.retry({ schedule: Schedule.exponential("5 seconds"), times: 2 }),
     Effect.map((state) => ({ ok: true as const, state })),
     Effect.catchCause((cause) =>
@@ -273,6 +282,7 @@ export const ci = Effect.fnUntraced(function* () {
   const root = path.join(path.dirname(yield* cacheRoot), "ci");
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos(Catalogue.ci.id);
+  const kept = yield* Kept.make("ci");
 
   const pages = yield* Api.pages(
     { endpoint: "notifications", method: "GET", query: { per_page: 100 } },
@@ -291,7 +301,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* Effect.forEach(
     repos,
     (repo) =>
-      ciRepository(repo, { root, settings, threads }).pipe(
+      ciRepository(repo, { root, settings, threads, kept }).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: couldn't check its CI: ${pretty(cause)}`).pipe(
             Effect.as("red" as const),
@@ -326,4 +336,4 @@ export const ci = Effect.fnUntraced(function* () {
       action: "get CI green on",
       repos: failed.toSorted(),
     });
-});
+}, Effect.scoped);
