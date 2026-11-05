@@ -113,7 +113,7 @@
       "dependencies": {
         "@effect/platform-bun": "4.1.2",
         "@effect/sql-sqlite-bun": "4.1.2",
-        "@timmo001/effect-triage": "0.20.1",
+        "@timmo001/effect-triage": "0.21.0",
         "@upkeep/api": "workspace:*",
         "@upkeep/dashboard": "workspace:*",
         "effect": "4.1.2",
@@ -926,7 +926,7 @@
 
     "@timmo001/effect-gh": ["@timmo001/effect-gh@0.10.1", "", { "dependencies": { "graphql": "17.0.2" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-SI81hYfVZSsWNUwvKTh8POESH4Y2oOhoPkmSJeRKZoLZKSLRZraYy8VDki/66VSJ2fBrnmiiZd7yjGRbMWn3jA=="],
 
-    "@timmo001/effect-triage": ["@timmo001/effect-triage@0.20.1", "", { "peerDependencies": { "effect": "4.0.5" } }, "sha512-O8JsR9OoZhfT0n15OsG/4kJdy+nBL6/YL+T80onm0SptRZqB/ceHjOWL8WOfg1Ec9BAgjRB6V25eYEo/Age7cA=="],
+    "@timmo001/effect-triage": ["@timmo001/effect-triage@0.21.0", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-jD/tcQ1W2az/nvjjguEtFCcj1Tut8sNDtVpfpr0vNnKkDKfVU/b8/DBrRqCyxIUxzmpW1bngJZvcJF5ps0TVXQ=="],
 
     "@timmo001/groundwork-tokens": ["@timmo001/groundwork-tokens@0.9.35", "", { "dependencies": { "@types/culori": "4.0.1", "culori": "4.0.2", "effect": "4.1.2" } }, "sha512-AYRoQspa6puf4jHpFpj9EaHdTXgowfLfYP+GGaAkIIm93I35jszNCkEuGqOG8A+ANfYH824xJgqrnjYbIkU6Tw=="],
 
