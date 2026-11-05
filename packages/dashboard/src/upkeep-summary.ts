@@ -1,8 +1,8 @@
 /**
  * `upkeep-summary`: the foot of the inbox's summary card. The sentences above
  * it are written by plain code; this asks an agent for a longer write-up, on
- * request, through the summary job, then shows the latest one, or that it's
- * being written, while the run goes.
+ * request, through the summary job, then shows the latest one, folded away
+ * until it's opened, or that it's being written, while the run goes.
  */
 import { mdiTextBoxEditOutline } from "@mdi/js";
 import type { Domain } from "@upkeep/api";
@@ -12,6 +12,7 @@ import { AtomController, registry } from "./AtomController.ts";
 import { shared, time } from "./ui.ts";
 import { runHref, runJob, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-expansion.ts";
 import "@timmo001/groundwork-ui/gw-spinner.ts";
 
 const busy = (run: Domain.Run | undefined) =>
@@ -38,9 +39,17 @@ export class UpkeepSummary extends LitElement {
         border-top: var(--gw-border-width) solid var(--gw-color-border-quiet);
       }
 
+      .written {
+        margin-top: var(--gw-space-3);
+      }
+
       .written p {
-        margin: var(--gw-space-3) 0 0;
+        margin: 0;
         line-height: 1.6;
+      }
+
+      .written p + p {
+        margin-top: var(--gw-space-3);
       }
 
       .status {
@@ -77,11 +86,11 @@ export class UpkeepSummary extends LitElement {
     }
 
     if (run.state === "succeeded" && run.summary !== null) {
-      return html`<div class="written">
+      return html`<gw-expansion class="written" heading="Agent summary">
         ${run.summary
           .split(/\n\s*\n/)
           .map((paragraph) => html`<p>${paragraph.trim()}</p>`)}
-      </div>`;
+      </gw-expansion>`;
     }
 
     return html`<p class="status muted">
