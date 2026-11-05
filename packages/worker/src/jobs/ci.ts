@@ -58,12 +58,14 @@ export const latest = (
   const passing = new Set<string>();
 
   // Runs come newest first; a cancelled run was usually replaced, so it says
-  // nothing about the branch either way.
+  // nothing about the branch either way. Dynamic runs are GitHub's own jobs,
+  // such as Dependabot Updates, rather than the repository's CI.
   for (const item of runs) {
     const workflow = item.workflowName ?? item.name;
 
     if (
       item.event.startsWith("pull_request") ||
+      item.event === "dynamic" ||
       item.status !== "completed" ||
       item.conclusion === "cancelled" ||
       !active.has(workflow) ||

@@ -39,14 +39,15 @@ test("only the latest finished run of each workflow counts", () => {
   expect([...passing].toSorted()).toEqual(["Build", "Docs"]);
 });
 
-test("cancelled and pull request runs say nothing about the branch", () => {
+test("cancelled, pull request and dynamic runs say nothing about the branch", () => {
   const { failed, passing } = latest(
     [
       run("Build", "cancelled"),
       run("Build", "failure", { event: "pull_request" }),
+      run("Dependabot Updates", "failure", { event: "dynamic" }),
       run("Build", "failure"),
     ],
-    active,
+    new Set([...active, "Dependabot Updates"]),
   );
 
   expect(failed).toHaveLength(1);
