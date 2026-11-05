@@ -63,6 +63,17 @@ export class JobNotFound extends Schema.TaggedError<JobNotFound>()(
   }
 }
 
+/** A job that only runs for a release was queued without one. */
+export class ReleaseRequired extends Schema.TaggedError<ReleaseRequired>()(
+  "ReleaseRequired",
+  { id: Schema.String },
+  { httpApiStatus: 400 },
+) {
+  override get message() {
+    return `${this.id} runs for a release; give one with --release`;
+  }
+}
+
 export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
   "RunNotFound",
   { id: Schema.String },
@@ -260,13 +271,14 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
     }),
     /**
      * Queue a run, as the run button does. A run of the job for the same
-     * release that's still waiting is returned instead of a second one.
+     * release that's still waiting is returned instead of a second one. A job
+     * that runs on releases needs one.
      */
     HttpApiEndpoint.post("run", "/:id/runs", {
       params: { id: Schema.String },
       payload: Schema.Struct({ release: Schema.optionalKey(Release) }),
       success: Run,
-      error: JobNotFound,
+      error: [JobNotFound, ReleaseRequired],
     }),
     /** Let a parked job be queued again. */
     HttpApiEndpoint.delete("unpark", "/:id/park", {

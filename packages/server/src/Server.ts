@@ -270,8 +270,14 @@ const JobsHandlers = HttpApiBuilder.group(
         }));
       }),
       run: Effect.fn(function* ({ params, payload }) {
-        if (Option.isNone(findJob(params.id))) {
+        const job = findJob(params.id);
+
+        if (Option.isNone(job)) {
           return yield* new Api.JobNotFound({ id: params.id });
+        }
+
+        if (job.value.onRelease && payload.release === undefined) {
+          return yield* new Api.ReleaseRequired({ id: params.id });
         }
 
         const queued = yield* queue({

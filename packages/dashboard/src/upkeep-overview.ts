@@ -1,6 +1,7 @@
 /**
  * `upkeep-overview`: the Jobs page. Every job, grouped by the lane it runs
- * in, with its latest run, a button to run it and, for a parked job, why and
+ * in, with its latest run, a button to run it (unless it runs on releases,
+ * which need one given) and, for a parked job, why and
  * a button to unpark it, and a switch to pause or resume it; then the latest
  * runs.
  */
@@ -52,13 +53,18 @@ const starts = (job: Domain.JobStatus) =>
   ].filter((start) => start !== null);
 
 export const jobActions = (job: Domain.JobStatus) => html`
-  <gw-button
-    size="small"
-    appearance="filled"
-    icon=${mdiPlay}
-    @click=${() => registry.set(runJob, job.id)}
-    >Run</gw-button
-  >
+  ${
+    // A job that runs on releases needs one, which the button can't give
+    job.onRelease
+      ? null
+      : html`<gw-button
+          size="small"
+          appearance="filled"
+          icon=${mdiPlay}
+          @click=${() => registry.set(runJob, job.id)}
+          >Run</gw-button
+        >`
+  }
   ${
     job.parked === null
       ? null
