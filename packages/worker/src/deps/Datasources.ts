@@ -3,22 +3,15 @@
  * through their registries, GitHub releases, tags and refs through the GitHub
  * API. Lookups are cached for the run, so a package many repositories use is
  * read once, and GitHub responses are kept between runs and asked for again
- * conditionally, so what hasn't changed costs no rate limit.
+ * conditionally, so what hasn't changed costs no rate limit. Release and tag
+ * lists stop at the page that reaches the version in use.
  */
-import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
-import {
-  Cache,
-  Config,
-  Context,
-  Effect,
-  FileSystem,
-  Layer,
-  Path,
-  Schema,
-} from "effect";
+import { Gh, GhCommandError } from "@timmo001/effect-gh";
+import { Cache, Context, Effect, Layer, Schema } from "effect";
 import { HttpClient } from "effect/http";
 import semver from "semver";
 import { ghReason } from "../Failure";
+import * as Kept from "../Kept";
 import {
   type Dependency,
   DepsError,
@@ -79,30 +72,6 @@ const Commit = Schema.Struct({
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
-/**
- * GitHub responses kept between runs by URL, with the validators to send
- * back: a 304 costs no rate limit, so an unchanged repository is read free.
- */
-const Kept = Schema.Record(
-  Schema.String,
-  Schema.Struct({
-    validators: Schema.Struct({
-      etag: Schema.optionalKey(Schema.String),
-      lastModified: Schema.optionalKey(Schema.String),
-    }),
-    value: Schema.Json,
-  }),
-);
-
-type Kept = typeof Kept.Type;
-
-const keptFile = Config.String("XDG_CACHE_HOME").pipe(
-  Config.orElse(() =>
-    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
-  ),
-  Config.map((root) => `${root}/upkeep/deps/github.json`),
-);
-
 /** A page size GitHub allows, so most lists are one request. */
 const perPage = 100;
 
@@ -145,6 +114,15 @@ export const supported = new Set([
   "git-refs",
 ]);
 
+/** Whether a version name is older than the version in use, `floor`. */
+const olderThan = (name: string, floor: string | undefined) => {
+  const version = semver.coerce(name)?.version;
+
+  return (
+    version !== undefined && floor !== undefined && semver.lt(version, floor)
+  );
+};
+
 /** The tags newer than this many get their commit dates read. */
 const datedTags = 10;
 
@@ -161,98 +139,59 @@ export class Datasources extends Context.Service<
     Effect.gen(function* () {
       const gh = yield* Gh;
       const http = yield* HttpClient.HttpClient;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const file = yield* keptFile;
+      const kept = yield* Kept.make("deps");
 
       const provide = <A, E>(effect: Effect.Effect<A, E, Gh>) =>
         Effect.provideService(effect, Gh, gh);
 
-      const earlier: Kept = yield* fs.readFileString(file).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Kept))),
-        Effect.orElseSucceed(() => ({})),
-      );
-
-      // Only what this run read is written back, so dropped dependencies go
-      const kept: Record<string, Kept[string]> = {};
-
-      yield* Effect.addFinalizer(() =>
-        fs
-          .makeDirectory(path.dirname(file), { recursive: true })
-          .pipe(
-            Effect.andThen(
-              fs.writeFileString(`${file}.tmp`, JSON.stringify(kept)),
-            ),
-            Effect.andThen(fs.rename(`${file}.tmp`, file)),
-            Effect.ignore,
-          ),
-      );
-
-      /**
-       * A GitHub GET sent with the last run's validators, answered from what
-       * was kept when GitHub says nothing changed. One that can never change,
-       * such as a commit by its SHA, isn't asked again at all.
-       */
-      const get = Effect.fnUntraced(function* (
+      /** A conditional GitHub GET, a page of a list when `page` is given. */
+      const get = (
         endpoint: string,
         options: {
           readonly page?: number;
           readonly immutable?: boolean;
         } = {},
-      ) {
-        const query =
-          options.page === undefined
-            ? undefined
-            : { per_page: perPage, page: options.page };
-
-        const key =
-          query === undefined
-            ? endpoint
-            : `${endpoint}?per_page=${query.per_page}&page=${query.page}`;
-
-        const previous = earlier[key];
-
-        if (previous !== undefined && options.immutable === true) {
-          kept[key] = previous;
-
-          return previous.value;
-        }
-
-        const response = yield* provide(
-          Api.conditional(
-            { endpoint, ...(query !== undefined && { query }) },
-            Schema.Json,
-            previous?.validators,
+      ) =>
+        provide(
+          kept.get(
+            {
+              endpoint,
+              ...(options.page !== undefined && {
+                query: { per_page: perPage, page: options.page },
+              }),
+            },
+            { immutable: options.immutable ?? false },
           ),
-        );
+        ).pipe(Effect.map(({ value }) => value));
 
-        const current = Api.Conditional.$match(response, {
-          Modified: ({ validators, value }) => ({ validators, value }),
-          NotModified: () => previous,
-        });
-
-        if (current === undefined)
-          return yield* new DepsError({
-            message: `GitHub said ${endpoint} hadn't changed, with nothing kept`,
-          });
-
-        kept[key] = current;
-
-        return current.value;
-      });
-
-      /** Every page of a GitHub list, each page its own conditional GET. */
-      const list = Effect.fnUntraced(function* (endpoint: string) {
-        const items: Array<Schema.Json> = [];
+      /**
+       * The pages of a GitHub list, each its own conditional GET. Releases
+       * come newest first and tags in version order, so once a page ends
+       * older than `current`, the version in use, the rest is older still.
+       */
+      const list = Effect.fnUntraced(function* <A>(
+        endpoint: string,
+        item: Schema.Decoder<A>,
+        nameOf: (item: A) => string,
+        current: string,
+      ) {
+        const floor = semver.coerce(current)?.version;
+        const items: Array<A> = [];
 
         for (let page = 1; ; page += 1) {
-          const batch = yield* Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Json),
-          )(yield* get(endpoint, { page }));
+          const batch = yield* Schema.decodeUnknownEffect(Schema.Array(item))(
+            yield* get(endpoint, { page }),
+          );
 
           items.push(...batch);
 
-          if (batch.length < perPage) return items;
+          const last = batch.at(-1);
+
+          if (
+            batch.length < perPage ||
+            (last !== undefined && olderThan(nameOf(last), floor))
+          )
+            return items;
         }
       });
 
@@ -320,10 +259,16 @@ export class Datasources extends Context.Service<
         } satisfies Releases;
       });
 
-      const releases = Effect.fnUntraced(function* (repository: string) {
-        const all = yield* Schema.decodeUnknownEffect(
-          Schema.Array(GithubRelease),
-        )(yield* list(`repos/${repository}/releases`));
+      const releases = Effect.fnUntraced(function* (
+        repository: string,
+        current: string,
+      ) {
+        const all = yield* list(
+          `repos/${repository}/releases`,
+          GithubRelease,
+          (release) => release.tag_name,
+          current,
+        );
 
         return all.filter((release) => !release.draft);
       });
@@ -347,10 +292,8 @@ export class Datasources extends Context.Service<
       ) {
         const [published, all] = yield* Effect.all(
           [
-            releases(repository),
-            list(`repos/${repository}/tags`).pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Tag))),
-            ),
+            releases(repository, current),
+            list(`repos/${repository}/tags`, Tag, (tag) => tag.name, current),
           ],
           { concurrency: 2 },
         );
@@ -409,7 +352,7 @@ export class Datasources extends Context.Service<
 
             if (datasource === "github-releases")
               return {
-                releases: (yield* releases(repository)).map(
+                releases: (yield* releases(repository, ref)).map(
                   (release): Release => ({
                     version: release.tag_name,
                     date: release.published_at ?? undefined,
@@ -468,7 +411,8 @@ export class Datasources extends Context.Service<
               dependency.datasource,
               dependency.packageName,
               dependency.datasource === "git-refs" ||
-              dependency.datasource === "github-tags"
+              dependency.datasource === "github-tags" ||
+              dependency.datasource === "github-releases"
                 ? dependency.currentValue
                 : "",
             ].join("\u0000"),
