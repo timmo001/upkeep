@@ -400,13 +400,11 @@ const extractActions = (file: string, text: string): Extraction => {
     const digest = /^[a-f\d]{40}$/i.test(remote.ref) ? remote.ref : undefined;
     const comment = comments.get(reference);
 
-    const version =
-      comment !== undefined &&
-      /^v?\d+(?:\.\d+){0,2}(?:-[\w.-]+)?$/.test(comment)
-        ? comment
-        : undefined;
+    // A digest needs a comment naming its version or branch; Renovate leaves
+    // a bare one alone
+    if (digest !== undefined && comment === undefined) continue;
 
-    const currentValue = digest === undefined ? remote.ref : version;
+    const currentValue = digest === undefined ? remote.ref : comment;
 
     dependencies.push({
       manager: "github-actions",
