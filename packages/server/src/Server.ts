@@ -93,7 +93,7 @@ const WorkerAuthorizationLayer = Layer.effect(
 const findJob = (id: string) =>
   Option.fromNullishOr(Catalogue.jobs.find((job) => job.id === id));
 
-/** How many heals a job can have a day for one target. */
+/** How many heals a job can have for one target in any 24 hours. */
 const healsPerDay = Config.Int("UPKEEP_HEALS_PER_DAY").pipe(
   Config.withDefault(3),
 );
@@ -173,13 +173,13 @@ const heal = Effect.fn("heal")(function* (
       // only a job failing in itself is parked.
       if (target.kind === "consumer") {
         yield* Effect.logWarning(
-          `Skipped a heal of ${run.job} for ${target.repo}: past ${limit} heals today`,
+          `Skipped a heal of ${run.job} for ${target.repo}: past ${limit} heals in 24 hours`,
         ).pipe(Effect.annotateLogs({ run: run.id }));
 
         continue;
       }
 
-      const reason = `${run.job} failed again after ${used} heals today, past the limit of ${limit}`;
+      const reason = `${run.job} failed again after ${used} heals in 24 hours, past the limit of ${limit}`;
 
       yield* store.park(
         run.job,

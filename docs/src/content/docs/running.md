@@ -16,16 +16,16 @@ It listens on `127.0.0.1:7272` by default. Set `UPKEEP_HOSTNAME` and
 `UPKEEP_PORT`, or pass `--hostname` and `--port`, to change that, and put it
 behind a reverse proxy for HTTPS.
 
-| Setting                     | Use                                                                    |
-| --------------------------- | ---------------------------------------------------------------------- |
-| `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                        |
-| `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands |
-| `UPKEEP_HEALS_PER_DAY`      | How many heals a job can have a day for each target, 3 by default      |
-| `UPKEEP_KEEP_DAYS`          | How many days finished runs and their logs are kept, 30 by default     |
-| `UPKEEP_KEEP_RUNS`          | How many of each job's latest finished runs are kept however old, 20   |
-| `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional               |
-| `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                        |
-| `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                 |
+| Setting                     | Use                                                                         |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `UPKEEP_SERVER_DB`          | Where the SQLite database lives                                             |
+| `UPKEEP_SERVER_ADMIN_TOKEN` | An admin token of at least 32 characters, for the first admin commands      |
+| `UPKEEP_HEALS_PER_DAY`      | How many heals a job can have for each target in any 24 hours, 3 by default |
+| `UPKEEP_KEEP_DAYS`          | How many days finished runs and their logs are kept, 30 by default          |
+| `UPKEEP_KEEP_RUNS`          | How many of each job's latest finished runs are kept however old, 20        |
+| `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional                    |
+| `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                             |
+| `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                      |
 
 The settings can also come from a JSON file at `UPKEEP_OPTIONS`, with
 lowercase keys and no `UPKEEP_` prefix, such as `{ "keep_days": 14 }`. The
@@ -264,8 +264,9 @@ Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
 OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
 
-A job gets `UPKEEP_HEALS_PER_DAY` heals a day for each target. A repository
-past that gets no more heals that day, while the job carries on for the
+A job gets `UPKEEP_HEALS_PER_DAY` heals for each target in any 24 hours, a
+rolling window rather than the calendar day. A repository past that gets no
+more heals until its oldest one is a day old, while the job carries on for the
 others. A job failing in itself past that is parked instead. The server stops
 queueing a parked job on its schedule or on releases, though it can still be
 run by hand, and `upkeep status --json` shows why it's parked.

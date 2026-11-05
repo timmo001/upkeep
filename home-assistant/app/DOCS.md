@@ -32,7 +32,7 @@ Open **Upkeep** in the sidebar for the dashboard: an inbox of what changed in yo
 These match the server's settings of the same name, without the `UPKEEP_` prefix.
 
 - **server_admin_token**: an admin token the server always accepts. It isn't stored or listed. Leave it empty once you've added an admin of your own.
-- **heals_per_day**: how many heals one job can have a day before it's parked.
+- **heals_per_day**: how many heals one job can have for each repository, or for itself, in any 24 hours. A repository past it is skipped until its oldest heal is a day old; a job failing in itself is parked.
 - **keep_days**: how many days finished runs and their logs are kept.
 - **keep_runs**: how many of each job's latest finished runs are kept however old.
 - **triage_host_token** and **triage_admin_token**: tokens for a triage server to remember failures in. Heals work without it. Add them with `triage hosts add upkeep` and `triage admins add upkeep`, rather than using triage's server admin token. With the triage app from the same repository installed and running, Upkeep finds it on the Supervisor's network. Set **triage_url** for a triage server anywhere else.
