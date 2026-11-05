@@ -4,11 +4,12 @@
  * run in a clean clone, and both the failed run's log and the local result
  * are logged, so its heal can tell a real failure from one only CI sees. Once
  * a workflow passes again, its unread failure notifications are dismissed.
- * The run fails at the end, naming the repositories still red.
+ * The run fails at the end, naming the repositories still red. One whose CI
+ * couldn't be read, even after retries, is named but not counted red.
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Cause, Effect, Path, Schema } from "effect";
+import { Cause, Effect, Path, Schedule, Schema } from "effect";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -195,21 +196,14 @@ const dismiss = Effect.fnUntraced(function* (
   }
 });
 
-/** Read one repository's default branch, checking it here when it's red. */
-const ciRepository = Effect.fnUntraced(function* (
-  repo: string,
-  context: {
-    readonly root: string;
-    readonly settings: Settings.Settings;
-    readonly threads: ReadonlyArray<Thread>;
-  },
-) {
+/** How a repository's default branch stands, or `undefined` when it's archived. */
+const readBranch = Effect.fnUntraced(function* (repo: string) {
   const info = yield* Api.json(
     { endpoint: `repos/${repo}`, method: "GET" },
     RepositoryInfo,
   );
 
-  if (info.archived) return "green" as const;
+  if (info.archived) return undefined;
 
   const branch = info.default_branch;
 
@@ -222,14 +216,47 @@ const ciRepository = Effect.fnUntraced(function* (
     Workflows,
   );
 
-  const { failed, passing } = latest(
-    yield* Workflow.list({ repo, branch, limit: 50 }),
-    new Set(
-      workflows
-        .filter((workflow) => workflow.state === "active")
-        .map((workflow) => workflow.name),
+  return {
+    branch,
+    ...latest(
+      yield* Workflow.list({ repo, branch, limit: 50 }),
+      new Set(
+        workflows
+          .filter((workflow) => workflow.state === "active")
+          .map((workflow) => workflow.name),
+      ),
+    ),
+  };
+});
+
+/**
+ * Read one repository's default branch, checking it here when it's red. A
+ * read that keeps failing says nothing about its CI, so the repository is
+ * left out rather than counted red, which would queue a heal for it.
+ */
+const ciRepository = Effect.fnUntraced(function* (
+  repo: string,
+  context: {
+    readonly root: string;
+    readonly settings: Settings.Settings;
+    readonly threads: ReadonlyArray<Thread>;
+  },
+) {
+  const read = yield* readBranch(repo).pipe(
+    Effect.retry({ schedule: Schedule.exponential("5 seconds"), times: 2 }),
+    Effect.map((state) => ({ ok: true as const, state })),
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `${repo}: couldn't read its CI, so it's left out: ${Cause.pretty(cause)}`,
+      ).pipe(Effect.as({ ok: false as const })),
     ),
   );
+
+  if (!read.ok) return "unread" as const;
+
+  if (read.state === undefined) return "green" as const;
+
+  const { branch, failed, passing } = read.state;
 
   yield* dismiss(repo, branch, passing, context.threads);
 
@@ -266,6 +293,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* RunLog.info(`Reading CI on ${repos.length} repositories`);
 
   const failed: Array<string> = [];
+  const unread: Array<string> = [];
 
   yield* Effect.forEach(
     repos,
@@ -273,22 +301,29 @@ export const ci = Effect.fnUntraced(function* () {
       ciRepository(repo, { root, settings, threads }).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(
-            `${repo}: couldn't read its CI: ${Cause.pretty(cause)}`,
+            `${repo}: couldn't check its CI: ${Cause.pretty(cause)}`,
           ).pipe(Effect.as("red" as const)),
         ),
         Effect.tap((state) =>
           Effect.sync(() => {
             if (state === "red") failed.push(repo);
+
+            if (state === "unread") unread.push(repo);
           }),
         ),
       ),
     { concurrency: 4, discard: true },
   );
 
+  const read = repos.length - unread.length;
+
+  const left =
+    unread.length === 0 ? "" : `; couldn't read ${listed(unread.toSorted())}`;
+
   yield* summary(
     failed.length === 0
-      ? `All ${repos.length} repositories are green`
-      : `${repos.length - failed.length} of ${repos.length} repositories are green; red: ${listed(failed.toSorted())}`,
+      ? `All ${read} repositories are green${left}`
+      : `${read - failed.length} of ${read} repositories are green; red: ${listed(failed.toSorted())}${left}`,
   );
 
   if (failed.length > 0) yield* attention;
