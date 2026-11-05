@@ -3,7 +3,7 @@
  * keeps an atom mounted while it's connected and redraws when it changes.
  */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import { type Atom, AtomRegistry } from "effect/reactivity";
+import { type Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 
 /** The registry every element reads its atoms from. */
 export const registry = AtomRegistry.make();
@@ -48,11 +48,16 @@ export class AtomController<A> implements ReactiveController {
     this.#timer = setInterval(() => {
       const atom = this.#atom;
 
-      if (
-        atom !== undefined &&
-        document.visibilityState === "visible" &&
-        poll(registry.get(atom))
-      ) {
+      if (atom === undefined || document.visibilityState !== "visible") return;
+
+      const value = registry.get(atom);
+
+      // A request still retrying is left to finish, so a failure shows
+      // instead of being restarted by every poll
+      if (AsyncResult.isAsyncResult(value) && AsyncResult.isWaiting(value))
+        return;
+
+      if (poll(value)) {
         registry.refresh(atom);
       }
     }, 5000);

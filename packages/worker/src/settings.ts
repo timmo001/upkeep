@@ -48,7 +48,37 @@ const Agent = Schema.Struct({
 
 export type Agent = typeof Agent.Type;
 
+/** What the attention job reads beyond what involves you, and how it sorts it. */
+const Attention = Schema.Struct({
+  /**
+   * More GitHub searches to follow, such as an area of a project you work
+   * in. `{since}` is replaced with the date `staleDays` ago.
+   */
+  searches: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Sites whose items are work rather than personal, such as
+   * `github.com/some-org` or `*.example.com`.
+   */
+  work: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Sites to leave out, in the same form. */
+  exclude: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Days without activity before your own item is going stale, 14 by default. */
+  staleDays: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  /**
+   * A command that says whether it's work time, printing `{ "work": true }`,
+   * so the page opens on work or personal to match.
+   */
+  workTime: Schema.optionalKey(
+    Schema.Struct({
+      command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    }),
+  ),
+});
+
+export type Attention = typeof Attention.Type;
+
 export const Settings = Schema.Struct({
+  attention: Schema.optionalKey(Attention),
   /**
    * Opt in to naming tracked repositories from your own list, over their
    * README titles. The watch job runs `command` each time and reads the JSON

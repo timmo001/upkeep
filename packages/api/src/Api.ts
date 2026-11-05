@@ -18,6 +18,8 @@ import {
   Activity,
   AgentModel,
   AgentSetup,
+  Attention,
+  AttentionFound,
   Change,
   Entry,
   Heal,
@@ -269,6 +271,28 @@ export const maxCommits = 500;
  */
 export const inboxDays = 7;
 
+/** The most attention items one collection carries. */
+export const maxAttention = 2000;
+
+/**
+ * What the attention job found: every item in scope. With `complete`, any
+ * item it no longer found is gone, closed or no longer involving you; a run
+ * that couldn't read everything leaves the rest as they were.
+ */
+export const AttentionSnapshot = Schema.Struct({
+  items: Schema.Array(AttentionFound).pipe(
+    Schema.check(Schema.isMaxLength(maxAttention)),
+  ),
+  complete: Schema.Boolean,
+  /** Whether it's work time, from the worker's check, or null without one. */
+  workTime: Schema.NullOr(Schema.Boolean),
+  staleDays: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+
+export interface AttentionSnapshot extends Schema.Schema.Type<
+  typeof AttentionSnapshot
+> {}
+
 /** A tracked repository's title, from its README's first heading. */
 export const RepoTitle = Schema.Struct({
   repo: RepoName,
@@ -453,6 +477,37 @@ export class InboxGroup extends HttpApiGroup.make("inbox")
     }),
   ) {}
 
+export class AttentionGroup extends HttpApiGroup.make("attention")
+  .add(
+    /** Every item, and what changed since you last looked. */
+    HttpApiEndpoint.get("get", "/", {
+      success: Attention,
+    }),
+    /**
+     * Note that you're looking now. Within half an hour of the last look it
+     * counts as the same visit, so Since you last looked keeps its start.
+     */
+    HttpApiEndpoint.post("looked", "/looked", {
+      success: HttpApiSchema.NoContent,
+    }),
+    /**
+     * Queue the attention job when its last run is more than a few minutes
+     * old and none is waiting. Returns the run queued, or null.
+     */
+    HttpApiEndpoint.post("refresh", "/refresh", {
+      success: Schema.Struct({ run: Schema.NullOr(Run) }),
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/attention")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Attention",
+      description:
+        "What needs you on GitHub: pull requests, issues and notifications, by section",
+    }),
+  ) {}
+
 export class WorkGroup extends HttpApiGroup.make("work")
   .add(
     /**
@@ -618,6 +673,18 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: Schema.Struct({ added: Schema.Int }),
     }),
     /**
+     * What the attention job found. The server keeps each item, records what
+     * moved on the ones that changed, and drops the ones that went.
+     */
+    HttpApiEndpoint.post("attention", "/attention", {
+      payload: AttentionSnapshot,
+      success: Schema.Struct({
+        added: Schema.Int,
+        changed: Schema.Int,
+        gone: Schema.Int,
+      }),
+    }),
+    /**
      * The latest release of each repository. The server queues every job
      * that runs on releases for each one that changed, and only records a
      * repository it sees for the first time. `queued` is the runs it added.
@@ -733,6 +800,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(RunsGroup)
   .add(ActivityGroup)
   .add(InboxGroup)
+  .add(AttentionGroup)
   .add(WorkGroup)
   .add(ReposGroup)
   .add(TokensGroup)

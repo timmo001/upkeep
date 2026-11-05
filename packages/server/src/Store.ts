@@ -20,6 +20,7 @@ import {
 } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { SqlClient } from "effect/sql";
+import * as Attention from "./Attention";
 import * as Entries from "./Entries";
 
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
@@ -340,6 +341,53 @@ const migrations = SqliteMigrator.fromRecord({
       }
     }
   }),
+  // The Attention page: each item the attention job found, what moved on
+  // them, and when the page was last looked at
+  "0017_attention": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE attention_items (
+        url TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        number INTEGER,
+        title TEXT NOT NULL,
+        author TEXT,
+        yours INTEGER NOT NULL,
+        work INTEGER NOT NULL,
+        you_acted_last INTEGER NOT NULL,
+        involved INTEGER NOT NULL,
+        activity_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        signals TEXT NOT NULL,
+        notification TEXT,
+        fingerprint TEXT NOT NULL,
+        first_seen INTEGER NOT NULL,
+        changed_at INTEGER NOT NULL
+      )
+    `;
+
+    yield* sql`
+      CREATE TABLE attention_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        title TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        what TEXT NOT NULL,
+        gone INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX attention_changes_at ON attention_changes (at)`;
+
+    yield* sql`
+      CREATE TABLE attention_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -482,6 +530,65 @@ const ItemRow = Schema.Struct({
 });
 
 const decodeItems = Schema.decodeUnknownEffect(Schema.Array(ItemRow));
+
+/** An attention item as it's kept, with its flags as numbers and JSON. */
+const AttentionRow = Schema.Struct({
+  ...Domain.AttentionFound.fields,
+  yours: Schema.Number,
+  work: Schema.Number,
+  youActedLast: Schema.Number,
+  involved: Schema.Number,
+  signals: Schema.fromJsonString(Schema.Array(Domain.Signal)),
+  notification: Schema.NullOr(
+    Schema.fromJsonString(Domain.AttentionNotification),
+  ),
+  firstSeen: Schema.Finite,
+  changedAt: Schema.Finite,
+});
+
+type AttentionRow = typeof AttentionRow.Type;
+
+const decodeAttention = Schema.decodeUnknownEffect(Schema.Array(AttentionRow));
+
+const decodeAttentionChanges = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      ...Domain.AttentionChange.fields,
+      what: Schema.fromJsonString(Schema.Array(Schema.String)),
+      gone: Schema.Number,
+    }),
+  ),
+);
+
+/** A kept attention item, without where it sits, which depends on the time. */
+const toFound = ({
+  yours,
+  work,
+  youActedLast,
+  involved,
+  firstSeen,
+  changedAt,
+  ...row
+}: AttentionRow) => ({
+  found: {
+    ...row,
+    yours: yours !== 0,
+    work: work !== 0,
+    youActedLast: youActedLast !== 0,
+    involved: involved !== 0,
+  } satisfies Domain.AttentionFound,
+  firstSeen,
+  changedAt,
+});
+
+/** Within this long of the last look, a look is the same visit. */
+const visitMs = 30 * 60_000;
+
+/** How long what moved on attention items is kept. */
+const attentionChangeDays = 30;
+
+/** How far back Since you last looked reaches the first time. */
+const firstLookHours = 24;
 
 /** How far back the inbox is filled from runs the first time it starts. */
 const backfillHours = 48;
@@ -638,6 +745,26 @@ export class Store extends Context.Service<
     ): Effect.Effect<void, StoreError>;
     /** Each worker's agents, by worker name. */
     agents(): Effect.Effect<ReadonlyArray<Domain.WorkerAgents>, StoreError>;
+    /**
+     * Keep what the attention job found: add new items, update the ones
+     * whose fingerprint moved and record what moved, and, for a complete
+     * snapshot, drop the ones it no longer found.
+     */
+    recordAttention(snapshot: Api.AttentionSnapshot): Effect.Effect<
+      {
+        readonly added: number;
+        readonly changed: number;
+        readonly gone: number;
+      },
+      StoreError
+    >;
+    /** The Attention page as of now. */
+    attention(): Effect.Effect<Domain.Attention, StoreError>;
+    /**
+     * Note a look at the Attention page. A look more than half an hour after
+     * the last starts a new visit, which shows what moved since that one.
+     */
+    looked(): Effect.Effect<void, StoreError>;
     /**
      * Drop a queued run, or mark a running one cancelled so its worker stops
      * at its next heartbeat. `by` is who cancelled it, for the run's error.
@@ -1331,6 +1458,204 @@ export class Store extends Context.Service<
         SELECT worker, decisions, agents, at FROM worker_agents ORDER BY worker
       `.pipe(Effect.flatMap(decodeAgents));
     }, Effect.mapError(storeError));
+
+    const attentionState = Effect.fnUntraced(function* () {
+      const rows = yield* sql<{ key: string; value: string }>`
+        SELECT key, value FROM attention_state
+      `;
+
+      return new Map(rows.map(({ key, value }) => [key, value]));
+    });
+
+    const setAttentionState = (key: string, value: string) =>
+      sql`
+        INSERT INTO attention_state ${sql.insert({ key, value })}
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value
+      `;
+
+    const numberOf = (value: string | undefined) =>
+      value === undefined ? null : Number(value);
+
+    const recordAttention = Effect.fn("Store.recordAttention")(
+      function* (snapshot: Api.AttentionSnapshot) {
+        const now = yield* Clock.currentTimeMillis;
+        const state = yield* attentionState();
+
+        // The first collection has nothing to compare with, so it isn't
+        // shown as everything being new
+        const first = !state.has("collected_at");
+
+        const kept = new Map(
+          (yield* sql`SELECT * FROM attention_items`.pipe(
+            Effect.flatMap(decodeAttention),
+          )).map((row) => [row.url, toFound(row)]),
+        );
+
+        const counts = { added: 0, changed: 0, gone: 0 };
+
+        const logChange = (
+          item: Pick<Domain.AttentionFound, "url" | "repo" | "title">,
+          what: ReadonlyArray<string>,
+          gone: boolean,
+        ) =>
+          first
+            ? Effect.void
+            : sql`
+                INSERT INTO attention_changes ${sql.insert({
+                  url: item.url,
+                  repo: item.repo,
+                  title: item.title,
+                  at: now,
+                  what: JSON.stringify(what),
+                  gone: gone ? 1 : 0,
+                })}
+              `;
+
+        for (const item of snapshot.items) {
+          const before = kept.get(item.url);
+
+          kept.delete(item.url);
+
+          if (
+            before !== undefined &&
+            before.found.fingerprint === item.fingerprint &&
+            before.found.work === item.work
+          )
+            continue;
+
+          const what = Attention.whatMoved(before?.found, item);
+
+          yield* sql`
+            INSERT OR REPLACE INTO attention_items ${sql.insert({
+              ...item,
+              yours: item.yours ? 1 : 0,
+              work: item.work ? 1 : 0,
+              youActedLast: item.youActedLast ? 1 : 0,
+              involved: item.involved ? 1 : 0,
+              signals: JSON.stringify(item.signals),
+              notification:
+                item.notification === null
+                  ? null
+                  : JSON.stringify(item.notification),
+              firstSeen: before?.firstSeen ?? now,
+              changedAt: now,
+            })}
+          `;
+
+          if (before === undefined) counts.added += 1;
+          else counts.changed += 1;
+
+          // Activity with nothing to say is only worth showing on your own
+          if (what.length > 1 || what[0] !== "Updated" || item.yours) {
+            yield* logChange(item, what, false);
+          }
+        }
+
+        if (snapshot.complete) {
+          for (const { found } of kept.values()) {
+            yield* sql`DELETE FROM attention_items WHERE url = ${found.url}`;
+            yield* logChange(
+              found,
+              ["Closed, or no longer involves you"],
+              true,
+            );
+            counts.gone += 1;
+          }
+        }
+
+        yield* setAttentionState("collected_at", `${now}`);
+        yield* setAttentionState("stale_days", `${snapshot.staleDays}`);
+        yield* setAttentionState(
+          "work_time",
+          snapshot.workTime === null ? "" : `${snapshot.workTime}`,
+        );
+        yield* sql`
+          DELETE FROM attention_changes
+          WHERE at < ${now - attentionChangeDays * 86_400_000}
+        `;
+
+        return counts;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const attention = Effect.fn("Store.attention")(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const state = yield* attentionState();
+      const staleDays = numberOf(state.get("stale_days")) ?? 14;
+      const since = numberOf(state.get("since"));
+      const workTime = state.get("work_time");
+
+      // Repositories with a run that left something for a person
+      const needing = new Set(
+        (yield* sql<{ repo: string }>`
+          SELECT DISTINCT lower(coalesce(heal_target, release_repo)) AS repo
+          FROM runs
+          WHERE attention = 1
+            AND coalesce(heal_target, release_repo) IS NOT NULL
+        `).map(({ repo }) => repo),
+      );
+
+      const rows = yield* sql`
+        SELECT * FROM attention_items ORDER BY changed_at DESC
+      `.pipe(Effect.flatMap(decodeAttention));
+
+      const items = rows.map((row): Domain.AttentionItem => {
+        const { found, firstSeen, changedAt } = toFound(row);
+
+        const signals =
+          found.yours && needing.has(found.repo.toLowerCase())
+            ? [...found.signals, { kind: "upkeep" as const, detail: null }]
+            : found.signals;
+
+        return {
+          ...found,
+          signals,
+          section: Attention.sectionOf({ ...found, signals }, now, staleDays),
+          firstSeen,
+          changedAt,
+        };
+      });
+
+      const changes = yield* sql`
+        SELECT url, repo, title, at, what, gone FROM attention_changes
+        WHERE at > ${since ?? now - firstLookHours * 3_600_000}
+        ORDER BY at DESC
+        LIMIT 500
+      `.pipe(Effect.flatMap(decodeAttentionChanges));
+
+      return {
+        items,
+        changes: changes.map((change) => ({
+          ...change,
+          gone: change.gone !== 0,
+        })),
+        since,
+        collectedAt: numberOf(state.get("collected_at")),
+        workTime:
+          workTime === undefined || workTime === ""
+            ? null
+            : workTime === "true",
+        staleDays,
+      } satisfies Domain.Attention;
+    }, Effect.mapError(storeError));
+
+    const looked = Effect.fn("Store.looked")(
+      function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const last = numberOf((yield* attentionState()).get("looked"));
+
+        // A new visit shows what moved since the last one
+        if (last !== null && now - last > visitMs) {
+          yield* setAttentionState("since", `${last}`);
+        }
+
+        yield* setAttentionState("looked", `${now}`);
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const cancel = Effect.fn("Store.cancel")(
       function* (id: string, by: string) {
@@ -2035,6 +2360,9 @@ export class Store extends Context.Service<
       takeHeld,
       setAgents,
       agents,
+      recordAttention,
+      attention,
+      looked,
       paused,
       cancel,
       log,

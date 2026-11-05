@@ -23,7 +23,7 @@ import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-badge.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-empty-state.ts";
-import "@timmo001/groundwork-ui/gw-spinner.ts";
+import "@timmo001/groundwork-ui/gw-card.ts";
 import "./upkeep-sign-in.ts";
 
 /** Styles every element shares. */
@@ -260,20 +260,27 @@ const renderError = (error: Option.Option<ApiError>) => {
       </gw-alert>`;
 };
 
+/** A card of skeleton lines, for content still loading. */
+export const skeleton = html`<div aria-busy="true">
+  <gw-card loading lines="4"></gw-card>
+</div>`;
+
 /**
- * A request's result: a spinner until it first loads, then its value, kept
- * while it refreshes, or what went wrong.
+ * A request's result: a skeleton until it first loads, shaped like the page
+ * where `loading` is given, then its value, kept while it refreshes, or what
+ * went wrong.
  */
 export const view = <A>(
   result: AsyncResult.AsyncResult<A, ApiError>,
   render: (value: A) => TemplateResult,
+  loading: TemplateResult = skeleton,
 ) => {
   if (AsyncResult.isFailure(result)) {
     return renderError(AsyncResult.error(result));
   }
 
   return Option.match(AsyncResult.value(result), {
-    onNone: () => html`<gw-spinner label="Loading"></gw-spinner>`,
+    onNone: () => loading,
     onSome: render,
   });
 };

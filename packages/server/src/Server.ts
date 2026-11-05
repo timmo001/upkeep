@@ -869,6 +869,46 @@ const WorkHandlers = HttpApiBuilder.group(
 
         return { queued: queued.flatMap(Option.toArray) };
       }),
+      attention: ({ payload }) =>
+        store.recordAttention(payload).pipe(Effect.orDie),
+    });
+  }),
+);
+
+/** How old the attention job's last run is before opening the page runs it. */
+const refreshAfterMs = 5 * 60_000;
+
+const AttentionHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "attention",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      get: () => store.attention().pipe(Effect.orDie),
+      looked: () => store.looked().pipe(Effect.orDie),
+      refresh: Effect.fn(function* () {
+        const job = Catalogue.attention.id;
+        const now = yield* Clock.currentTimeMillis;
+        const [last] = yield* store.runs({ job, limit: 1 }).pipe(Effect.orDie);
+
+        const fresh =
+          last !== undefined &&
+          (last.state === "queued" ||
+            last.state === "running" ||
+            now - (last.finishedAt ?? last.queuedAt) < refreshAfterMs);
+
+        if (fresh) return { run: null };
+
+        // Like the schedule, this leaves a paused or parked job alone
+        const queued = yield* queue({
+          job,
+          trigger: "schedule",
+          release: null,
+        }).pipe(Effect.provideService(Store, store), Effect.orDie);
+
+        return { run: Option.getOrNull(queued) };
+      }),
     });
   }),
 );
@@ -983,6 +1023,7 @@ const apiRoutes = (
       RunsHandlers,
       ActivityHandlers,
       InboxHandlers,
+      AttentionHandlers,
       WorkHandlers,
       ReposHandlers,
       TokensHandlers,

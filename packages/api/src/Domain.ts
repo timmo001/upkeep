@@ -479,3 +479,163 @@ export const LogLine = Schema.Struct({
 });
 
 export interface LogLine extends Schema.Schema.Type<typeof LogLine> {}
+
+/** What an attention item is on GitHub. */
+export const AttentionKind = Schema.Literals(["pull", "issue", "notification"]);
+
+export type AttentionKind = typeof AttentionKind.Type;
+
+/**
+ * Something GitHub says about an item, which decides its section. Most only
+ * come up on your own pull requests and issues.
+ */
+export const SignalKind = Schema.Literals([
+  /** Your review is requested. */
+  "review-requested",
+  /** A reviewer asked for changes on your pull request. */
+  "changes-requested",
+  /** Review threads on your pull request someone else spoke last in. */
+  "unresolved",
+  /** Someone else commented on your item after you. */
+  "new-comment",
+  /** You were mentioned. */
+  "mentioned",
+  "failing-checks",
+  "conflicts",
+  /** The base branch changed files your pull request touches. */
+  "base-moved",
+  /** Upkeep has a run for the repository that needs a person. */
+  "upkeep",
+  "approved",
+  "draft",
+  /** Its notification is unread. */
+  "unread",
+]);
+
+export type SignalKind = typeof SignalKind.Type;
+
+/** A signal as a person reads it. */
+export const signalLabel = (kind: SignalKind) =>
+  ({
+    "review-requested": "review requested",
+    "changes-requested": "changes requested",
+    unresolved: "unresolved threads",
+    "new-comment": "new comment",
+    mentioned: "mentioned",
+    "failing-checks": "failing checks",
+    conflicts: "conflicts",
+    "base-moved": "base moved",
+    upkeep: "Upkeep needs you",
+    approved: "approved",
+    draft: "draft",
+    unread: "unread",
+  })[kind];
+
+export const Signal = Schema.Struct({
+  kind: SignalKind,
+  /** More about it, such as how many threads or which check failed. */
+  detail: Schema.NullOr(Schema.String),
+});
+
+export interface Signal extends Schema.Schema.Type<typeof Signal> {}
+
+/** Where an item sits on the Attention page, from its signals and age. */
+export const AttentionSection = Schema.Literals([
+  "needs-you",
+  "blocked",
+  "stale",
+  "waiting",
+  /** Your drafts, and your issues nobody else has taken part in. */
+  "backlog",
+  "watching",
+]);
+
+export type AttentionSection = typeof AttentionSection.Type;
+
+/** An item's GitHub notification. */
+export const AttentionNotification = Schema.Struct({
+  id: Schema.String,
+  /** Why GitHub sent it, such as `mention` or `review_requested`. */
+  reason: Schema.String,
+  unread: Schema.Boolean,
+  updatedAt: Schema.Finite,
+});
+
+export interface AttentionNotification extends Schema.Schema.Type<
+  typeof AttentionNotification
+> {}
+
+/** One pull request, issue or notification, as a worker found it. */
+export const AttentionFound = Schema.Struct({
+  /** Its page on GitHub, which it's known by. */
+  url: Schema.String,
+  kind: AttentionKind,
+  repo: RepoName,
+  number: Schema.NullOr(Schema.Int),
+  title: Schema.String,
+  author: Schema.NullOr(Schema.String),
+  /** Opened by the person Upkeep works for. */
+  yours: Schema.Boolean,
+  /** Work rather than personal, from the worker's site patterns. */
+  work: Schema.Boolean,
+  /** The person Upkeep works for acted on it last. */
+  youActedLast: Schema.Boolean,
+  /** Someone other than its author, and not a bot, has taken part. */
+  involved: Schema.Boolean,
+  /** The latest activity by anyone but a bot. */
+  activityAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  signals: Schema.Array(Signal),
+  notification: Schema.NullOr(AttentionNotification),
+  /** What can change it, so an unchanged item is left alone. */
+  fingerprint: Schema.String,
+});
+
+export interface AttentionFound extends Schema.Schema.Type<
+  typeof AttentionFound
+> {}
+
+/** An item as the Attention page shows it. */
+export const AttentionItem = Schema.Struct({
+  ...AttentionFound.fields,
+  section: AttentionSection,
+  firstSeen: Schema.Finite,
+  /** When its signals or fingerprint last moved. */
+  changedAt: Schema.Finite,
+});
+
+export interface AttentionItem extends Schema.Schema.Type<
+  typeof AttentionItem
+> {}
+
+/** What moved on an item in one collection, for Since you last looked. */
+export const AttentionChange = Schema.Struct({
+  url: Schema.String,
+  repo: RepoName,
+  title: Schema.String,
+  at: Schema.Finite,
+  /** Each thing that moved, such as `New: failing checks`. */
+  what: Schema.Array(Schema.String),
+  /** It's closed or merged, or no longer involves you. */
+  gone: Schema.Boolean,
+});
+
+export interface AttentionChange extends Schema.Schema.Type<
+  typeof AttentionChange
+> {}
+
+/** The Attention page: every item, and what changed since you last looked. */
+export const Attention = Schema.Struct({
+  items: Schema.Array(AttentionItem),
+  changes: Schema.Array(AttentionChange),
+  /** When you last looked before this visit, or null the first time. */
+  since: Schema.NullOr(Schema.Finite),
+  /** When a worker last sent what it found, or null before the first. */
+  collectedAt: Schema.NullOr(Schema.Finite),
+  /** Whether it's work time, as the worker last said, or null when unknown. */
+  workTime: Schema.NullOr(Schema.Boolean),
+  /** Days without activity before an item is going stale. */
+  staleDays: Schema.Int,
+});
+
+export interface Attention extends Schema.Schema.Type<typeof Attention> {}

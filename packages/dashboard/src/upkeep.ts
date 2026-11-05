@@ -130,6 +130,26 @@ export const renameRepo = UpkeepApi.runtime.fn(
   },
 );
 
+const attentionKey = ["attention"];
+
+/** The Attention page: every item by section, and what moved lately. */
+export const attention = UpkeepApi.query("attention", "get", {
+  reactivityKeys: [...attentionKey, ...runsKey],
+});
+
+/**
+ * Opening the Attention page: note the visit, so Since you last looked
+ * starts at the one before, then queue a collection when the last is old.
+ */
+export const openAttention = UpkeepApi.runtime.fn(() =>
+  UpkeepApi.use((client) =>
+    client.attention.looked().pipe(Effect.andThen(client.attention.refresh())),
+  ).pipe(
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate([...attentionKey, ...runsKey])),
+  ),
+);
+
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {
     params: { id },
@@ -246,6 +266,7 @@ export const dismissRun = UpkeepApi.runtime.fn((id: string) =>
 
 export type Route = Data.TaggedEnum<{
   Inbox: {};
+  Attention: {};
   Repos: {};
   Repo: { readonly repo: string };
   Jobs: {};
@@ -262,6 +283,8 @@ const jobsPattern = new URLPattern({ pathname: "/jobs{/}?" });
 
 const reposPattern = new URLPattern({ pathname: "/repos{/}?" });
 
+const attentionPattern = new URLPattern({ pathname: "/attention{/}?" });
+
 const repoPattern = new URLPattern({ pathname: "/repos/:owner/:name" });
 
 const jobPattern = new URLPattern({ pathname: "/jobs/:id" });
@@ -276,6 +299,8 @@ const parseRoute = (): Route => {
   if (jobsPattern.test({ pathname: path })) return Route.Jobs();
 
   if (reposPattern.test({ pathname: path })) return Route.Repos();
+
+  if (attentionPattern.test({ pathname: path })) return Route.Attention();
 
   const repo = repoPattern.exec({ pathname: path })?.pathname.groups;
 
@@ -363,6 +388,8 @@ export const homeHref = "./";
 export const jobsHref = "jobs";
 
 export const reposHref = "repos";
+
+export const attentionHref = "attention";
 
 /** A tracked repository's page, by `owner/name`. */
 export const repoHref = (repo: string) =>

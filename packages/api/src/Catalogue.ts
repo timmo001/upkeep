@@ -135,9 +135,21 @@ export const summary: Job = {
   tracked: false,
 };
 
+export const attention: Job = {
+  id: "attention",
+  name: "Attention",
+  description:
+    "Read the pull requests, issues and notifications that involve you, and the open ones on tracked repositories, for the Attention page",
+  schedule: "*/15 * * * *",
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   watch,
+  attention,
   labels,
   bump,
   heal,

@@ -1,4 +1,5 @@
 /** What each job in the catalogue does on a worker, by job ID. */
+import { attention } from "./jobs/attention";
 import { bump } from "./jobs/bump";
 import { ci } from "./jobs/ci";
 import { deps } from "./jobs/deps";
@@ -16,6 +17,7 @@ import type { Handlers } from "./Worker";
 export const handlers: Handlers = {
   releases: () => releases(),
   watch: () => watch(),
+  attention: () => attention(),
   labels: () => labels(),
   bump: (release) => bump(release),
   heal: () => heal(),

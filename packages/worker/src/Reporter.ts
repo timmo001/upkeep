@@ -61,6 +61,15 @@ export class Reporter extends Context.Service<
     readonly seen: (
       commits: ReadonlyArray<Domain.Change>,
     ) => Effect.Effect<number, unknown>;
+    /** Send what the attention job found. */
+    readonly attention: (snapshot: Api.AttentionSnapshot) => Effect.Effect<
+      {
+        readonly added: number;
+        readonly changed: number;
+        readonly gone: number;
+      },
+      unknown
+    >;
     /**
      * Report the run's summary, a commit it pushed, or that it needs a
      * person. A report that can't be sent is logged rather than failing the run.
@@ -139,6 +148,7 @@ export class Reporter extends Context.Service<
 
             return added;
           }),
+          attention: (snapshot) => client.work.attention({ payload: snapshot }),
           report: (report) =>
             client.work
               .report({ params, payload: report })
@@ -185,6 +195,13 @@ export class Reporter extends Context.Service<
           RunLog.info(`Would add ${commits.length} commits to the inbox`).pipe(
             Effect.provide(RunLog.RunLog.console),
             Effect.as(commits.length),
+          ),
+        attention: (snapshot) =>
+          RunLog.info(
+            `Would send ${snapshot.items.length} attention items${snapshot.complete ? "" : ", not all of them"}`,
+          ).pipe(
+            Effect.provide(RunLog.RunLog.console),
+            Effect.as({ added: 0, changed: 0, gone: 0 }),
           ),
         report: () => Effect.void,
       }),

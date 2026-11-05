@@ -13,6 +13,7 @@ import { AtomController, registry } from "./AtomController.ts";
 import { bindModes, modeOptions } from "./theme.ts";
 import { shared } from "./ui.ts";
 import {
+  attentionHref,
   homeHref,
   inbox,
   jobsHref,
@@ -26,6 +27,7 @@ import "@timmo001/groundwork-ui/gw-app-bar.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/layout.ts";
+import "./upkeep-attention.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";
 import "./upkeep-overview.ts";
@@ -113,6 +115,7 @@ export class UpkeepApp extends LitElement {
     const current = this.#route.value;
     const onInbox = Route.$is("Inbox")(current);
     const onRepos = Route.$is("Repos")(current) || Route.$is("Repo")(current);
+    const onAttention = Route.$is("Attention")(current);
 
     return html`
       <gw-app-bar menu-label="Pages">
@@ -126,8 +129,9 @@ export class UpkeepApp extends LitElement {
           }</a
         >
         ${this.#link(homeHref, "Inbox", onInbox, this.#unread())}
+        ${this.#link(attentionHref, "Attention", onAttention)}
         ${this.#link(reposHref, "Repositories", onRepos)}
-        ${this.#link(jobsHref, "Jobs", !onInbox && !onRepos)}
+        ${this.#link(jobsHref, "Jobs", !onInbox && !onRepos && !onAttention)}
         <gw-segmented
           slot="actions"
           size="small"
@@ -154,6 +158,7 @@ export class UpkeepApp extends LitElement {
         <gw-page>
           ${Route.$match(current, {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
+            Attention: () => html`<upkeep-attention></upkeep-attention>`,
             Repos: () => html`<upkeep-repos></upkeep-repos>`,
             Repo: ({ repo }) => html`<upkeep-repo .repo=${repo}></upkeep-repo>`,
             Jobs: () => html`<upkeep-overview></upkeep-overview>`,

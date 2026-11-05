@@ -1,5 +1,6 @@
 /** The run lifecycle rules the server relies on, against an in-memory store. */
 import { BunServices } from "@effect/platform-bun";
+import type { Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Option } from "effect";
 import { Store } from "./Store";
@@ -11,6 +12,72 @@ const run = <A, E>(effect: Effect.Effect<A, E, Store>) =>
       Effect.provide(BunServices.layer),
     ),
   );
+
+const found = (
+  number: number,
+  signals: ReadonlyArray<Domain.Signal> = [],
+): Domain.AttentionFound => ({
+  url: `https://github.com/timmo001/a/pull/${number}`,
+  kind: "pull",
+  repo: "timmo001/a",
+  number,
+  title: `Pull ${number}`,
+  author: "timmo001",
+  yours: true,
+  work: false,
+  youActedLast: true,
+  involved: true,
+  activityAt: 0,
+  updatedAt: 0,
+  signals,
+  notification: null,
+  fingerprint: JSON.stringify(signals),
+});
+
+const snapshot = (
+  items: ReadonlyArray<Domain.AttentionFound>,
+  complete = true,
+) => ({ items, complete, workTime: null, staleDays: 14 });
+
+test("attention only logs what moved, and drops items only when complete", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      // Everything is new on the first collection, so none of it is logged
+      yield* store.recordAttention(snapshot([found(1), found(2)]));
+      expect((yield* store.attention()).changes).toHaveLength(0);
+
+      const same = yield* store.recordAttention(snapshot([found(1), found(2)]));
+
+      expect(same).toEqual({ added: 0, changed: 0, gone: 0 });
+
+      // A partial collection keeps what it didn't find
+      yield* store.recordAttention(snapshot([found(1)], false));
+      expect((yield* store.attention()).items).toHaveLength(2);
+
+      const moved = yield* store.recordAttention(
+        snapshot([found(1, [{ kind: "failing-checks", detail: null }])]),
+      );
+
+      expect(moved).toEqual({ added: 0, changed: 1, gone: 1 });
+
+      const page = yield* store.attention();
+
+      expect(page.items.map((item) => [item.number, item.section])).toEqual([
+        [1, "blocked"],
+      ]);
+
+      expect(
+        page.changes.map((change) => [change.title, change.what, change.gone]),
+      ).toEqual(
+        expect.arrayContaining([
+          ["Pull 1", ["New: failing checks"], false],
+          ["Pull 2", ["Closed, or no longer involves you"], true],
+        ]),
+      );
+    }),
+  ));
 
 test("a waiting run of the same job and release isn't queued twice", () =>
   run(
