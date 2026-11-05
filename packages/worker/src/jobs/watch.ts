@@ -1,7 +1,9 @@
 /**
  * The watch job: read the commits on each tracked repository's default branch
  * from the last 48 hours and add the ones the inbox doesn't have yet, so it
- * shows what happened outside Upkeep's own runs. Renovate's and Dependabot's
+ * shows what happened outside Upkeep's own runs. A branch that hasn't moved
+ * since the last run isn't listed again, and READMEs are read conditionally,
+ * so an unchanged repository costs no rate limit. Renovate's and Dependabot's
  * commits are dependency updates, grouped by update across repositories; the
  * rest are grouped by repository and day. A commit is routine when it only
  * moves versions, lockfiles, pins or tool versions. It also reads each
@@ -13,6 +15,7 @@ import type { Api as UpkeepApi, Domain } from "@upkeep/api";
 import { homedir } from "node:os";
 import { Clock, Effect, Schema } from "effect";
 import { reason } from "../Failure";
+import * as Kept from "../Kept";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -194,6 +197,34 @@ const commitsOf = (repo: string, since: string) =>
   );
 
 /**
+ * One repository's commits since `since`, read only when its default branch
+ * moved since the last run, which a conditional read of its newest commit
+ * tells for free. A read that fails is forgotten, so the next run tries it
+ * in full again.
+ */
+const newCommitsOf = Effect.fnUntraced(function* (
+  repo: string,
+  since: string,
+  kept: Kept.Kept,
+) {
+  const head = headOf(repo);
+
+  const { changed } = yield* kept.get(head);
+
+  if (!changed) return [];
+
+  return yield* commitsOf(repo, since).pipe(
+    Effect.tapCause(() => kept.forget(head)),
+  );
+});
+
+/** The read of a repository's newest commit, which says whether it moved. */
+const headOf = (repo: string) => ({
+  endpoint: `repos/${repo}/commits`,
+  query: { per_page: 1 },
+});
+
+/**
  * A README's first heading as plain text, such as `System Bridge`, without
  * images, badges or link markup. None when it has no heading.
  */
@@ -215,14 +246,16 @@ export const titleOf = (readme: string) => {
   return text === "" ? null : text;
 };
 
+const Readme = Schema.Struct({ content: Schema.String });
+
 /** A repository's title from its README, none when it has none to read. */
-const readTitle = (repo: string) =>
-  Api.text({
-    endpoint: `repos/${repo}/readme`,
-    method: "GET",
-    headers: { Accept: "application/vnd.github.raw+json" },
-  }).pipe(
-    Effect.map((readme) => ({ repo, title: titleOf(readme) })),
+const readTitle = (repo: string, kept: Kept.Kept) =>
+  kept.get({ endpoint: `repos/${repo}/readme` }).pipe(
+    Effect.flatMap(({ value }) => Schema.decodeUnknownEffect(Readme)(value)),
+    Effect.map(({ content }) => ({
+      repo,
+      title: titleOf(Buffer.from(content, "base64").toString("utf8")),
+    })),
     Effect.catchCause(() => Effect.succeed({ repo, title: null })),
   );
 
@@ -270,6 +303,7 @@ export const watch = Effect.fnUntraced(function* () {
   const repos = yield* reporter.repos();
   const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
   const now = yield* Clock.currentTimeMillis;
+  const kept = yield* Kept.make("watch", { onlyOnSuccess: true });
 
   const since = new Date(now - lookbackHours * 3_600_000).toISOString();
 
@@ -282,7 +316,7 @@ export const watch = Effect.fnUntraced(function* () {
   const found = (yield* Effect.forEach(
     repos,
     (repo) =>
-      commitsOf(repo, since).pipe(
+      newCommitsOf(repo, since, kept).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push(repo))),
@@ -305,7 +339,8 @@ export const watch = Effect.fnUntraced(function* () {
     ({ repo, commit }) => !known.has(`${repo.toLowerCase()}@${commit.sha}`),
   );
 
-  // Only new commits are read in full, for the files they touched.
+  // Only new commits are read in full, for the files they touched. One that
+  // can't be read leaves its repository to be listed again next run.
   const changes = yield* Effect.forEach(
     fresh,
     ({ repo, commit }) =>
@@ -317,7 +352,7 @@ export const watch = Effect.fnUntraced(function* () {
         Effect.catchCause((cause) =>
           RunLog.warn(
             `${repo}: couldn't read ${commit.sha.slice(0, 7)}: ${reason(cause)}`,
-          ).pipe(Effect.as(null)),
+          ).pipe(Effect.andThen(kept.forget(headOf(repo))), Effect.as(null)),
         ),
       ),
     { concurrency: 4 },
@@ -327,9 +362,12 @@ export const watch = Effect.fnUntraced(function* () {
     changes.filter((change) => change !== null),
   );
 
-  // Titles change rarely, but reading them each run keeps a rename in step.
+  // Titles change rarely, but reading them each run keeps a rename in step,
+  // and an unchanged README costs nothing.
   yield* reporter.titles(
-    yield* Effect.forEach(repos, readTitle, { concurrency: 4 }),
+    yield* Effect.forEach(repos, (repo) => readTitle(repo, kept), {
+      concurrency: 4,
+    }),
   );
 
   const names = yield* namesOf(repos);
@@ -345,7 +383,7 @@ export const watch = Effect.fnUntraced(function* () {
   if (repos.length > 0 && failed.length === repos.length) {
     return yield* new WatchFailed({ count: failed.length });
   }
-});
+}, Effect.scoped);
 
 class WatchFailed extends Schema.TaggedError<WatchFailed>()("WatchFailed", {
   count: Schema.Number,
