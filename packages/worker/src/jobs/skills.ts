@@ -313,6 +313,16 @@ const land = Effect.fnUntraced(function* (
         });
     }
 
+    // `--update` moves the pins in skills.yml but leaves the generated
+    // marketplace pinned to the old SHAs, which validation rejects as stale
+    const catalogue = yield* maintain(built, ["catalogue"]);
+
+    if (catalogue.exitCode !== 0)
+      return yield* new SkillMaintenanceFailed({
+        command: "catalogue",
+        exitCode: catalogue.exitCode,
+      });
+
     yield* run("mise", ["run", "validate"], options);
     yield* run("git", ["add", "--all"], options);
 
