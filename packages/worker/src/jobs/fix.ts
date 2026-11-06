@@ -102,6 +102,11 @@ const prompt = (
           "The run was applying the dependency update groups named in the log, each as a commit to the default branch; the failed group's updates are in the log line for its `renovate/` branch. Apply that group here, read its release notes and migrate whatever the new versions need until the checks pass, push it, then close the updater's open pull request for that branch, if there is one, with a comment linking the commit. A drift failure after the updates is fixed as the drift job's would be.",
         ]
       : []),
+    ...(run.job === "sync"
+      ? [
+          `The run was syncing the copies ${repo} takes from groundwork, listed in its sync.json. A copy changed in both is settled by moving the app's edit into groundwork, or into a wrapper in the app, then running groundwork's sync for this app (\`bun packages/sync/src/cli.ts run --app <this checkout>\` in groundwork) and pushing both. Anything else failed in the checks or CI after the push, and is fixed forward here.`,
+        ]
+      : []),
     ...(run.job === "ci"
       ? [
           `${repo}'s CI is red on its default branch. The log has the failed run's failed steps and how its checks went here: tell a real failure from one only CI sees (a lockfile, the runner, a secret). Fix the cause, push, then watch CI on the commit until it passes.`,

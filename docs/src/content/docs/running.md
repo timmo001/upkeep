@@ -181,7 +181,7 @@ reached.
 ## Repositories
 
 Jobs that work on repositories (`releases`, `labels`, `bump`,
-`notifications`, `stalled-updates`, `drift`, `deps` and `ci`) only touch the ones
+`notifications`, `stalled-updates`, `drift`, `sync`, `deps` and `ci`) only touch the ones
 the server tracks for them. Every other repository is left alone, and with
 none tracked they do nothing. The `watch` job reads every tracked repository,
 whatever it's opted into.
@@ -379,6 +379,7 @@ by default.
 | `notifications`     | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
 | `stalled-updates`   | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`             | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
+| `sync`              | Hourly           | Runs groundwork's sync over the apps with a `sync.json`: carries their QML edits back to groundwork, copies its changes out, then checks and pushes each one. See [Sync](#sync).                                                                                                                                                                                                                                                                                           |
 | `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
@@ -647,3 +648,24 @@ the tag once it's done.
 Clones are kept in `upkeep/drift` in the XDG cache directory. Set
 `UPKEEP_DRIFT_DRY_RUN=true` to log what would be pushed instead, without
 failing for the reviews.
+
+### Sync
+
+Every hour the `sync` job finds the signed-in account's repositories with a
+[`sync.json`](https://groundwork.timmo.dev/sync) at their root, the apps that
+take copies of groundwork's items, such as its QML panel components. It
+clones groundwork and each app, and runs groundwork's own sync over them.
+
+An app's edit to a QML copy is carried back into groundwork, then every
+changed source is copied out to the apps that take it. Carried-back edits are
+checked and pushed to groundwork first, so no app gets a copy groundwork
+doesn't have. Each changed app is then checked as `bump` checks a consumer,
+pushed to its default branch and its CI watched.
+
+A copy edited in the app and changed in groundwork too, or edited differently
+in two apps, is left alone and fails its app, so a heal hands it to an agent
+to move the edit into groundwork or a wrapper.
+
+Clones are kept in `upkeep/sync` in the XDG cache directory. Set
+`UPKEEP_SYNC_DRY_RUN=true` to log what would change instead, without changing
+anything.

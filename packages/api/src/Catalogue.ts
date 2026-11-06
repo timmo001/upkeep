@@ -81,6 +81,17 @@ export const drift: Job = {
   tracked: true,
 };
 
+export const sync: Job = {
+  id: "sync",
+  name: "Sync",
+  description:
+    "Keep the copies apps take from groundwork current: carry an app's QML edits back, copy groundwork's changes out, then check and push each one",
+  schedule: "15 * * * *",
+  onRelease: false,
+  lane: "repos",
+  tracked: true,
+};
+
 export const deps: Job = {
   id: "deps",
   name: "Dependencies",
@@ -168,6 +179,7 @@ export const jobs: ReadonlyArray<Job> = [
   notifications,
   stalledUpdates,
   drift,
+  sync,
   deps,
   ci,
   summary,
