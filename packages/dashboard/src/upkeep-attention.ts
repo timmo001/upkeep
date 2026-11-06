@@ -107,7 +107,7 @@ const sections: ReadonlyArray<{
     id: "blocked",
     heading: "Blocked",
     description:
-      "Your pull requests with failing checks, conflicts, a moved base, or an Upkeep run waiting",
+      "Your pull requests with failing checks, conflicts, or an Upkeep run waiting",
   },
   {
     id: "stale",

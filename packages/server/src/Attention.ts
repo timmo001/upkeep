@@ -17,11 +17,13 @@ const needsYou: ReadonlySet<Domain.SignalKind> = new Set([
   "mentioned",
 ]);
 
-/** Signals that stop your own work going in. */
+/**
+ * Signals that stop your own work going in. A moved base isn't one: with no
+ * conflict there's nothing to fix, and conflicts block on their own.
+ */
 const blocking: ReadonlySet<Domain.SignalKind> = new Set([
   "failing-checks",
   "conflicts",
-  "base-moved",
   "upkeep",
 ]);
 

@@ -472,8 +472,9 @@ server, which sorts each item into a section by its signals, with no model:
 
 - **Needs you:** a review requested, changes requested, unresolved threads,
   a mention, or a reply from someone else in the last `staleDays`.
-- **Blocked:** your own, with failing checks, conflicts, a base branch that
-  moved under its files, or an Upkeep finding for its repository.
+- **Blocked:** your own, with failing checks, conflicts, or an Upkeep finding
+  for its repository. A base branch that moved under its files shows as a
+  signal, but doesn't block on its own.
 - **Going stale** (no activity for `staleDays`) and **Waiting on others**:
   the rest of your own.
 - **Your backlog** (your drafts, and your issues nobody else has joined) and
