@@ -396,7 +396,9 @@ export const sync = Effect.fnUntraced(function* () {
   );
 
   yield* summary(
-    `Synced ${listed(updated)} with groundwork, ${listed(failed)} need attention`,
+    updated.length === 0 && failed.length === 0
+      ? `Every copy in ${apps.size} apps is current`
+      : `Synced ${listed(updated)} with groundwork, ${listed(failed)} need attention`,
   );
 
   if (failed.length > 0)
