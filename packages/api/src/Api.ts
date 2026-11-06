@@ -1114,6 +1114,24 @@ export class SkillsGroup extends HttpApiGroup.make("skills")
     }),
   ) {}
 
+export class SessionsGroup extends HttpApiGroup.make("sessions")
+  .add(
+    /** A session a worker shared, for `upkeep open` to import and open. */
+    HttpApiEndpoint.get("get", "/:id", {
+      params: { id: Schema.String },
+      success: SessionExport,
+      error: SessionNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/sessions")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Sessions",
+      description: "Agents' OpenCode sessions that workers shared",
+    }),
+  ) {}
+
 export class TokensGroup extends HttpApiGroup.make("tokens")
   .add(
     HttpApiEndpoint.get("list", "/:scope", {
@@ -1164,6 +1182,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(WorkGroup)
   .add(ReposGroup)
   .add(SkillsGroup)
+  .add(SessionsGroup)
   .add(TokensGroup)
   .add(SystemGroup)
   .annotateMerge(OpenApi.annotations({ title: "Upkeep" })) {}

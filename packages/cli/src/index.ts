@@ -2,7 +2,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
 import { Server, version } from "@upkeep/server";
-import { ghLayer, handlers, Worker } from "@upkeep/worker";
+import { ghLayer, handlers, openSession, RunLog, Worker } from "@upkeep/worker";
 import {
   Cause,
   Config,
@@ -733,6 +733,68 @@ const repos = Command.make("repos").pipe(
   Command.withSubcommands([reposAdd, reposList, reposRename, reposRemove]),
 );
 
+/** A session from `upkeep://open/<session>?directory=…&title=…`, or its bare ID. */
+const sessionOf = (target: string) => {
+  if (!target.startsWith("upkeep:")) return { session: target, directory: "" };
+
+  const url = new URL(target);
+  const [, kind = "", session = ""] = `/${url.host}${url.pathname}`.split("/");
+
+  if (kind !== "open" || session === "") return null;
+
+  return {
+    session: decodeURIComponent(session),
+    directory: url.searchParams.get("directory") ?? "",
+    title: url.searchParams.get("title") ?? undefined,
+  };
+};
+
+const open = Command.make(
+  "open",
+  {
+    target: Argument.String("session").pipe(
+      Argument.withDescription(
+        "The session's ID, or an upkeep://open/<session> link from the dashboard",
+      ),
+    ),
+    server: Flag.optional(server),
+  },
+  Effect.fn("open")(function* (input) {
+    const session = sessionOf(input.target);
+
+    if (session === null) {
+      return yield* new UsageError({
+        message: `${input.target} isn't an upkeep://open/<session> link`,
+      });
+    }
+
+    const lookup = (id: string) =>
+      Option.match(input.server, {
+        onNone: () => Effect.succeed(null),
+        onSome: (url) =>
+          Effect.gen(function* () {
+            const client = yield* Client;
+
+            return yield* client.sessions
+              .get({ params: { id } })
+              .pipe(
+                Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
+              );
+          }).pipe(Effect.provide(adminClient(url))),
+      });
+
+    const directory = yield* openSession(session, lookup).pipe(
+      Effect.provide(RunLog.RunLog.console),
+    );
+
+    yield* Console.log(`Opened session ${session.session} in ${directory}`);
+  }),
+).pipe(
+  Command.withDescription(
+    "Open an agent's OpenCode session here through attention.resume, importing it from the server when it ran elsewhere",
+  ),
+);
+
 const upkeep = Command.make("upkeep").pipe(
   Command.withDescription("Keep repositories and their consumers up to date"),
   Command.withSubcommands([
@@ -747,6 +809,7 @@ const upkeep = Command.make("upkeep").pipe(
     pause,
     resume,
     repos,
+    open,
     serve,
     worker,
     admins,

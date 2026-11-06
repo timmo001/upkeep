@@ -1,0 +1,10 @@
+[Desktop Entry]
+# Opens upkeep://open/<session> links from the dashboard with `upkeep open`,
+# which resumes the agent's session through attention.resume.
+Type=Application
+Name=Upkeep session
+Comment=Open an agent's OpenCode session from Upkeep
+Exec=/usr/bin/upkeep open %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/upkeep;

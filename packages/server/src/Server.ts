@@ -1164,6 +1164,18 @@ const SkillsHandlers = HttpApiBuilder.group(
   }),
 );
 
+const SessionsHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "sessions",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handle("get", ({ params }) =>
+      store.session(params.id).pipe(Effect.catchTag("StoreError", Effect.die)),
+    );
+  }),
+);
+
 const TokensHandlers = HttpApiBuilder.group(
   Api.Api,
   "tokens",
@@ -1209,6 +1221,7 @@ const apiRoutes = (
       WorkHandlers,
       ReposHandlers,
       SkillsHandlers,
+      SessionsHandlers,
       TokensHandlers,
       SystemHandlers,
     ]),

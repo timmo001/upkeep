@@ -8,4 +8,6 @@ export { layer as ghLayer } from "@timmo001/effect-gh";
 
 export { handlers } from "./handlers";
 
+export { openSession } from "./jobs/launch";
+
 export * as Worker from "./Worker";

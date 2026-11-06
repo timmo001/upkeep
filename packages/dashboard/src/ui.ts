@@ -375,5 +375,27 @@ export const agentSession = (
           >Resume in Herdr on ${worker}</gw-button
         >`,
     )}
+    <gw-button
+      size="xs"
+      appearance="plain"
+      variant="neutral"
+      icon=${mdiOpenInNew}
+      href=${sessionLink(open)}
+      >Open here</gw-button
+    >
   </span>`;
 };
+
+/**
+ * An `upkeep://` link that opens a session on the machine the browser is
+ * on, through `upkeep open`, where the `upkeep-git` package registered it.
+ */
+export const sessionLink = (open: {
+  readonly session: string;
+  readonly directory: string;
+  readonly title: string;
+}) =>
+  `upkeep://open/${encodeURIComponent(open.session)}?${new URLSearchParams({
+    directory: open.directory,
+    title: open.title,
+  }).toString()}`;

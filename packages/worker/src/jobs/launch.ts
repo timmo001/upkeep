@@ -8,7 +8,7 @@
  * it. The agent is yours to steer; Upkeep only starts it.
  */
 import { Graphql, Repository, Workflow } from "@timmo001/effect-gh";
-import { Domain } from "@upkeep/api";
+import { Api, Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schema } from "effect";
 import { reason } from "../Failure";
 import { Reporter, summary } from "../Reporter";
@@ -520,9 +520,25 @@ export const launch = Effect.fnUntraced(function* (
 
 const KnownSession = Schema.Struct({
   data: Schema.Struct({
+    title: Schema.optional(Schema.String),
     location: Schema.Struct({ directory: Schema.String }),
   }),
 });
+
+/**
+ * A session to open: its ID, the directory it worked in where known, and
+ * the title its pane gets, or OpenCode's title for it without one.
+ */
+export interface Session {
+  readonly session: string;
+  readonly directory: string;
+  readonly title?: string | undefined;
+}
+
+/** Find a session a worker shared with the server, or null. */
+export type Lookup = (
+  id: string,
+) => Effect.Effect<Api.SessionExport | null, unknown>;
 
 /**
  * Import a session another worker shared into this worker's checkout of its
@@ -530,14 +546,14 @@ const KnownSession = Schema.Struct({
  * found as for an agent from the Attention page. Returns where.
  */
 const imported = Effect.fnUntraced(function* (
-  command: Extract<Domain.Command, { readonly kind: "open-session" }>,
+  command: Session,
   opencode: string,
   pattern: string | undefined,
+  lookup: Lookup,
 ) {
-  const reporter = yield* Reporter;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const shared = yield* reporter.session(command.session);
+  const shared = yield* lookup(command.session);
 
   if (shared === null)
     return yield* new LaunchFailed({
@@ -565,25 +581,28 @@ const imported = Effect.fnUntraced(function* (
 });
 
 /**
- * Open an agent's OpenCode session through the worker's `attention.resume`,
- * such as in a terminal pane: in the directory it worked in when OpenCode
- * here has it, or else imported from the server, where the worker that ran
- * it shared it, into this worker's checkout of its repository.
+ * Open an agent's OpenCode session through `attention.resume`, such as in a
+ * terminal pane: in the directory it worked in when OpenCode here has it, or
+ * else imported, from what `lookup` finds shared on the server, into this
+ * machine's checkout of its repository. Returns where it opened. The worker
+ * runs it for the dashboard's Resume buttons, and `upkeep open` for an
+ * `upkeep://` link.
  */
-export const resume = Effect.fnUntraced(function* (
-  command: Extract<Domain.Command, { readonly kind: "open-session" }>,
+export const openSession = Effect.fnUntraced(function* (
+  command: Session,
+  lookup: Lookup,
 ) {
   const settings = yield* Settings.load();
   const setup = settings.attention?.resume;
 
   if (setup === undefined)
     return yield* new LaunchFailed({
-      message: "This worker has no attention.resume in its settings",
+      message: "There's no attention.resume in Upkeep's settings here",
     });
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { session, title } = command;
+  const { session } = command;
   const opencode = settings.heal?.opencode ?? "opencode2";
   const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
 
@@ -594,18 +613,21 @@ export const resume = Effect.fnUntraced(function* (
     Effect.flatMap(
       Schema.decodeUnknownEffect(Schema.fromJsonString(KnownSession)),
     ),
-    Effect.map(({ data }) => data.location.directory),
+    Effect.map(({ data }) => data),
     Effect.orElseSucceed(() => null),
   );
 
   const directory =
-    here !== null && (yield* fs.exists(here))
-      ? here
+    here !== null && (yield* fs.exists(here.location.directory))
+      ? here.location.directory
       : yield* imported(
           command,
           opencode,
           settings.attention?.launch?.directory,
+          lookup,
         );
+
+  const title = command.title ?? here?.title ?? session;
 
   const fill = (arg: string) =>
     arg
@@ -618,5 +640,16 @@ export const resume = Effect.fnUntraced(function* (
 
   yield* RunLog.info(`Opening session ${session} in ${directory}`);
   yield* run(program, args, { cwd: directory, trusted: "" });
-  yield* summary(`Opened session ${session} for ${title}`);
+
+  return directory;
+});
+
+/** The open-session command: open the session on this worker. */
+export const resume = Effect.fnUntraced(function* (
+  command: Extract<Domain.Command, { readonly kind: "open-session" }>,
+) {
+  const reporter = yield* Reporter;
+
+  yield* openSession(command, reporter.session);
+  yield* summary(`Opened session ${command.session} for ${command.title}`);
 });

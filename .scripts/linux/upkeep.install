@@ -12,6 +12,10 @@ the server's URL and the printed token in ~/.config/upkeep/worker.env:
 
 and run:
   systemctl --user enable --now upkeep-worker.service
+
+Dashboard upkeep:// session links open through `upkeep open`, with
+attention.resume set in ~/.config/upkeep/config.json and the admin's
+UPKEEP_SERVER and UPKEEP_ADMIN_TOKEN in ~/.config/upkeep/admin.env.
 EOF
 }
 

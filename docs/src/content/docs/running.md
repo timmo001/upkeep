@@ -315,6 +315,13 @@ session that needs you, the worker shares it with the server
 button too; one that doesn't have the session imports it first. A session
 that couldn't be shared only opens on the worker that ran it.
 
+Every session the dashboard shows, a heal's or a skill change's, also has **Open here**, an `upkeep://open/<session>` link that opens
+it on the machine the browser is on. The `upkeep-git` package registers the
+link with `upkeep open`, which opens the session through that machine's
+`attention.resume` as a worker would, importing it from the server (as the
+admin in `admin.env`) when it ran elsewhere. Run it by hand with
+`upkeep open <session>`.
+
 The decision model and agents go in the worker's config file. The model is
 any TypeSafe System One API at `url`, such as Ollaya or Ollama on the worker,
 with `UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers
