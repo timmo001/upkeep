@@ -1,7 +1,7 @@
 /**
  * The heal job: read a failed or lost run and its log, and choose what to do
  * with a decision model, or an LLM through OpenCode: run it again, hand a fix
- * to an agent in an OpenCode session in Herdr, park the job, or leave it for
+ * to an agent in a headless OpenCode session, park the job, or leave it for
  * you on the dashboard and the Attention page. Whatever it chooses goes in
  * the heal's record. Without a decision model in the settings, a lost run is
  * retried and anything else is left for you.
@@ -369,6 +369,7 @@ const handOff = Effect.fnUntraced(function* (
       Effect.succeed({
         action: `Left for you: the agent couldn't start, ${failureReason(cause)}`,
         session: null,
+        directory: null,
         attention: true,
         said: null,
       }),
@@ -383,7 +384,41 @@ const handOff = Effect.fnUntraced(function* (
       : `${result.action}.\n\n${result.said}`,
   );
 
-  if (result.attention) yield* attention;
+  if (!result.attention) return;
+
+  yield* attention;
+
+  const handOffSetup = (yield* Settings.load()).heal?.handOff;
+
+  if (
+    handOffSetup !== undefined &&
+    result.session !== null &&
+    result.directory !== null
+  ) {
+    const { session, directory } = result;
+
+    const target =
+      healing.heal.target.kind === "upkeep"
+        ? "Upkeep"
+        : healing.heal.target.repo;
+
+    const fill = (arg: string) =>
+      arg
+        .replaceAll("{session}", session)
+        .replaceAll("{directory}", directory)
+        .replaceAll("{name}", directory.split("/").at(-1) ?? directory)
+        .replaceAll("{title}", `${run.job} heal for ${target}`);
+
+    const [program = "", ...args] = handOffSetup.command.map(fill);
+
+    yield* exec(program, args, { cwd: directory, trusted: "" }).pipe(
+      Effect.andThen(RunLog.info(`Handed session ${session} off`)),
+      Effect.andThen(reporter.heal({ action: "Handed its session off" })),
+      Effect.catchCause((cause) =>
+        RunLog.warn(`Couldn't hand the session off: ${failureReason(cause)}`),
+      ),
+    );
+  }
 });
 
 /** Carry out a choice, adding what it did to the heal's record. */

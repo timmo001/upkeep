@@ -174,6 +174,18 @@ export const Settings = Schema.Struct({
       ),
       /** Upkeep's own repository, `timmo001/upkeep` by default. */
       repo: Schema.optionalKey(Schema.String),
+      /**
+       * A command the worker runs when a heal ends with a session that needs
+       * you, such as a tool that parks a session for another machine. It
+       * runs in the directory the agent worked in, with `{session}`,
+       * `{directory}`, `{name}` (the directory's last folder) and `{title}`
+       * filled in. Its failing is logged, and the heal still needs you.
+       */
+      handOff: Schema.optionalKey(
+        Schema.Struct({
+          command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+        }),
+      ),
     }),
   ),
   skills: Schema.optionalKey(

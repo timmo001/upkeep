@@ -204,6 +204,7 @@ export const fix = Effect.fnUntraced(function* (
       return {
         action: `The agent finished${note}`,
         session,
+        directory,
         attention,
         said,
       };
@@ -211,6 +212,7 @@ export const fix = Effect.fnUntraced(function* (
       return {
         action: `The agent needs a person${note}`,
         session,
+        directory,
         attention,
         said,
       };
@@ -218,6 +220,7 @@ export const fix = Effect.fnUntraced(function* (
       return {
         action: `The agent ran out of its ${minutes} minutes${note}; its session is left open`,
         session,
+        directory,
         attention,
         said,
       };

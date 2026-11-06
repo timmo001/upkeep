@@ -341,6 +341,22 @@ picks by what each is `for`:
 `opencode` sets the OpenCode command (`opencode2` by default) and `repo`
 Upkeep's own repository, for a heal that targets Upkeep.
 
+`handOff` runs a command when a heal ends with a session that needs you,
+such as a tool that parks it for another machine. It runs in the checkout the
+agent worked in, with `{session}`, `{directory}`, `{name}` (the checkout's
+folder) and `{title}` filled in. If it fails, the run log says so and the
+heal still needs you:
+
+```json
+{
+  "heal": {
+    "handOff": {
+      "command": ["park-session", "{session}", "{directory}"]
+    }
+  }
+}
+```
+
 Without a decision model, a lost run is retried and anything else is left for
 you: the run is marked as needing attention on the dashboard, and its
 repository's items on the Attention page show it.
