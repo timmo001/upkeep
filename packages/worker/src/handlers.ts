@@ -10,6 +10,7 @@ import { heal } from "./jobs/heal";
 import { labels } from "./jobs/labels";
 import { notifications } from "./jobs/notifications";
 import { releases } from "./jobs/releases";
+import { skillChange } from "./jobs/skill-changes";
 import { skillConsumers, skillUpdates } from "./jobs/skills";
 import { stalledUpdates } from "./jobs/stalled-updates";
 import { summary } from "./jobs/summary";
@@ -32,6 +33,7 @@ export const handlers: Handlers = {
   ci: () => ci(),
   "skill-consumers": () => skillConsumers(),
   "skill-updates": () => skillUpdates(),
+  "skill-change": (_release, command) => skillChange(command),
   summary: () => summary(),
   "attention-context": () => attentionContext(),
   command: (_release, command) => runCommand(command),

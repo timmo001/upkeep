@@ -1035,3 +1035,43 @@ test("a worker's name never replaces one set by hand", () =>
       );
     }),
   ));
+
+test("a skill holds one change waiting for you", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const change = (reason: string) => ({
+        repo: "timmo001/skills",
+        title: "gh-stack",
+        skills: ["gh-stack"],
+        work: "merge" as const,
+        reason,
+        base: "abc",
+        patch: "patch",
+        subject: "Update skill: gh-stack",
+        summary: null,
+        session: null,
+        directory: "/tmp/gh-stack",
+        state: "waiting" as const,
+        commit: null,
+        note: null,
+      });
+
+      yield* store.putSkillChange("one", "desktop", change("upstream one"));
+      yield* store.putSkillChange("two", "laptop", change("upstream two"));
+
+      const states = (yield* store.skillChanges()).map((each) => [
+        each.id,
+        each.state,
+        each.worker,
+      ]);
+
+      expect(states).toEqual(
+        expect.arrayContaining([
+          ["one", "dropped", "desktop"],
+          ["two", "waiting", "laptop"],
+        ]),
+      );
+    }),
+  ));

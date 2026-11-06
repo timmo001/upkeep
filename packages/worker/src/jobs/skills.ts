@@ -9,10 +9,11 @@
  * repository's default branch, so it always runs the latest pushed version.
  */
 import { Api } from "@timmo001/effect-gh";
-import { Effect, Path, Schema, Stream } from "effect";
+import type { Domain } from "@upkeep/api";
+import { Clock, Effect, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
-import { pushed, summary } from "../Reporter";
+import { pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import {
   cacheRoot as bumpCacheRoot,
@@ -20,6 +21,7 @@ import {
   commitAndPush,
   run,
 } from "./bump";
+import { open, prune } from "./skill-changes";
 
 const User = Schema.Struct({ login: Schema.String });
 
@@ -69,14 +71,16 @@ export class SkillMaintenanceFailed extends Schema.TaggedError<SkillMaintenanceF
   }
 }
 
-export class SkillsNeedAgent extends Schema.TaggedError<SkillsNeedAgent>()(
-  "SkillsNeedAgent",
-  { work: Schema.Array(Schema.String) },
+export class SkillUpdateProblems extends Schema.TaggedError<SkillUpdateProblems>()(
+  "SkillUpdateProblems",
+  { problems: Schema.Array(Schema.String) },
 ) {
   override get message() {
-    return `${this.work.length} skill ${this.work.length === 1 ? "change needs" : "changes need"} an agent: ${this.work.join("; ")}`;
+    return `${this.problems.length} skill ${this.problems.length === 1 ? "update needs" : "updates need"} looking at: ${this.problems.join("; ")}`;
   }
 }
+
+type Start = Extract<Domain.Command, { readonly kind: "skill-start" }>;
 
 /**
  * A clean checkout of the signed-in account's skills repository with
@@ -338,8 +342,8 @@ const land = Effect.fnUntraced(function* (
  * Imports with nothing to review are applied, validated and pushed straight
  * to the default branch, with the imports one tool release moves landing
  * together. What needs an agent, such as merging upstream changes into local
- * edits or reviewing a skill against a new tool release, fails the run and
- * is listed.
+ * edits or reviewing a skill against a new tool release, starts a run of the
+ * skill-change job, which holds the agent's change for your approval.
  */
 export const skillUpdates = Effect.fnUntraced(function* () {
   const built = yield* build();
@@ -362,17 +366,56 @@ export const skillUpdates = Effect.fnUntraced(function* () {
     (item) => item.state !== "up-to-date" || clean(item),
   );
 
-  const work: Array<string> = [];
+  const starts: Array<Start> = [];
+  const problems: Array<string> = [];
   const landed: Array<string> = [];
   const grouped = new Set<object>();
+
+  const hold = (
+    title: string,
+    skills: ReadonlyArray<string>,
+    work: Domain.SkillWork,
+    why: string,
+  ) =>
+    starts.push({
+      kind: "skill-start",
+      repo: built.repo,
+      title,
+      skills,
+      work,
+      reason: why,
+    });
+
+  const moved = (item: UpdateItem) =>
+    `${item.name} ${item.storedSha?.slice(0, 7) ?? "unpinned"} to ${item.upstreamSha?.slice(0, 7) ?? "unknown"} from ${item.origin}${item.localEdits.length === 0 ? "" : `, with local edits to ${item.localEdits.join(", ")}`}`;
+
+  const reviewed = (item: ReviewItem) =>
+    `${item.skill} reviewed against ${item.repo} ${item.reviewed}, now ${item.latest ?? "unknown"}`;
 
   for (const group of releaseGroups(imports, reviews)) {
     for (const item of [...group.imports, ...group.reviews]) grouped.add(item);
 
     const label = `${group.repo} ${group.tag}`;
 
+    const release = (failed?: string) =>
+      hold(
+        label,
+        [
+          ...group.imports.map((item) => item.name),
+          ...group.reviews.map((item) => item.skill),
+        ],
+        "release",
+        [
+          ...group.imports.map(moved),
+          ...group.reviews.map(reviewed),
+          ...(failed === undefined
+            ? []
+            : [`applying it alone failed: ${failed}`]),
+        ].join("; "),
+      );
+
     if (group.reviews.length > 0 || !group.imports.every(clean)) {
-      work.push(`${label}: release to bring in`);
+      release();
 
       continue;
     }
@@ -386,18 +429,19 @@ export const skillUpdates = Effect.fnUntraced(function* () {
     );
 
     if (failed === undefined) landed.push(subject);
-    else work.push(`${label}: ${failed}`);
+    else release(failed);
   }
 
   for (const item of imports) {
     if (grouped.has(item)) continue;
 
     if (!clean(item)) {
-      work.push(
-        item.state === "manual-review"
-          ? `${item.name}: upstream changes to merge with its local edits`
-          : `${item.name}: ${item.state}${item.reason === undefined ? "" : `, ${item.reason}`}`,
-      );
+      if (item.state === "manual-review")
+        hold(item.name, [item.name], "merge", moved(item));
+      else
+        problems.push(
+          `${item.name}: ${item.state}${item.reason === undefined ? "" : `, ${item.reason}`}`,
+        );
 
       continue;
     }
@@ -409,24 +453,81 @@ export const skillUpdates = Effect.fnUntraced(function* () {
     const failed = yield* land(built, [item.name], subject);
 
     if (failed === undefined) landed.push(subject);
-    else work.push(`${item.name}: ${failed}`);
+    else
+      hold(
+        item.name,
+        [item.name],
+        "merge",
+        `${moved(item)}; applying it alone failed: ${failed}`,
+      );
   }
 
   for (const item of reviews) {
     if (grouped.has(item)) continue;
 
-    work.push(
-      item.state === "error"
-        ? `${item.skill}: couldn't read ${item.repo}'s releases${item.reason === undefined ? "" : `, ${item.reason}`}`
-        : `${item.skill}: review against ${item.repo} ${item.latest ?? ""}`.trimEnd(),
-    );
+    if (item.state === "error")
+      problems.push(
+        `${item.skill}: couldn't read ${item.repo}'s releases${item.reason === undefined ? "" : `, ${item.reason}`}`,
+      );
+    else hold(item.skill, [item.skill], "review", reviewed(item));
   }
 
-  yield* summary(
-    landed.length === 0
-      ? `No updates to push, ${work.length} for an agent`
-      : `Pushed ${landed.join(", ")}; ${work.length} for an agent`,
+  const queued = yield* queue(starts);
+
+  yield* prune().pipe(
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `Couldn't tidy the held changes' checkouts: ${reason(cause)}`,
+      ),
+    ),
   );
 
-  if (work.length > 0) return yield* new SkillsNeedAgent({ work });
+  yield* summary(
+    [
+      landed.length === 0
+        ? "No updates to push"
+        : `Pushed ${landed.join(", ")}`,
+      `${queued} started for an agent`,
+      ...(starts.length > queued
+        ? [`${starts.length - queued} already held`]
+        : []),
+    ].join("; "),
+  );
+
+  if (problems.length > 0) return yield* new SkillUpdateProblems({ problems });
+});
+
+/**
+ * Hand each piece of work to an agent through the skill-change job, unless
+ * a change for it is still open. One stuck working for over two hours, such
+ * as on a worker that went down, doesn't count. Returns how many started.
+ */
+const queue = Effect.fnUntraced(function* (starts: ReadonlyArray<Start>) {
+  if (starts.length === 0) return 0;
+
+  const reporter = yield* Reporter;
+  const now = yield* Clock.currentTimeMillis;
+  const changes = yield* reporter.skillChanges();
+
+  const busy = new Set(
+    changes
+      .filter(
+        (change) =>
+          open.has(change.state) &&
+          !(change.state === "working" && now - change.at > 2 * 3_600_000),
+      )
+      .map((change) => `${change.repo.toLowerCase()} ${change.title}`),
+  );
+
+  let queued = 0;
+
+  for (const start of starts) {
+    if (busy.has(`${start.repo.toLowerCase()} ${start.title}`)) continue;
+
+    yield* reporter.skillCommand(start);
+    yield* RunLog.info(`Started an agent on ${start.title}: ${start.reason}`);
+    queued += 1;
+  }
+
+  return queued;
 });

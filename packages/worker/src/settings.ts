@@ -174,6 +174,24 @@ export const Settings = Schema.Struct({
       inboxProject: Schema.optionalKey(Schema.String),
     }),
   ),
+  skills: Schema.optionalKey(
+    Schema.Struct({
+      /**
+       * The OpenCode model and variant that changes skills for your
+       * approval; the first of `heal.agents` by default.
+       */
+      agent: Schema.optionalKey(
+        Schema.Struct({
+          model: Schema.String,
+          variant: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      /** How long the agent has for a change, 30 minutes by default. */
+      sessionMinutes: Schema.optionalKey(
+        Schema.Number.check(Schema.isGreaterThan(0)),
+      ),
+    }),
+  ),
 });
 
 export type Settings = typeof Settings.Type;

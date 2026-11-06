@@ -880,9 +880,44 @@ const WorkHandlers = HttpApiBuilder.group(
       attentionPage: () => store.attention().pipe(Effect.orDie),
       attentionContext: ({ payload }) =>
         store.recordContext(payload).pipe(Effect.orDie),
+      skillChanges: () => store.skillChanges().pipe(Effect.orDie),
+      skillChange: ({ params }) =>
+        store
+          .skillChange(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      putSkillChange: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .putSkillChange(params.id, worker.name, payload)
+          .pipe(Effect.orDie);
+      }),
+      skillChangeState: ({ params, payload }) =>
+        store
+          .setSkillChangeState(params.id, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      skillCommand: ({ payload }) => queueSkillCommand(store, payload),
     });
   }),
 );
+
+/** Queue a `skill-*` command as a run of the skill-change job. */
+const queueSkillCommand = (store: Store["Service"], command: Domain.Command) =>
+  store
+    .queueRun({
+      job: Catalogue.skillChange.id,
+      trigger: "manual",
+      release: null,
+      command,
+    })
+    .pipe(
+      Effect.tap((run) =>
+        Effect.logInfo(`Queued ${command.kind}`).pipe(
+          Effect.annotateLogs({ run: run.id }),
+        ),
+      ),
+      Effect.orDie,
+    );
 
 const AttentionHandlers = HttpApiBuilder.group(
   Api.Api,
@@ -916,27 +951,29 @@ const AttentionHandlers = HttpApiBuilder.group(
         return { run: Option.getOrNull(queued) };
       }),
       command: ({ payload }) =>
-        store
-          .queueRun({
-            job: Catalogue.command.id,
-            trigger: "manual",
-            release: null,
-            command: payload,
-          })
-          .pipe(
-            Effect.tap((run) =>
-              Effect.logInfo(`Queued ${payload.kind}`).pipe(
-                Effect.annotateLogs({ run: run.id }),
+        payload.kind.startsWith("skill-")
+          ? queueSkillCommand(store, payload)
+          : store
+              .queueRun({
+                job: Catalogue.command.id,
+                trigger: "manual",
+                release: null,
+                command: payload,
+              })
+              .pipe(
+                Effect.tap((run) =>
+                  Effect.logInfo(`Queued ${payload.kind}`).pipe(
+                    Effect.annotateLogs({ run: run.id }),
+                  ),
+                ),
+                // The page shows it read now, not after the next collection
+                Effect.tap(() =>
+                  payload.kind === "mark-read"
+                    ? store.markAttentionRead(payload.thread)
+                    : Effect.void,
+                ),
+                Effect.orDie,
               ),
-            ),
-            // The page shows it read now, not after the next collection
-            Effect.tap(() =>
-              payload.kind === "mark-read"
-                ? store.markAttentionRead(payload.thread)
-                : Effect.void,
-            ),
-            Effect.orDie,
-          ),
       hide: ({ payload }) =>
         store.hideAttention(payload.url, payload.hidden).pipe(Effect.orDie),
       createGroup: ({ payload }) =>

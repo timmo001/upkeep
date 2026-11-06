@@ -445,7 +445,7 @@ export const install = Effect.fnUntraced(function* (
 });
 
 /** The repository's own mise tasks, leaving out global ones. */
-const miseTasks = (options: {
+export const miseTasks = (options: {
   readonly cwd: string;
   readonly trusted: string;
 }) =>

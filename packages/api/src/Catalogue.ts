@@ -140,8 +140,19 @@ export const skillUpdates: Job = {
   id: "skill-updates",
   name: "Skill updates",
   description:
-    "Check the shared skills against their upstreams and tools, pushing the updates that need no review and listing what needs an agent",
+    "Check the shared skills against their upstreams and tools, pushing the updates that need no review and giving the rest to an agent to hold for your approval",
   schedule: "40 * * * *",
+  onRelease: false,
+  lane: "repos",
+  tracked: false,
+};
+
+export const skillChange: Job = {
+  id: "skill-change",
+  name: "Skill change",
+  description:
+    "Have an agent change a skill and hold its patch for your approval, or land, revise or start again on a held change",
+  schedule: null,
   onRelease: false,
   lane: "repos",
   tracked: false,
@@ -206,6 +217,7 @@ export const jobs: ReadonlyArray<Job> = [
   ci,
   skillConsumers,
   skillUpdates,
+  skillChange,
   summary,
   attentionContext,
   command,

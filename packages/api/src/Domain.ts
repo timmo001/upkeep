@@ -341,9 +341,77 @@ export const describePeriod = (period: Period) => {
 };
 
 /**
+ * Why an agent works on a skill: `merge` brings upstream changes into a
+ * skill with local edits, `review` checks a skill against a new release of a
+ * tool it covers, `release` does both for everything one tool release moves,
+ * and `request` is a change you asked for.
+ */
+export const SkillWork = Schema.Literals([
+  "merge",
+  "review",
+  "release",
+  "request",
+]);
+
+export type SkillWork = typeof SkillWork.Type;
+
+/**
+ * Where a held skill change stands: the agent is `working` on it, it's
+ * `waiting` for you, it's `applying` once approved, it `landed` on the
+ * default branch, it's `stale` when its patch no longer applies or fails
+ * validation, or it was `dropped`.
+ */
+export const SkillChangeState = Schema.Literals([
+  "working",
+  "waiting",
+  "applying",
+  "landed",
+  "stale",
+  "dropped",
+]);
+
+export type SkillChangeState = typeof SkillChangeState.Type;
+
+/**
+ * A change an agent made to a skill, held on the server for your approval,
+ * so any worker can land it. Its session and checkout stay on the worker
+ * that ran it.
+ */
+export const SkillChange = Schema.Struct({
+  id: Schema.String,
+  repo: RepoName,
+  /** What it's about: a skill's name, or a tool release as `owner/name tag`. */
+  title: Schema.String,
+  /** The skills it touches. */
+  skills: Schema.Array(Schema.String),
+  work: SkillWork,
+  /** What started it, such as the upstream SHA, the release or your prompt. */
+  reason: Schema.String,
+  /** The default branch's commit the patch is against. */
+  base: Schema.NullOr(Schema.String),
+  /** `git format-patch` output, or null until the agent commits. */
+  patch: Schema.NullOr(Schema.String),
+  subject: Schema.NullOr(Schema.String),
+  /** What the agent said last. */
+  summary: Schema.NullOr(Schema.String),
+  session: Schema.NullOr(Schema.String),
+  worker: Schema.String,
+  directory: Schema.String,
+  state: SkillChangeState,
+  /** The commit it landed as. */
+  commit: Schema.NullOr(Schema.String),
+  /** Why it's stale, or what went wrong. */
+  note: Schema.NullOr(Schema.String),
+  at: Schema.Finite,
+});
+
+export interface SkillChange extends Schema.Schema.Type<typeof SkillChange> {}
+
+/**
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read, and
  * `start-agent` opens an agent on one worker, which only that one claims.
+ * The `skill-*` commands run as the `skill-change` job instead.
  */
 export const Command = Schema.Union([
   Schema.Struct({
@@ -362,6 +430,33 @@ export const Command = Schema.Union([
     group: Schema.NullOr(Schema.String),
     repo: Schema.optionalKey(RepoName),
     prompt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4000))),
+  }),
+  /**
+   * Have an agent work on a skill in its own checkout and hold what it
+   * commits for your approval, on any worker.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("skill-start"),
+    repo: RepoName,
+    title: Schema.String,
+    skills: Schema.Array(Schema.String),
+    work: SkillWork,
+    reason: Schema.String.check(Schema.isMaxLength(4000)),
+  }),
+  /** Land a held change: apply its patch, validate and push, on any worker. */
+  Schema.Struct({
+    kind: Schema.Literal("skill-approve"),
+    change: Schema.String,
+  }),
+  /**
+   * Ask for more on a held change. With `worker`, its session resumes there;
+   * with null, any worker starts again from its patch.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("skill-revise"),
+    change: Schema.String,
+    comment: Schema.String.check(Schema.isMaxLength(4000)),
+    worker: Schema.NullOr(Schema.String),
   }),
 ]);
 

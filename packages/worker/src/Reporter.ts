@@ -81,6 +81,27 @@ export class Reporter extends Context.Service<
      * person. A report that can't be sent is logged rather than failing the run.
      */
     readonly report: (report: Api.RunReport) => Effect.Effect<void>;
+    /** The held skill changes still open, and those that ended lately. */
+    readonly skillChanges: () => Effect.Effect<
+      ReadonlyArray<Domain.SkillChange>,
+      unknown
+    >;
+    readonly skillChange: (
+      id: string,
+    ) => Effect.Effect<Domain.SkillChange, unknown>;
+    /** Keep a skill change on the server, as this worker's. */
+    readonly putSkillChange: (
+      id: string,
+      change: Api.SkillChangeInput,
+    ) => Effect.Effect<void, unknown>;
+    readonly skillChangeState: (
+      id: string,
+      update: Api.SkillChangeStateUpdate,
+    ) => Effect.Effect<void, unknown>;
+    /** Queue a `skill-*` command as a run of the skill-change job. */
+    readonly skillCommand: (
+      command: Domain.Command,
+    ) => Effect.Effect<Domain.Run, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /** Send findings to the server, for the run `runId`. */
@@ -166,6 +187,14 @@ export class Reporter extends Context.Service<
                   Effect.logWarning("Couldn't report on the run", cause),
                 ),
               ),
+          skillChanges: () => client.work.skillChanges(),
+          skillChange: (id) => client.work.skillChange({ params: { id } }),
+          putSkillChange: (id, change) =>
+            client.work.putSkillChange({ params: { id }, payload: change }),
+          skillChangeState: (id, update) =>
+            client.work.skillChangeState({ params: { id }, payload: update }),
+          skillCommand: (command) =>
+            client.work.skillCommand({ payload: command }),
         });
       }),
     );
@@ -219,6 +248,18 @@ export class Reporter extends Context.Service<
             `Would send ${context.notes.length} notes, ${context.followUps.length} follow-ups and ${context.comments.length} answers`,
           ).pipe(Effect.provide(RunLog.RunLog.console)),
         report: () => Effect.void,
+        skillChanges: () =>
+          Effect.fail("Held skill changes are kept on the server"),
+        skillChange: () => Effect.fail("Held skill changes are on the server"),
+        putSkillChange: () =>
+          Effect.fail("Held skill changes are kept on the server"),
+        skillChangeState: () =>
+          Effect.fail("Held skill changes are kept on the server"),
+        skillCommand: (command) =>
+          RunLog.info(`Would queue ${command.kind}`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+            Effect.andThen(Effect.fail("Nothing is queued from a local run")),
+          ),
       }),
     );
 }

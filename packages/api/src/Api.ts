@@ -4,7 +4,7 @@
  * runs and manage tracked repositories and tokens; workers take runs and
  * report on them.
  */
-import { Context, Schema } from "effect";
+import { Context, Schema, Struct } from "effect";
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -45,6 +45,8 @@ import {
   RepoName,
   Run,
   RunState,
+  SkillChange,
+  SkillChangeState,
   TrackedRepo,
   WorkerAgents,
 } from "./Domain";
@@ -117,6 +119,36 @@ export class EntryNotFound extends Schema.TaggedError<EntryNotFound>()(
     return `There's no inbox entry ${this.id}`;
   }
 }
+
+export class SkillChangeNotFound extends Schema.TaggedError<SkillChangeNotFound>()(
+  "SkillChangeNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no skill change ${this.id}`;
+  }
+}
+
+/** A held skill change as its worker sends it; the server adds its ID, the worker and the time. */
+export const SkillChangeInput = SkillChange.mapFields(
+  Struct.omit(["id", "worker", "at"]),
+);
+
+export interface SkillChangeInput extends Schema.Schema.Type<
+  typeof SkillChangeInput
+> {}
+
+/** Move a held skill change on, such as once it's landed. */
+export const SkillChangeStateUpdate = Schema.Struct({
+  state: SkillChangeState,
+  commit: Schema.optionalKey(Schema.String),
+  note: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+
+export interface SkillChangeStateUpdate extends Schema.Schema.Type<
+  typeof SkillChangeStateUpdate
+> {}
 
 /** A worker reported on a run it isn't running, such as one that was lost. */
 export class RunNotClaimed extends Schema.TaggedError<RunNotClaimed>()(
@@ -879,6 +911,41 @@ export class WorkGroup extends HttpApiGroup.make("work")
         ),
       }),
       success: Schema.Struct({ queued: Schema.Array(Run) }),
+    }),
+    /**
+     * The held skill changes still open, and those that ended in the last
+     * 30 days, newest first.
+     */
+    HttpApiEndpoint.get("skillChanges", "/skills/changes", {
+      success: Schema.Array(SkillChange),
+    }),
+    HttpApiEndpoint.get("skillChange", "/skills/changes/:id", {
+      params: { id: Schema.String },
+      success: SkillChange,
+      error: SkillChangeNotFound,
+    }),
+    /**
+     * Keep a skill change, as the worker running its agent. One now waiting
+     * drops any older one waiting on the same title, so each holds one.
+     */
+    HttpApiEndpoint.put("putSkillChange", "/skills/changes/:id", {
+      params: { id: Schema.String },
+      payload: SkillChangeInput,
+      success: HttpApiSchema.NoContent,
+    }),
+    HttpApiEndpoint.post("skillChangeState", "/skills/changes/:id/state", {
+      params: { id: Schema.String },
+      payload: SkillChangeStateUpdate,
+      success: HttpApiSchema.NoContent,
+      error: SkillChangeNotFound,
+    }),
+    /**
+     * Queue a `skill-*` command as a run of the skill-change job. The same
+     * command still waiting is returned instead of a second one.
+     */
+    HttpApiEndpoint.post("skillCommand", "/skills/commands", {
+      payload: Command,
+      success: Run,
     }),
   )
   .middleware(WorkerAuthorization)

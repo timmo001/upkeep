@@ -19,7 +19,7 @@ import {
   String,
 } from "effect";
 import { SecureRandom } from "effect/crypto";
-import { SqlClient } from "effect/sql";
+import { SqlClient, type Statement } from "effect/sql";
 import * as Attention from "./Attention";
 import * as Entries from "./Entries";
 
@@ -498,6 +498,33 @@ const migrations = SqliteMigrator.fromRecord({
       ALTER TABLE worker_agents ADD COLUMN launch INTEGER NOT NULL DEFAULT 0
     `;
   }),
+  // Skill changes an agent made, held for approval so any worker can land them
+  "0024_skill_changes": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE skill_changes (
+        id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        title TEXT NOT NULL,
+        skills TEXT NOT NULL,
+        work TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        base TEXT,
+        patch TEXT,
+        subject TEXT,
+        summary TEXT,
+        session TEXT,
+        worker TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        state TEXT NOT NULL,
+        commit_sha TEXT,
+        note TEXT,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX skill_changes_title ON skill_changes (repo, title)`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -604,6 +631,15 @@ const decodeAgents = Schema.decodeUnknownEffect(
       ...Domain.WorkerAgents.fields,
       agents: Schema.fromJsonString(Schema.Array(Domain.Agent)),
       launch: Schema.Number,
+    }),
+  ),
+);
+
+const decodeSkillChanges = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      ...Domain.SkillChange.fields,
+      skills: Schema.fromJsonString(Schema.Array(Schema.String)),
     }),
   ),
 );
@@ -936,6 +972,27 @@ export class Store extends Context.Service<
     ): Effect.Effect<void, StoreError>;
     /** Each worker's agents, by worker name. */
     agents(): Effect.Effect<ReadonlyArray<Domain.WorkerAgents>, StoreError>;
+    /**
+     * Keep a skill change from the worker running its agent. One now waiting
+     * drops any other waiting on the same repository and title.
+     */
+    putSkillChange(
+      id: string,
+      worker: string,
+      change: Api.SkillChangeInput,
+    ): Effect.Effect<void, StoreError>;
+    skillChange(
+      id: string,
+    ): Effect.Effect<Domain.SkillChange, Api.SkillChangeNotFound | StoreError>;
+    /** The open skill changes, and those that ended in the last 30 days. */
+    skillChanges(): Effect.Effect<
+      ReadonlyArray<Domain.SkillChange>,
+      StoreError
+    >;
+    setSkillChangeState(
+      id: string,
+      update: Api.SkillChangeStateUpdate,
+    ): Effect.Effect<void, Api.SkillChangeNotFound | StoreError>;
     /**
      * Keep what the attention job found: add new items, update the ones
      * whose fingerprint moved and record what moved, and, for a complete
@@ -1731,6 +1788,98 @@ export class Store extends Context.Service<
         ),
       );
     }, Effect.mapError(storeError));
+
+    const selectSkillChanges = (condition: Statement.Fragment) =>
+      sql`
+        SELECT id, repo, title, skills, work, reason, base, patch, subject,
+          summary, session, worker, directory, state, commit_sha AS "commit",
+          note, at
+        FROM skill_changes WHERE ${condition}
+        ORDER BY at DESC, id DESC
+      `.pipe(Effect.flatMap(decodeSkillChanges));
+
+    const putSkillChange = Effect.fn("Store.putSkillChange")(
+      function* (id: string, worker: string, change: Api.SkillChangeInput) {
+        const at = yield* Clock.currentTimeMillis;
+
+        if (change.state === "waiting") {
+          yield* sql`
+            UPDATE skill_changes SET state = 'dropped', at = ${at}
+            WHERE repo = ${change.repo} AND title = ${change.title}
+              AND state = 'waiting' AND id != ${id}
+          `;
+        }
+
+        yield* sql`
+          INSERT INTO skill_changes ${sql.insert({
+            id,
+            repo: change.repo,
+            title: change.title,
+            skills: JSON.stringify(change.skills),
+            work: change.work,
+            reason: change.reason,
+            base: change.base,
+            patch: change.patch,
+            subject: change.subject,
+            summary: change.summary,
+            session: change.session,
+            worker,
+            directory: change.directory,
+            state: change.state,
+            commitSha: change.commit,
+            note: change.note,
+            at,
+          })}
+          ON CONFLICT (id) DO UPDATE
+          SET repo = excluded.repo, title = excluded.title,
+            skills = excluded.skills, work = excluded.work,
+            reason = excluded.reason, base = excluded.base,
+            patch = excluded.patch, subject = excluded.subject,
+            summary = excluded.summary, session = excluded.session,
+            worker = excluded.worker, directory = excluded.directory,
+            state = excluded.state, commit_sha = excluded.commit_sha,
+            note = excluded.note, at = excluded.at
+        `;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const skillChange = Effect.fn("Store.skillChange")(function* (id: string) {
+      const [found] = yield* selectSkillChanges(sql`id = ${id}`).pipe(
+        Effect.mapError(storeError),
+      );
+
+      if (found === undefined)
+        return yield* new Api.SkillChangeNotFound({ id });
+
+      return found;
+    });
+
+    const skillChanges = Effect.fn("Store.skillChanges")(function* () {
+      const since = (yield* Clock.currentTimeMillis) - 30 * 86_400_000;
+
+      return yield* selectSkillChanges(
+        sql`state IN ('working', 'waiting', 'applying', 'stale') OR at >= ${since}`,
+      );
+    }, Effect.mapError(storeError));
+
+    const setSkillChangeState = Effect.fn("Store.setSkillChangeState")(
+      function* (id: string, update: Api.SkillChangeStateUpdate) {
+        const rows = yield* sql`
+          UPDATE skill_changes
+          SET state = ${update.state},
+            commit_sha = coalesce(${update.commit ?? null}, commit_sha),
+            note = ${update.note === undefined ? sql`note` : update.note},
+            at = ${yield* Clock.currentTimeMillis}
+          WHERE id = ${id}
+          RETURNING id
+        `.pipe(Effect.mapError(storeError));
+
+        if (rows.length === 0)
+          return yield* new Api.SkillChangeNotFound({ id });
+      },
+    );
 
     const attentionState = Effect.fnUntraced(function* () {
       const rows = yield* sql<{ key: string; value: string }>`
@@ -3206,6 +3355,10 @@ export class Store extends Context.Service<
       takeHeld,
       setAgents,
       agents,
+      putSkillChange,
+      skillChange,
+      skillChanges,
+      setSkillChangeState,
       recordAttention,
       attention,
       looked,
