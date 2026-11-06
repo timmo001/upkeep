@@ -492,11 +492,54 @@ export const check = Effect.fnUntraced(function* (
 
 const passed = new Set(["success", "skipped", "neutral"]);
 
+const Comparison = Schema.Struct({ status: Schema.String });
+
+/**
+ * The newer head of a branch that has moved on from a commit while keeping
+ * it, or `undefined` when it hasn't.
+ */
+const movedOn = Effect.fnUntraced(function* (
+  repo: string,
+  branch: string,
+  sha: string,
+) {
+  const head = yield* RateLimits.waitOut(
+    Api.json(
+      { endpoint: `repos/${repo}/commits/${branch}`, method: "GET" },
+      Commit,
+    ),
+    `${repo}: reading ${branch}`,
+  );
+
+  if (head.sha === sha) return undefined;
+
+  const { status } = yield* RateLimits.waitOut(
+    Api.json(
+      { endpoint: `repos/${repo}/compare/${sha}...${head.sha}`, method: "GET" },
+      Comparison,
+    ),
+    `${repo}: comparing ${branch}`,
+  );
+
+  return status === "ahead" ? head.sha : undefined;
+});
+
 /**
  * Wait for the CI runs on a pushed commit to finish, failing when one does.
  * Returns how many ran; none have started after two minutes means none.
+ *
+ * A workflow that cancels runs in progress cancels this commit's when another
+ * push lands on the branch straight after, so when only cancelled runs failed
+ * and the branch has moved on with this commit in it, the newer commit's CI
+ * is watched instead.
  */
-export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
+export const watch = Effect.fnUntraced(function* (
+  repo: string,
+  commit: string,
+) {
+  let sha = commit;
+  let since = 0;
+
   for (let poll = 0; poll < 60; poll++) {
     yield* Effect.sleep("30 seconds");
 
@@ -506,7 +549,7 @@ export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
     );
 
     if (runs.length === 0) {
-      if (poll >= 3) return 0;
+      if (poll - since >= 3) return 0;
 
       continue;
     }
@@ -514,6 +557,27 @@ export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
     if (runs.some((item) => item.status !== "completed")) continue;
 
     const failed = runs.filter((item) => !passed.has(item.conclusion ?? ""));
+    const branch = failed[0]?.headBranch ?? null;
+
+    const newer =
+      failed.length > 0 &&
+      branch !== null &&
+      failed.every(
+        (item) => item.conclusion === "cancelled" && item.headBranch === branch,
+      )
+        ? yield* movedOn(repo, branch, sha)
+        : undefined;
+
+    if (newer !== undefined) {
+      yield* RunLog.info(
+        `${repo}: CI on ${sha.slice(0, 7)} was cancelled by a later push, watching ${newer.slice(0, 7)} instead`,
+      );
+
+      sha = newer;
+      since = poll + 1;
+
+      continue;
+    }
 
     if (failed.length > 0) {
       return yield* new CiFailed({
