@@ -3,7 +3,8 @@
  * on a worker, so its upkeep runs once, in Upkeep, instead of as a timer on
  * every machine. `skill-consumers` syncs the skill copies the repositories in
  * its `consumers.yml` take, and `skill-updates` checks the skills against
- * their upstreams and tools, pushing the updates that need no review.
+ * their upstreams and tools, pushing the updates that need no review, and
+ * sends how each skill stands to the Skills page.
  *
  * Each run builds `skill-maintenance` from a clean checkout of the skills
  * repository's default branch, so it always runs the latest pushed version.
@@ -15,6 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
 import { pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
+import * as Settings from "../settings";
 import {
   cacheRoot as bumpCacheRoot,
   checkout,
@@ -22,6 +24,7 @@ import {
   run,
 } from "./bump";
 import { open, prune } from "./skill-changes";
+import { other as otherSkills, send, shared } from "./skill-snapshots";
 
 const User = Schema.Struct({ login: Schema.String });
 
@@ -356,11 +359,13 @@ export const skillUpdates = Effect.fnUntraced(function* () {
       exitCode: 0,
     });
 
-  const reviews = (yield* report(
+  const checked = (yield* report(
     built,
     ["skill-reviews", "--json"],
     ReviewReport,
-  )).items.filter((item) => item.state !== "up-to-date");
+  )).items;
+
+  const reviews = checked.filter((item) => item.state !== "up-to-date");
 
   const imports = updates.skills.filter(
     (item) => item.state !== "up-to-date" || clean(item),
@@ -481,6 +486,20 @@ export const skillUpdates = Effect.fnUntraced(function* () {
       ),
     ),
   );
+
+  yield* send(
+    shared(
+      built.repo,
+      { cwd: built.directory, trusted: built.root },
+      updates.skills,
+      checked,
+    ),
+  );
+
+  const settings = yield* Settings.load();
+
+  for (const other of settings.skills?.repos ?? [])
+    yield* send(otherSkills(other.repo, other.path, built.root));
 
   yield* summary(
     [

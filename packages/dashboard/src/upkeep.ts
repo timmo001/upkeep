@@ -382,9 +382,77 @@ export const dismissRun = UpkeepApi.runtime.fn((id: string) =>
   ),
 );
 
+const skillsKey = ["skills"];
+
+/** The Skills page: each repository's skills, the held changes and workers. */
+export const skillsPage = UpkeepApi.query("skills", "get", {
+  reactivityKeys: [...skillsKey, ...runsKey],
+});
+
+const afterSkills = Effect.ensuring(
+  Reactivity.invalidate([...skillsKey, ...runsKey]),
+);
+
+/** Push a held skill change. */
+export const approveSkillChange = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.skills.approve({ params: { id } })).pipe(
+    asDefects,
+    afterSkills,
+  ),
+);
+
+/**
+ * Ask for changes to a held change: `here` resumes its agent on the worker
+ * that holds it, otherwise any worker starts again from the default branch.
+ */
+export const reviseSkillChange = UpkeepApi.runtime.fn(
+  ({
+    id,
+    comment,
+    here,
+  }: {
+    readonly id: string;
+    readonly comment: string;
+    readonly here: boolean;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.skills.revise({ params: { id }, payload: { comment, here } }),
+    ).pipe(asDefects, afterSkills),
+);
+
+/** Drop a held change without pushing it. */
+export const dropSkillChange = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.skills.drop({ params: { id } })).pipe(
+    asDefects,
+    afterSkills,
+  ),
+);
+
+/** Open an agent on a held change, on the worker that holds it. */
+export const openSkillChange = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.skills.open({ params: { id } })).pipe(
+    asDefects,
+    afterSkills,
+  ),
+);
+
+/** Ask an agent for a change to a skill, held for approval once made. */
+export const requestSkillChange = UpkeepApi.runtime.fn(
+  (payload: {
+    readonly repo: string;
+    readonly skill: string;
+    readonly prompt: string;
+  }) =>
+    UpkeepApi.use((client) => client.skills.request({ payload })).pipe(
+      asDefects,
+      afterSkills,
+    ),
+);
+
 export type Route = Data.TaggedEnum<{
   Inbox: {};
   Attention: {};
+  Skills: {};
   Repos: {};
   Repo: { readonly repo: string };
   Jobs: {};
@@ -403,6 +471,8 @@ const reposPattern = new URLPattern({ pathname: "/repos{/}?" });
 
 const attentionPattern = new URLPattern({ pathname: "/attention{/}?" });
 
+const skillsPattern = new URLPattern({ pathname: "/skills{/}?" });
+
 const repoPattern = new URLPattern({ pathname: "/repos/:owner/:name" });
 
 const jobPattern = new URLPattern({ pathname: "/jobs/:id" });
@@ -419,6 +489,8 @@ const parseRoute = (): Route => {
   if (reposPattern.test({ pathname: path })) return Route.Repos();
 
   if (attentionPattern.test({ pathname: path })) return Route.Attention();
+
+  if (skillsPattern.test({ pathname: path })) return Route.Skills();
 
   const repo = repoPattern.exec({ pathname: path })?.pathname.groups;
 
@@ -508,6 +580,8 @@ export const jobsHref = "jobs";
 export const reposHref = "repos";
 
 export const attentionHref = "attention";
+
+export const skillsHref = "skills";
 
 /** A tracked repository's page, by `owner/name`. */
 export const repoHref = (repo: string) =>

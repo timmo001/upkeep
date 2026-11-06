@@ -47,6 +47,8 @@ import {
   RunState,
   SkillChange,
   SkillChangeState,
+  SkillsPage,
+  SkillsSnapshot,
   TrackedRepo,
   WorkerAgents,
 } from "./Domain";
@@ -947,6 +949,11 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: Command,
       success: Run,
     }),
+    /** Keep a repository's skills as the worker just read them. */
+    HttpApiEndpoint.put("putSkills", "/skills/snapshot", {
+      payload: SkillsSnapshot,
+      success: HttpApiSchema.NoContent,
+    }),
   )
   .middleware(WorkerAuthorization)
   .prefix("/api/work")
@@ -1004,6 +1011,69 @@ export class ReposGroup extends HttpApiGroup.make("repos")
     }),
   ) {}
 
+export class SkillsGroup extends HttpApiGroup.make("skills")
+  .add(
+    /** Each repository's skills, their held changes, and the workers. */
+    HttpApiEndpoint.get("get", "/", {
+      success: SkillsPage,
+    }),
+    /** Land a held change, on any worker. */
+    HttpApiEndpoint.post("approve", "/changes/:id/approve", {
+      params: { id: Schema.String },
+      success: Run,
+      error: SkillChangeNotFound,
+    }),
+    /**
+     * Ask for more on a held change. With `here`, its session resumes on the
+     * worker it ran on; without, any worker starts again from its patch.
+     */
+    HttpApiEndpoint.post("revise", "/changes/:id/revise", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        comment: Schema.String.check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(4000),
+        ),
+        here: Schema.Boolean,
+      }),
+      success: Run,
+      error: SkillChangeNotFound,
+    }),
+    /** Drop a held change. */
+    HttpApiEndpoint.post("drop", "/changes/:id/drop", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: SkillChangeNotFound,
+    }),
+    /** Open an agent on a held change in its checkout, on its worker. */
+    HttpApiEndpoint.post("open", "/changes/:id/open", {
+      params: { id: Schema.String },
+      success: Run,
+      error: SkillChangeNotFound,
+    }),
+    /** Ask an agent for a change to a skill, held for your approval. */
+    HttpApiEndpoint.post("request", "/requests", {
+      payload: Schema.Struct({
+        repo: RepoName,
+        skill: Schema.String.check(Schema.isMinLength(1)),
+        prompt: Schema.String.check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(4000),
+        ),
+      }),
+      success: Run,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/skills")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Skills",
+      description:
+        "The shared skills, how each stands, and the changes agents made to them, held for approval",
+    }),
+  ) {}
+
 export class TokensGroup extends HttpApiGroup.make("tokens")
   .add(
     HttpApiEndpoint.get("list", "/:scope", {
@@ -1053,6 +1123,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(AttentionGroup)
   .add(WorkGroup)
   .add(ReposGroup)
+  .add(SkillsGroup)
   .add(TokensGroup)
   .add(SystemGroup)
   .annotateMerge(OpenApi.annotations({ title: "Upkeep" })) {}

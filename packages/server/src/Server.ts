@@ -897,6 +897,7 @@ const WorkHandlers = HttpApiBuilder.group(
           .setSkillChangeState(params.id, payload)
           .pipe(Effect.catchTag("StoreError", Effect.die)),
       skillCommand: ({ payload }) => queueSkillCommand(store, payload),
+      putSkills: ({ payload }) => store.putSkills(payload).pipe(Effect.orDie),
     });
   }),
 );
@@ -1090,6 +1091,68 @@ const ReposHandlers = HttpApiBuilder.group(
   }),
 );
 
+/**
+ * The Skills page's actions: each looks the change up first, so one that's
+ * gone is a 404, then queues its `skill-*` command or moves it on.
+ */
+const SkillsHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "skills",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    const change = (id: string) =>
+      store.skillChange(id).pipe(Effect.catchTag("StoreError", Effect.die));
+
+    return handlers.handleAll({
+      get: () => store.skillsPage().pipe(Effect.orDie),
+      approve: Effect.fn(function* ({ params }) {
+        yield* change(params.id);
+        yield* store
+          .setSkillChangeState(params.id, { state: "applying" })
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        return yield* queueSkillCommand(store, {
+          kind: "skill-approve",
+          change: params.id,
+        });
+      }),
+      revise: Effect.fn(function* ({ params, payload }) {
+        const found = yield* change(params.id);
+
+        return yield* queueSkillCommand(store, {
+          kind: "skill-revise",
+          change: params.id,
+          comment: payload.comment,
+          worker: payload.here ? found.worker : null,
+        });
+      }),
+      drop: ({ params }) =>
+        store
+          .setSkillChangeState(params.id, { state: "dropped" })
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      open: Effect.fn(function* ({ params }) {
+        const found = yield* change(params.id);
+
+        return yield* queueSkillCommand(store, {
+          kind: "skill-open",
+          change: params.id,
+          worker: found.worker,
+        });
+      }),
+      request: ({ payload }) =>
+        queueSkillCommand(store, {
+          kind: "skill-start",
+          repo: payload.repo,
+          title: payload.skill,
+          skills: [payload.skill],
+          work: "request",
+          reason: payload.prompt,
+        }),
+    });
+  }),
+);
+
 const TokensHandlers = HttpApiBuilder.group(
   Api.Api,
   "tokens",
@@ -1134,6 +1197,7 @@ const apiRoutes = (
       AttentionHandlers,
       WorkHandlers,
       ReposHandlers,
+      SkillsHandlers,
       TokensHandlers,
       SystemHandlers,
     ]),

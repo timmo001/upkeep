@@ -408,6 +408,90 @@ export const SkillChange = Schema.Struct({
 export interface SkillChange extends Schema.Schema.Type<typeof SkillChange> {}
 
 /**
+ * Where a skill comes from: written here (`authored`), imported unchanged
+ * (`imported`) or with local edits (`adapted`), or installed from its origin
+ * at a pinned SHA instead of committed (`external`).
+ */
+export const SkillSource = Schema.Literals([
+  "authored",
+  "imported",
+  "adapted",
+  "external",
+]);
+
+export type SkillSource = typeof SkillSource.Type;
+
+/** A skill as the Skills page shows it. */
+export const SkillInfo = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  source: SkillSource,
+  /** The upstream it's imported from, as a GitHub tree URL. */
+  origin: Schema.NullOr(Schema.String),
+  /** How the import stands against its upstream, from `skill-maintenance`. */
+  upstream: Schema.NullOr(
+    Schema.Struct({
+      state: Schema.String,
+      storedSha: Schema.NullOr(Schema.String),
+      upstreamSha: Schema.NullOr(Schema.String),
+      release: Schema.NullOr(Schema.String),
+    }),
+  ),
+  localEdits: Schema.Array(Schema.String),
+  /** The tools it covers, with the tag it was last reviewed against. */
+  tools: Schema.Array(
+    Schema.Struct({
+      repo: Schema.String,
+      reviewed: Schema.String,
+      latest: Schema.NullOr(Schema.String),
+      state: Schema.String,
+    }),
+  ),
+  /** The repositories that keep a copy of it. */
+  copies: Schema.Array(Schema.String),
+  /** The last commits touching it, newest first. */
+  commits: Schema.Array(
+    Schema.Struct({
+      sha: Schema.String,
+      subject: Schema.String,
+      at: Schema.Finite,
+    }),
+  ),
+});
+
+export interface SkillInfo extends Schema.Schema.Type<typeof SkillInfo> {}
+
+/** The skills of one repository, as a worker last read them. */
+export const SkillsSnapshot = Schema.Struct({
+  repo: RepoName,
+  skills: Schema.Array(SkillInfo),
+  checkedAt: Schema.Finite,
+});
+
+export interface SkillsSnapshot extends Schema.Schema.Type<
+  typeof SkillsSnapshot
+> {}
+
+/**
+ * The Skills page: each repository's skills, their held changes, and when
+ * each worker last asked for work, so the page can tell whether the one a
+ * change ran on is up, and whether it can open an agent.
+ */
+export const SkillsPage = Schema.Struct({
+  repos: Schema.Array(SkillsSnapshot),
+  changes: Schema.Array(SkillChange),
+  workers: Schema.Array(
+    Schema.Struct({
+      worker: Schema.String,
+      at: Schema.Finite,
+      launch: Schema.Boolean,
+    }),
+  ),
+});
+
+export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
+
+/**
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read, and
  * `start-agent` opens an agent on one worker, which only that one claims.
@@ -457,6 +541,15 @@ export const Command = Schema.Union([
     change: Schema.String,
     comment: Schema.String.check(Schema.isMaxLength(4000)),
     worker: Schema.NullOr(Schema.String),
+  }),
+  /**
+   * Open an agent on a held change in its checkout, on the worker it ran
+   * on, through that worker's `attention.launch`.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("skill-open"),
+    change: Schema.String,
+    worker: Schema.String,
   }),
 ]);
 

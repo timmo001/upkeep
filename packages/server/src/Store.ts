@@ -525,6 +525,18 @@ const migrations = SqliteMigrator.fromRecord({
     `;
     yield* sql`CREATE INDEX skill_changes_title ON skill_changes (repo, title)`;
   }),
+  // Each repository's skills as a worker last read them, for the Skills page
+  "0025_skills_state": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE skills_state (
+        repo TEXT PRIMARY KEY COLLATE NOCASE,
+        snapshot TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -641,6 +653,12 @@ const decodeSkillChanges = Schema.decodeUnknownEffect(
       ...Domain.SkillChange.fields,
       skills: Schema.fromJsonString(Schema.Array(Schema.String)),
     }),
+  ),
+);
+
+const decodeSnapshots = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({ snapshot: Schema.fromJsonString(Domain.SkillsSnapshot) }),
   ),
 );
 
@@ -993,6 +1011,10 @@ export class Store extends Context.Service<
       id: string,
       update: Api.SkillChangeStateUpdate,
     ): Effect.Effect<void, Api.SkillChangeNotFound | StoreError>;
+    /** Keep a repository's skills, replacing what was last read of it. */
+    putSkills(snapshot: Domain.SkillsSnapshot): Effect.Effect<void, StoreError>;
+    /** The Skills page: every repository's skills, changes and workers. */
+    skillsPage(): Effect.Effect<Domain.SkillsPage, StoreError>;
     /**
      * Keep what the attention job found: add new items, update the ones
      * whose fingerprint moved and record what moved, and, for a complete
@@ -1880,6 +1902,36 @@ export class Store extends Context.Service<
           return yield* new Api.SkillChangeNotFound({ id });
       },
     );
+
+    const putSkills = Effect.fn("Store.putSkills")(function* (
+      snapshot: Domain.SkillsSnapshot,
+    ) {
+      yield* sql`
+        INSERT INTO skills_state ${sql.insert({
+          repo: snapshot.repo,
+          snapshot: JSON.stringify(snapshot),
+          at: snapshot.checkedAt,
+        })}
+        ON CONFLICT (repo) DO UPDATE
+        SET snapshot = excluded.snapshot, at = excluded.at
+      `;
+    }, Effect.mapError(storeError));
+
+    const skillsPage = Effect.fn("Store.skillsPage")(function* () {
+      const repos = yield* sql`
+        SELECT snapshot FROM skills_state ORDER BY repo
+      `.pipe(Effect.flatMap(decodeSnapshots), Effect.mapError(storeError));
+
+      return {
+        repos: repos.map((row) => row.snapshot),
+        changes: yield* skillChanges(),
+        workers: (yield* agents()).map(({ worker, at, launch }) => ({
+          worker,
+          at,
+          launch,
+        })),
+      };
+    });
 
     const attentionState = Effect.fnUntraced(function* () {
       const rows = yield* sql<{ key: string; value: string }>`
@@ -3359,6 +3411,8 @@ export class Store extends Context.Service<
       skillChange,
       skillChanges,
       setSkillChangeState,
+      putSkills,
+      skillsPage,
       recordAttention,
       attention,
       looked,

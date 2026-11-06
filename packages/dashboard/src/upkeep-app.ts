@@ -21,6 +21,8 @@ import {
   Route,
   route,
   serverVersion,
+  skillsHref,
+  skillsPage,
   token,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-app-bar.ts";
@@ -34,6 +36,7 @@ import "./upkeep-overview.ts";
 import "./upkeep-repo.ts";
 import "./upkeep-repos.ts";
 import "./upkeep-run.ts";
+import "./upkeep-skills.ts";
 
 export class UpkeepApp extends LitElement {
   static override styles = [
@@ -88,6 +91,18 @@ export class UpkeepApp extends LitElement {
 
   readonly #inbox = new AtomController(this, () => inbox);
 
+  readonly #skills = new AtomController(this, () => skillsPage);
+
+  /** How many held skill changes wait for approval, for the menu. */
+  #waiting() {
+    const result = this.#skills.value;
+
+    return AsyncResult.isSuccess(result)
+      ? result.value.changes.filter((change) => change.state === "waiting")
+          .length
+      : 0;
+  }
+
   /** How many entries worth reading are unread, for the menu. */
   #unread() {
     const result = this.#inbox.value;
@@ -116,6 +131,12 @@ export class UpkeepApp extends LitElement {
     const onInbox = Route.$is("Inbox")(current);
     const onRepos = Route.$is("Repos")(current) || Route.$is("Repo")(current);
     const onAttention = Route.$is("Attention")(current);
+    const onSkills = Route.$is("Skills")(current);
+
+    const onJobs =
+      Route.$is("Jobs")(current) ||
+      Route.$is("Job")(current) ||
+      Route.$is("Run")(current);
 
     return html`
       <gw-app-bar menu-label="Pages" menu-below="900">
@@ -130,8 +151,9 @@ export class UpkeepApp extends LitElement {
         >
         ${this.#link(homeHref, "Inbox", onInbox, this.#unread())}
         ${this.#link(attentionHref, "Attention", onAttention)}
+        ${this.#link(skillsHref, "Skills", onSkills, this.#waiting())}
         ${this.#link(reposHref, "Repositories", onRepos)}
-        ${this.#link(jobsHref, "Jobs", !onInbox && !onRepos && !onAttention)}
+        ${this.#link(jobsHref, "Jobs", onJobs)}
         <gw-segmented
           slot="actions"
           size="small"
@@ -159,6 +181,7 @@ export class UpkeepApp extends LitElement {
           ${Route.$match(current, {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
             Attention: () => html`<upkeep-attention></upkeep-attention>`,
+            Skills: () => html`<upkeep-skills></upkeep-skills>`,
             Repos: () => html`<upkeep-repos></upkeep-repos>`,
             Repo: ({ repo }) => html`<upkeep-repo .repo=${repo}></upkeep-repo>`,
             Jobs: () => html`<upkeep-overview></upkeep-overview>`,

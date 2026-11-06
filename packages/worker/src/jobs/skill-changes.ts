@@ -24,6 +24,8 @@ type Start = Extract<Domain.Command, { readonly kind: "skill-start" }>;
 
 type Revise = Extract<Domain.Command, { readonly kind: "skill-revise" }>;
 
+type OpenAgent = Extract<Domain.Command, { readonly kind: "skill-open" }>;
+
 /** The states in which a change is still being worked on or decided. */
 export const open: ReadonlySet<Domain.SkillChangeState> = new Set([
   "working",
@@ -637,6 +639,64 @@ export const prune = Effect.fnUntraced(function* () {
   }
 });
 
+/**
+ * Open an agent on a held change in its checkout on this worker, through
+ * its `attention.launch`, with a brief of where the change stands. Commits
+ * made there are part of the change the next time it resumes.
+ */
+const openAgent = Effect.fnUntraced(function* (command: OpenAgent) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const reporter = yield* Reporter;
+  const setup = (yield* Settings.load()).attention?.launch;
+
+  if (setup === undefined)
+    return yield* new AgentFailed({
+      message: "This worker has no attention.launch in its settings",
+    });
+
+  const change = yield* reporter.skillChange(command.change);
+
+  if (!(yield* fs.exists(change.directory)))
+    return yield* new AgentFailed({
+      message: `${change.title}'s checkout is no longer on this worker`,
+    });
+
+  const brief = [
+    `# ${change.title}`,
+    "",
+    `A skill change in ${change.repo}, held on Upkeep's Skills page${change.state === "waiting" ? " for approval" : ` (${change.state})`}. ${change.session === null ? "" : `The agent that made it ran in OpenCode session ${change.session}. `}This checkout has its commit on top of the default branch.`,
+    "",
+    `What started it: ${change.reason}`,
+    "",
+    "What the agent said:",
+    "",
+    change.summary ?? "(nothing)",
+    "",
+    "Wait for instructions. Don't push: the change lands when it's approved on the Skills page, and what's committed here is part of it once changes are asked for there with Resume.",
+  ].join("\n");
+
+  const { trusted } = yield* roots;
+  const briefs = path.join(trusted, "briefs");
+  const file = path.join(briefs, `${change.id}.md`);
+
+  yield* fs.makeDirectory(briefs, { recursive: true });
+  yield* fs.writeFileString(file, brief);
+
+  const fill = (arg: string) =>
+    arg
+      .replaceAll("{brief}", file)
+      .replaceAll("{directory}", change.directory)
+      .replaceAll("{repo}", change.repo)
+      .replaceAll("{name}", change.repo.split("/").at(-1) ?? change.repo)
+      .replaceAll("{title}", change.title);
+
+  const [program = "", ...args] = setup.command.map(fill);
+
+  yield* run(program, args, { cwd: change.directory, trusted: "" });
+  yield* summary(`Opened an agent on ${change.title} in ${change.directory}`);
+});
+
 export const skillChange = Effect.fnUntraced(function* (
   command: Domain.Command | null,
 ) {
@@ -647,6 +707,8 @@ export const skillChange = Effect.fnUntraced(function* (
       return yield* approve(command.change);
     case "skill-revise":
       return yield* revise(command);
+    case "skill-open":
+      return yield* openAgent(command);
     default:
       yield* RunLog.info("No skill change to make");
 

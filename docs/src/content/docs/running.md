@@ -384,7 +384,7 @@ by default.
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `skill-consumers`   | Hourly           | Syncs the shared skills into the repositories listed in the skills repository's `consumers.yml`, through its own `skill-maintenance`. See [Skills](#skills).                                                                                                                                                                                                                                                                                                               |
 | `skill-updates`     | Hourly           | Pushes the shared skills' updates that need no review, and starts a `skill-change` for each that needs an agent. See [Skills](#skills).                                                                                                                                                                                                                                                                                                                                    |
-| `skill-change`      | On request       | Has an agent change a skill and holds its commit as a patch for your approval, or lands, revises or starts again on a held change. See [Skills](#skills).                                                                                                                                                                                                                                                                                                                  |
+| `skill-change`      | On request       | Has an agent change a skill and holds its commit as a patch for your approval, or lands, revises or starts again on a held change, or opens an agent on one. See [Skills](#skills).                                                                                                                                                                                                                                                                                        |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
@@ -718,6 +718,25 @@ to finish:
   "skills": {
     "agent": { "model": "provider/model", "variant": "high" },
     "sessionMinutes": 30
+  }
+}
+```
+
+The dashboard's Skills page shows the held changes with their diffs. Approve
+lands one, Request changes resumes its agent with your comment (Resume) or
+starts again on any worker (Start again), Drop leaves it, and Open in Herdr
+opens an agent in its checkout through the worker's `attention.launch`, when
+that worker is up and has one. Below them is every skill: where it comes from,
+how it stands against its upstream and the tools it covers, which
+repositories keep a copy and its last commits, with Ask for a change to start
+an agent on it. `skill-updates` sends what it read of the shared repository
+after each run, and the skills of any repositories in `skills.repos`, each
+with the folder holding them:
+
+```json
+{
+  "skills": {
+    "repos": [{ "repo": "owner/dotfiles", "path": ".agents/skills" }]
   }
 }
 ```

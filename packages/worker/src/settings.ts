@@ -190,6 +190,16 @@ export const Settings = Schema.Struct({
       sessionMinutes: Schema.optionalKey(
         Schema.Number.check(Schema.isGreaterThan(0)),
       ),
+      /**
+       * Other repositories whose skills the Skills page shows, beside the
+       * shared skills repository: `repo` as `owner/name`, and `path`, the
+       * folder in it that holds one folder per skill.
+       */
+      repos: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({ repo: Schema.String, path: Schema.String }),
+        ),
+      ),
     }),
   ),
 });

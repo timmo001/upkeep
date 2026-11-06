@@ -102,6 +102,10 @@ export class Reporter extends Context.Service<
     readonly skillCommand: (
       command: Domain.Command,
     ) => Effect.Effect<Domain.Run, unknown>;
+    /** Keep a repository's skills on the server, for the Skills page. */
+    readonly putSkills: (
+      snapshot: Domain.SkillsSnapshot,
+    ) => Effect.Effect<void, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /** Send findings to the server, for the run `runId`. */
@@ -195,6 +199,7 @@ export class Reporter extends Context.Service<
             client.work.skillChangeState({ params: { id }, payload: update }),
           skillCommand: (command) =>
             client.work.skillCommand({ payload: command }),
+          putSkills: (snapshot) => client.work.putSkills({ payload: snapshot }),
         });
       }),
     );
@@ -260,6 +265,10 @@ export class Reporter extends Context.Service<
             Effect.provide(RunLog.RunLog.console),
             Effect.andThen(Effect.fail("Nothing is queued from a local run")),
           ),
+        putSkills: (snapshot) =>
+          RunLog.info(
+            `Would send ${snapshot.skills.length} skills in ${snapshot.repo}`,
+          ).pipe(Effect.provide(RunLog.RunLog.console)),
       }),
     );
 }
