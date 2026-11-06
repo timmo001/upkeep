@@ -47,6 +47,7 @@ const laneLabels = new Map<string, string>([
   ["repos", "Repositories lane: jobs that change repositories"],
   ["heal", "Heal lane: fixes for failed runs"],
   ["command", "Command lane: what the dashboard asks for"],
+  ["machine", "Machine lane: keeping each worker's own machine current"],
 ]);
 
 /** What starts a job besides its run button, with a schedule in words. */
@@ -195,12 +196,25 @@ export class UpkeepOverview extends LitElement {
         searchable: false,
         cell: draw(
           (job) =>
-            job.lastRun === null
-              ? html`<span class="muted">Never</span>`
-              : html`<a href=${runHref(job.lastRun.id)}
-                    >${stateBadge(job.lastRun.state)}</a
-                  >
-                  ${time(job.lastRun.queuedAt)}`,
+            job.machines !== undefined && job.machines.length > 0
+              ? job.machines.map(
+                  (run) =>
+                    html`<div>
+                      <a href=${runHref(run.id)}>${stateBadge(run.state)}</a>
+                      ${
+                        run.command?.kind === "machine"
+                          ? run.command.worker
+                          : ""
+                      },
+                      ${time(run.queuedAt)}
+                    </div>`,
+                )
+              : job.lastRun === null
+                ? html`<span class="muted">Never</span>`
+                : html`<a href=${runHref(job.lastRun.id)}
+                      >${stateBadge(job.lastRun.state)}</a
+                    >
+                    ${time(job.lastRun.queuedAt)}`,
           { width: "14rem" },
         ),
       },

@@ -202,6 +202,70 @@ export const command: Job = {
   tracked: false,
 };
 
+/**
+ * A machine job: one `dot up` stage, run headless on every live worker so
+ * each machine keeps itself current without `dot up`.
+ */
+const machine = (
+  stage: string,
+  name: string,
+  description: string,
+  schedule: string,
+): Job => ({
+  id: `up-${stage}`,
+  name,
+  description: `${description}, on every worker, through \`dot up ${stage}\``,
+  schedule,
+  onRelease: false,
+  lane: "machine",
+  tracked: false,
+  machine: true,
+});
+
+export const upDotfiles = machine(
+  "dotfiles",
+  "Dotfiles",
+  "Pull the dotfiles, rebuild dot and stow what changed",
+  "5 * * * *",
+);
+
+export const upSkills = machine(
+  "skills",
+  "Skills",
+  "Move the shared skills to the latest main and relink them, reloading agents when they changed",
+  "50 * * * *",
+);
+
+export const upRepos = machine(
+  "repos",
+  "Repositories",
+  "Pull the tracked repositories that are behind and have no work in progress",
+  "20,50 * * * *",
+);
+
+export const upTools = machine(
+  "tools",
+  "Tools",
+  "Install and upgrade mise tools",
+  "10 5 * * *",
+);
+
+export const upPlugins = machine(
+  "plugins",
+  "Agent plugins",
+  "Update the Pi, Plannotator and Herdr plugins, reloading agents when they changed",
+  "20 5 * * *",
+);
+
+/** The machine jobs, in the order a worker catching up runs them. */
+export const machineJobs: ReadonlyArray<Job> = [
+  upDotfiles,
+  upSkills,
+  upRepos,
+  upTools,
+  upPlugins,
+];
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   watch,
@@ -221,4 +285,5 @@ export const jobs: ReadonlyArray<Job> = [
   summary,
   attentionContext,
   command,
+  ...machineJobs,
 ];

@@ -11,6 +11,7 @@ import { bundleDashboard } from "@upkeep/dashboard/bundle" with { type: "macro" 
 import {
   Clock,
   Config,
+  Cron,
   Duration,
   Effect,
   Layer,
@@ -143,6 +144,42 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
   return Option.some(queued);
 });
 
+/** The workers that asked for work in the last half hour, which machine jobs run on. */
+const liveWorkers = Effect.fn("liveWorkers")(function* () {
+  const store = yield* Store;
+
+  const since =
+    (yield* Clock.currentTimeMillis) - Duration.toMillis("30 minutes");
+
+  return (yield* store.agents())
+    .filter((worker) => worker.at >= since)
+    .map((worker) => worker.worker);
+});
+
+/**
+ * Queue a machine job on each live worker, returning the first run queued. A
+ * job held by a pause or park is skipped as usual.
+ */
+const queueMachine = Effect.fn("queueMachine")(function* (
+  job: Domain.JobId,
+  trigger: Domain.Trigger,
+) {
+  const queued: Array<Domain.Run> = [];
+
+  for (const worker of yield* liveWorkers()) {
+    const run = yield* queue({
+      job,
+      trigger,
+      release: null,
+      command: { kind: "machine", worker },
+    });
+
+    if (Option.isSome(run)) queued.push(run.value);
+  }
+
+  return Option.fromNullishOr(queued[0]);
+});
+
 /**
  * Queue a heal for each target of a failed or lost run: each failed consumer
  * of a bump, or Upkeep itself. A failed heal never queues another. A target
@@ -153,10 +190,12 @@ const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
   consumers: ReadonlyArray<string>,
 ) {
-  // A command that failed shows on its run, with nothing for an agent to fix
+  // A command or machine job that failed shows on its run, with nothing for
+  // an agent to fix in a repository
   if (
     run.job === Catalogue.heal.id ||
     run.job === Catalogue.command.id ||
+    run.command?.kind === "machine" ||
     run.state !== "failed"
   )
     return;
@@ -390,6 +429,10 @@ const JobsHandlers = HttpApiBuilder.group(
         const paused = yield* store.paused().pipe(Effect.orDie);
         const waiting = yield* store.waiting().pipe(Effect.orDie);
 
+        const machines = yield* store
+          .machineRuns(Catalogue.machineJobs.map((job) => job.id))
+          .pipe(Effect.orDie);
+
         return Catalogue.jobs.map((job): Domain.JobStatus => ({
           id: job.id,
           name: job.name,
@@ -404,6 +447,10 @@ const JobsHandlers = HttpApiBuilder.group(
           waiting: waiting
             .filter((entry) => entry.job === job.id)
             .map(({ run, repo, at }) => ({ run, repo, at })),
+          ...(job.machine === true && {
+            machine: true,
+            machines: machines.get(job.id) ?? [],
+          }),
         }));
       }),
       agents: () => store.agents().pipe(Effect.orDie),
@@ -418,14 +465,21 @@ const JobsHandlers = HttpApiBuilder.group(
           return yield* new Api.ReleaseRequired({ id: params.id });
         }
 
-        const queued = yield* queue({
-          job: params.id,
-          trigger: "manual",
-          release: payload.release ?? null,
-        }).pipe(Effect.provideService(Store, store), Effect.orDie);
+        const queued = yield* (
+          job.value.machine === true
+            ? queueMachine(params.id, "manual")
+            : queue({
+                job: params.id,
+                trigger: "manual",
+                release: payload.release ?? null,
+              })
+        ).pipe(Effect.provideService(Store, store), Effect.orDie);
 
         return yield* Option.match(queued, {
-          onNone: () => Effect.die(new Error("A manual run wasn't queued")),
+          onNone: () =>
+            job.value.machine === true
+              ? Effect.die(new Error("No worker is live to run it on"))
+              : Effect.die(new Error("A manual run wasn't queued")),
           onSome: Effect.succeed,
         });
       }),
@@ -1370,7 +1424,7 @@ export const scheduler = Layer.effectDiscard(
     const store = yield* Store;
 
     for (const job of Catalogue.jobs) {
-      if (job.schedule === null) continue;
+      if (job.schedule === null || job.machine === true) continue;
 
       yield* queue({ job: job.id, trigger: "schedule", release: null }).pipe(
         Effect.provideService(Store, store),
@@ -1379,6 +1433,55 @@ export const scheduler = Layer.effectDiscard(
         Effect.forkScoped,
       );
     }
+  }),
+);
+
+/**
+ * Queue each machine job on each live worker whose latest run of it is older
+ * than the job's last scheduled time, once a minute. That keeps the schedule
+ * and catches a worker up when it comes back after being off.
+ */
+export const machineScheduler = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+
+    const crons = Catalogue.machineJobs.flatMap((job) =>
+      job.schedule === null
+        ? []
+        : [{ job: job.id, cron: Cron.parseUnsafe(job.schedule) }],
+    );
+
+    yield* Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const workers = yield* liveWorkers();
+      const latest = yield* store.machineRuns(crons.map(({ job }) => job));
+
+      for (const { job, cron } of crons) {
+        const due = Cron.prev(cron, now).getTime();
+        const runs = latest.get(job) ?? [];
+
+        for (const worker of workers) {
+          const last = runs.find(
+            (run) =>
+              run.command?.kind === "machine" && run.command.worker === worker,
+          );
+
+          if (last !== undefined && last.queuedAt >= due) continue;
+
+          yield* queue({
+            job,
+            trigger: "schedule",
+            release: null,
+            command: { kind: "machine", worker },
+          });
+        }
+      }
+    }).pipe(
+      Effect.provideService(Store, store),
+      Effect.catchCause(Effect.logError),
+      Effect.repeat(Schedule.spaced("1 minute")),
+      Effect.forkScoped,
+    );
   }),
 );
 
@@ -1503,6 +1606,7 @@ export const layer = (options: ServeOptions) =>
         ),
     }),
     scheduler,
+    machineScheduler,
     lostRuns,
     unparkResolved,
     healWaiting,

@@ -18,9 +18,16 @@ export type JobId = typeof JobId.Type;
  * can run a fix agent for a long while, `quick` for jobs that only call APIs,
  * `repos` for jobs that clone and push to repositories, which take turns, and
  * `command` for what the dashboard asks for, which a worker checks for often
- * so a click is answered in seconds.
+ * so a click is answered in seconds, and `machine` for jobs that update the
+ * worker's own machine.
  */
-export const Lane = Schema.Literals(["heal", "quick", "repos", "command"]);
+export const Lane = Schema.Literals([
+  "heal",
+  "quick",
+  "repos",
+  "command",
+  "machine",
+]);
 
 export type Lane = typeof Lane.Type;
 
@@ -39,6 +46,11 @@ export const Job = Schema.Struct({
    * server and opted into it.
    */
   tracked: Schema.Boolean,
+  /**
+   * Whether it runs once on every live worker rather than once overall, to
+   * update the machine itself. Missing from older servers.
+   */
+  machine: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Job extends Schema.Schema.Type<typeof Job> {}
@@ -512,7 +524,8 @@ export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
  * `command` job: `mark-read` marks a GitHub notification thread read,
  * `start-agent` opens an agent on one worker, which only that one claims, and
  * `open-session` opens an agent's OpenCode session on the worker named.
- * The `skill-*` commands run as the `skill-change` job instead.
+ * The `skill-*` commands run as the `skill-change` job instead, and
+ * `machine` names the worker a machine job's run is for.
  */
 export const Command = Schema.Union([
   Schema.Struct({
@@ -580,6 +593,11 @@ export const Command = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("skill-open"),
     change: Schema.String,
+    worker: Schema.String,
+  }),
+  /** Run a machine job on the worker named, which only that one claims. */
+  Schema.Struct({
+    kind: Schema.Literal("machine"),
     worker: Schema.String,
   }),
 ]);
@@ -712,6 +730,8 @@ export const JobStatus = Schema.Struct({
   paused: Schema.NullOr(Paused),
   /** Heals of its consumers waiting on the heal limit; missing from older servers. */
   waiting: Schema.optionalKey(Schema.Array(WaitingHeal)),
+  /** For a machine job: each worker's latest run. Missing from older servers. */
+  machines: Schema.optionalKey(Schema.Array(Run)),
 });
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}

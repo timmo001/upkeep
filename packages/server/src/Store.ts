@@ -927,6 +927,13 @@ export class Store extends Context.Service<
     run(id: string): Effect.Effect<Domain.Run, Api.RunNotFound | StoreError>;
     /** The latest run of each job that has one. */
     latestRuns(): Effect.Effect<ReadonlyMap<string, Domain.Run>, StoreError>;
+    /** The latest run of each of these machine jobs on each worker, by job. */
+    machineRuns(
+      jobs: ReadonlyArray<string>,
+    ): Effect.Effect<
+      ReadonlyMap<string, ReadonlyArray<Domain.Run>>,
+      StoreError
+    >;
     /** Take the oldest waiting run of one of these jobs for a worker. */
     claim(
       jobs: ReadonlyArray<string>,
@@ -1399,6 +1406,33 @@ export class Store extends Context.Service<
         `);
 
       return new Map(rows.map((row) => [row.job, row]));
+    }, Effect.mapError(storeError));
+
+    const machineRuns = Effect.fn("Store.machineRuns")(function* (
+      jobs: ReadonlyArray<string>,
+    ) {
+      if (jobs.length === 0) return new Map<string, Array<Domain.Run>>();
+
+      const rows = yield* selectRuns(sql`
+          SELECT * FROM runs AS r
+          WHERE ${sql.in("job", jobs)}
+            AND json_extract(command, '$.worker') IS NOT NULL
+            AND id = (
+              SELECT id FROM runs
+              WHERE job = r.job
+                AND json_extract(command, '$.worker')
+                  = json_extract(r.command, '$.worker')
+              ORDER BY queued_at DESC, id DESC LIMIT 1
+            )
+          ORDER BY json_extract(command, '$.worker')
+        `);
+
+      const byJob = new Map<string, Array<Domain.Run>>();
+
+      for (const row of rows)
+        byJob.set(row.job, [...(byJob.get(row.job) ?? []), row]);
+
+      return byJob;
     }, Effect.mapError(storeError));
 
     const claim = Effect.fn("Store.claim")(
@@ -3474,6 +3508,7 @@ export class Store extends Context.Service<
       runs,
       run,
       latestRuns,
+      machineRuns,
       claim,
       heartbeat,
       appendLog,

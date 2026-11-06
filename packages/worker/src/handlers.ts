@@ -8,6 +8,7 @@ import { deps } from "./jobs/deps";
 import { drift } from "./jobs/drift";
 import { heal } from "./jobs/heal";
 import { labels } from "./jobs/labels";
+import { machine } from "./jobs/machine";
 import { notifications } from "./jobs/notifications";
 import { releases } from "./jobs/releases";
 import { skillChange } from "./jobs/skill-changes";
@@ -37,4 +38,9 @@ export const handlers: Handlers = {
   summary: () => summary(),
   "attention-context": () => attentionContext(),
   command: (_release, command) => runCommand(command),
+  "up-dotfiles": () => machine("dotfiles"),
+  "up-skills": () => machine("skills"),
+  "up-repos": () => machine("repos"),
+  "up-tools": () => machine("tools"),
+  "up-plugins": () => machine("plugins"),
 };

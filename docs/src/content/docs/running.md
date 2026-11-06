@@ -157,12 +157,14 @@ puts its run back at the front of the queue. That happens once per run: the
 second time, the run fails as lost, so a run that brings its worker down can't
 loop. A worker reads GitHub through `gh`, logged in as whoever runs it.
 
-A worker runs jobs in four lanes at once, one run per lane, so a long job
+A worker runs jobs in five lanes at once, one run per lane, so a long job
 doesn't hold up the others: heals in one, the quick API-only jobs
 (`releases`, `watch`, `labels` and `notifications`) in another, the jobs that
-clone and push to repositories in a third, where they take turns, and what the
-dashboard asks for, such as starting an agent, in the last. That lane asks
-the server every few seconds, so a click is picked up straight away.
+clone and push to repositories in a third, where they take turns, what the
+dashboard asks for, such as starting an agent, in a fourth, and the
+[machine jobs](#machines) that keep the worker's own machine current in the
+last. The command lane asks the server every few seconds, so a click is
+picked up straight away.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
@@ -408,10 +410,32 @@ Supervisor for its address on startup and logs the one it uses.
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
 | `command`           | On request       | Does one thing the dashboard asks, such as mark a notification read. A failed command shows on its run and is never healed.                                                                                                                                                                                                                                                                                                                                                |
+| `up-dotfiles`       | Hourly           | Pulls the dotfiles on every worker, rebuilds `dot` and stows them. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                              |
+| `up-skills`         | Hourly           | Moves every worker's shared skills to the latest main and relinks them, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                     |
+| `up-repos`          | Every 30 minutes | Pulls the tracked repositories on every worker that are behind and have no work in progress. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                    |
+| `up-tools`          | Daily at 05:10   | Installs and upgrades every worker's mise tools. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                                |
+| `up-plugins`        | Daily at 05:20   | Updates every worker's agent plugins, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                       |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker, running its CLI with the checkout's pinned
 Bun through `mise exec`.
+
+### Machines
+
+The `up-*` jobs keep each worker's own machine current, so nobody has to run
+`dot up` for the parts that need no root. Each runs one `dot up` stage
+headless, `dot up <stage> --json`, and reads what it did from the JSON it
+prints. Unlike the other jobs, they run once on every worker that asked for
+work in the last half hour rather than once overall: the server queues a run
+for each worker whose latest run of the job is older than the job's last
+scheduled time. It checks once a minute, so a worker that was off catches up
+when it comes back, and running a job by hand queues it on every live worker.
+
+A dotfiles pull is applied by `dot up stow` straight after it. When a stage
+changed skills or agent plugins, the job runs `dot up agents` after it, which
+reloads running agents. A worker without `dot` skips them. A
+failed stage fails its run, which shows on the dashboard and is never healed.
+The Jobs table shows each worker's latest run of each one.
 
 ### Bump
 
