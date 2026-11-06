@@ -327,15 +327,24 @@ export const attentionBadge = html`<gw-badge
 
 /**
  * An agent's OpenCode session: the command that resumes it, with a button to
- * copy it, and one that opens it in Herdr on the worker it ran on.
+ * copy it, and one to open it in Herdr on each worker in `on`, the one it ran
+ * on first.
  */
-export const agentSession = (open: {
-  readonly worker: string;
-  readonly session: string;
-  readonly directory: string;
-  readonly title: string;
-}) => {
+export const agentSession = (
+  open: {
+    readonly worker: string;
+    readonly session: string;
+    readonly directory: string;
+    readonly title: string;
+  },
+  on: ReadonlyArray<string> = [open.worker],
+) => {
   const resume = `opencode2 --session ${open.session}`;
+
+  const workers = [
+    open.worker,
+    ...on.filter((each) => each !== open.worker).toSorted(),
+  ];
 
   return html`<span class="session">
     <code>${resume}</code>
@@ -355,13 +364,16 @@ export const agentSession = (open: {
       }}
       >Copy</gw-button
     >
-    <gw-button
-      size="xs"
-      appearance="outlined"
-      variant="neutral"
-      icon=${mdiConsole}
-      @click=${() => registry.set(openSession, open)}
-      >Resume in Herdr on ${open.worker}</gw-button
-    >
+    ${workers.map(
+      (worker) =>
+        html`<gw-button
+          size="xs"
+          appearance="outlined"
+          variant="neutral"
+          icon=${mdiConsole}
+          @click=${() => registry.set(openSession, { ...open, worker })}
+          >Resume in Herdr on ${worker}</gw-button
+        >`,
+    )}
   </span>`;
 };

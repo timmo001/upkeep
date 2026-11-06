@@ -543,6 +543,28 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE runs ADD COLUMN heal_directory TEXT`;
   }),
+  // Heal sessions their workers shared, so any worker can open them, and
+  // which workers can open sessions at all
+  "0027_heal_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE heal_sessions (
+        run_id TEXT PRIMARY KEY,
+        session TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        export TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX heal_sessions_session ON heal_sessions (session)`;
+    yield* sql`
+      ALTER TABLE runs ADD COLUMN heal_shared INTEGER NOT NULL DEFAULT 0
+    `;
+    yield* sql`
+      ALTER TABLE worker_agents ADD COLUMN resume INTEGER NOT NULL DEFAULT 0
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -572,6 +594,7 @@ const RunRow = Schema.Struct({
   healCommit: Schema.NullOr(Schema.String),
   healSession: Schema.NullOr(Schema.String),
   healDirectory: Schema.NullOr(Schema.String),
+  healShared: Schema.Number,
   healIssue: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   changes: Schema.fromJsonString(Schema.Array(Domain.Change)),
@@ -610,6 +633,7 @@ const toRun = ({
   healCommit,
   healSession,
   healDirectory,
+  healShared,
   healIssue,
   attention,
   ...row
@@ -636,6 +660,7 @@ const toRun = ({
           commit: healCommit,
           session: healSession,
           directory: healDirectory,
+          shared: healShared !== 0,
           issue: healIssue,
         },
 });
@@ -652,6 +677,7 @@ const decodeAgents = Schema.decodeUnknownEffect(
       ...Domain.WorkerAgents.fields,
       agents: Schema.fromJsonString(Schema.Array(Domain.Agent)),
       launch: Schema.Number,
+      resume: Schema.Number,
     }),
   ),
 );
@@ -931,6 +957,16 @@ export class Store extends Context.Service<
       worker: string,
       update: Api.HealUpdate,
     ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** Keep the session a heal's agent left, from the worker running it. */
+    shareSession(
+      id: string,
+      worker: string,
+      shared: Api.SessionExport,
+    ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** A shared heal session, by its OpenCode session ID. */
+    session(
+      session: string,
+    ): Effect.Effect<Api.SessionExport, Api.SessionNotFound | StoreError>;
     /** Record a run's summary, a commit it pushed, or that it needs a person. */
     report(
       id: string,
@@ -1513,6 +1549,45 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
+    const shareSession = Effect.fn("Store.shareSession")(
+      function* (id: string, worker: string, shared: Api.SessionExport) {
+        yield* claimed(id, worker);
+
+        const current = yield* run(id);
+
+        if (current.heal?.session == null) return;
+
+        yield* sql`
+          INSERT OR REPLACE INTO heal_sessions ${sql.insert({
+            runId: id,
+            session: current.heal.session,
+            repo: shared.repo,
+            export: shared.export,
+            at: yield* Clock.currentTimeMillis,
+          })}
+        `;
+        yield* sql`UPDATE runs SET heal_shared = 1 WHERE id = ${id}`;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const session = Effect.fn("Store.session")(function* (id: string) {
+      const rows = yield* sql<{
+        readonly repo: string;
+        readonly export: string;
+      }>`
+        SELECT repo, export FROM heal_sessions
+        WHERE session = ${id} ORDER BY at DESC LIMIT 1
+      `.pipe(Effect.mapError(storeError));
+
+      const [found] = rows;
+
+      if (found === undefined) return yield* new Api.SessionNotFound({ id });
+
+      return { repo: found.repo, export: found.export };
+    });
+
     const report = Effect.fn("Store.report")(
       function* (id: string, worker: string, update: Api.RunReport) {
         yield* claimed(id, worker);
@@ -1798,24 +1873,26 @@ export class Store extends Context.Service<
           decisions: setup.decisions,
           agents: JSON.stringify(setup.agents),
           launch: setup.launch ? 1 : 0,
+          resume: setup.resume ? 1 : 0,
           at: yield* Clock.currentTimeMillis,
         })}
         ON CONFLICT (worker) DO UPDATE
         SET decisions = excluded.decisions, agents = excluded.agents,
-          launch = excluded.launch, at = excluded.at
+          launch = excluded.launch, resume = excluded.resume, at = excluded.at
       `;
     }, Effect.mapError(storeError));
 
     const agents = Effect.fn("Store.agents")(function* () {
       return yield* sql`
-        SELECT worker, decisions, agents, launch, at
+        SELECT worker, decisions, agents, launch, resume, at
         FROM worker_agents ORDER BY worker
       `.pipe(
         Effect.flatMap(decodeAgents),
         Effect.map((rows) =>
-          rows.map(({ launch, ...row }): Domain.WorkerAgents => ({
+          rows.map(({ launch, resume, ...row }): Domain.WorkerAgents => ({
             ...row,
             launch: launch !== 0,
+            resume: resume !== 0,
           })),
         ),
       );
@@ -2837,6 +2914,7 @@ export class Store extends Context.Service<
         `;
 
         yield* sql`DELETE FROM log_lines WHERE run_id IN (${doomed})`;
+        yield* sql`DELETE FROM heal_sessions WHERE run_id IN (${doomed})`;
 
         const deleted = yield* sql<{ readonly id: string }>`
           DELETE FROM runs WHERE id IN (${doomed}) RETURNING id
@@ -3401,6 +3479,8 @@ export class Store extends Context.Service<
       appendLog,
       finish,
       updateHeal,
+      shareSession,
+      session,
       report,
       activity,
       healsSince,

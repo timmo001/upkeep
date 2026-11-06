@@ -518,14 +518,63 @@ export const launch = Effect.fnUntraced(function* (
   yield* summary(`Started an agent on ${title} in ${repo}`);
 });
 
+const KnownSession = Schema.Struct({
+  data: Schema.Struct({
+    location: Schema.Struct({ directory: Schema.String }),
+  }),
+});
+
 /**
- * Open an agent's OpenCode session in the directory it worked in, through
- * the worker's `attention.resume`, such as in a terminal pane.
+ * Import a session another worker shared into this worker's checkout of its
+ * repository: the directory it worked in when that's here too, or else one
+ * found as for an agent from the Attention page. Returns where.
+ */
+const imported = Effect.fnUntraced(function* (
+  command: Extract<Domain.Command, { readonly kind: "open-session" }>,
+  opencode: string,
+  pattern: string | undefined,
+) {
+  const reporter = yield* Reporter;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const shared = yield* reporter.session(command.session);
+
+  if (shared === null)
+    return yield* new LaunchFailed({
+      message: `Session ${command.session} isn't on this worker, and the worker that ran it didn't share it`,
+    });
+
+  const directory = (yield* fs.exists(command.directory))
+    ? command.directory
+    : yield* directoryFor(shared.repo, pattern);
+
+  const sessions = `${yield* cacheRoot}/sessions`;
+  const file = path.join(sessions, `${command.session}.json`);
+
+  yield* fs.makeDirectory(sessions, { recursive: true });
+  yield* fs.writeFileString(file, shared.export);
+  yield* RunLog.info(
+    `Importing session ${command.session} from the server into ${directory}`,
+  );
+  yield* run(opencode, ["session", "import", file, "--directory", directory], {
+    cwd: directory,
+    trusted: "",
+  }).pipe(Effect.ensuring(fs.remove(file).pipe(Effect.ignore)));
+
+  return directory;
+});
+
+/**
+ * Open an agent's OpenCode session through the worker's `attention.resume`,
+ * such as in a terminal pane: in the directory it worked in when OpenCode
+ * here has it, or else imported from the server, where the worker that ran
+ * it shared it, into this worker's checkout of its repository.
  */
 export const resume = Effect.fnUntraced(function* (
   command: Extract<Domain.Command, { readonly kind: "open-session" }>,
 ) {
-  const setup = (yield* Settings.load()).attention?.resume;
+  const settings = yield* Settings.load();
+  const setup = settings.attention?.resume;
 
   if (setup === undefined)
     return yield* new LaunchFailed({
@@ -534,12 +583,29 @@ export const resume = Effect.fnUntraced(function* (
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { session, directory, title } = command;
+  const { session, title } = command;
+  const opencode = settings.heal?.opencode ?? "opencode2";
+  const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
 
-  if (!(yield* fs.exists(directory)))
-    return yield* new LaunchFailed({
-      message: `${directory} is no longer on this worker`,
-    });
+  const here = yield* run(opencode, ["api", "get", `/api/session/${session}`], {
+    cwd: home,
+    trusted: "",
+  }).pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(Schema.fromJsonString(KnownSession)),
+    ),
+    Effect.map(({ data }) => data.location.directory),
+    Effect.orElseSucceed(() => null),
+  );
+
+  const directory =
+    here !== null && (yield* fs.exists(here))
+      ? here
+      : yield* imported(
+          command,
+          opencode,
+          settings.attention?.launch?.directory,
+        );
 
   const fill = (arg: string) =>
     arg

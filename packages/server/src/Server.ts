@@ -735,6 +735,17 @@ const WorkHandlers = HttpApiBuilder.group(
           ].join("\n"),
         );
       }),
+      shareSession: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .shareSession(params.id, worker.name, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
+      session: ({ params }) =>
+        store
+          .session(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
       healing: Effect.fn(function* ({ params }) {
         const worker = yield* Api.CurrentWorker;
 

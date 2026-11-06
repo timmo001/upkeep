@@ -253,6 +253,7 @@ export const agentSetup = (settings: Settings): Domain.AgentSetup => ({
     for: agent.for,
   })),
   launch: settings.attention?.launch !== undefined,
+  resume: settings.attention?.resume !== undefined,
 });
 
 /** Read the settings, or the defaults when there's no file. */

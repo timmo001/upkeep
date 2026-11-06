@@ -32,6 +32,14 @@ export class Reporter extends Context.Service<
     ) => Effect.Effect<void, unknown>;
     /** For a heal: fill in its record. */
     readonly heal: (update: Api.HealUpdate) => Effect.Effect<void, unknown>;
+    /** For a heal: share the session its agent left, so any worker can open it. */
+    readonly shareSession: (
+      shared: Api.SessionExport,
+    ) => Effect.Effect<void, unknown>;
+    /** A session another worker shared, or null when none did. */
+    readonly session: (
+      id: string,
+    ) => Effect.Effect<Api.SessionExport | null, unknown>;
     /** The heals queued since `since`, newest first. */
     readonly heals: (
       since: number,
@@ -139,6 +147,14 @@ export class Reporter extends Context.Service<
               payload: issue === null ? { reason } : { reason, issue },
             }),
           heal: (update) => client.work.heal({ params, payload: update }),
+          shareSession: (shared) =>
+            client.work.shareSession({ params, payload: shared }),
+          session: (id) =>
+            client.work
+              .session({ params: { id } })
+              .pipe(
+                Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
+              ),
           heals: (since) => client.work.heals({ query: { since } }),
           repos: (job) =>
             client.work.repos({ query: job === undefined ? {} : { job } }),
@@ -225,6 +241,8 @@ export class Reporter extends Context.Service<
             Effect.provide(RunLog.RunLog.console),
           ),
         heal: () => Effect.void,
+        shareSession: () => Effect.void,
+        session: () => Effect.succeed(null),
         heals: () => Effect.succeed([]),
         repos,
         inbox: () => Effect.fail("The summary reads the inbox on a worker"),

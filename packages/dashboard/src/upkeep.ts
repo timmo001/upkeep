@@ -189,8 +189,8 @@ export const startAgent = UpkeepApi.runtime.fn(
 );
 
 /**
- * Open an agent's OpenCode session on the worker it ran on, in the directory
- * it worked in.
+ * Open an agent's OpenCode session on the worker given: in the directory it
+ * worked in, or one the worker imports it into.
  */
 export const openSession = UpkeepApi.runtime.fn(
   (payload: {

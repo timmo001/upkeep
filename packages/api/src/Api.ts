@@ -132,6 +132,29 @@ export class SkillChangeNotFound extends Schema.TaggedError<SkillChangeNotFound>
   }
 }
 
+export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()(
+  "SessionNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `Session ${this.id} wasn't shared with the server`;
+  }
+}
+
+/**
+ * An agent's OpenCode session as `opencode session export` wrote it, and the
+ * repository it worked in, so another worker can import and open it.
+ */
+export const SessionExport = Schema.Struct({
+  repo: RepoName,
+  export: Schema.String,
+});
+
+export interface SessionExport extends Schema.Schema.Type<
+  typeof SessionExport
+> {}
+
 /** A held skill change as its worker sends it; the server adds its ID, the worker and the time. */
 export const SkillChangeInput = SkillChange.mapFields(
   Struct.omit(["id", "worker", "at"]),
@@ -771,6 +794,22 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: HealUpdate,
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
+    }),
+    /**
+     * Share the session a heal's agent left, so any worker can open it. One
+     * shared before is replaced.
+     */
+    HttpApiEndpoint.put("shareSession", "/runs/:id/session", {
+      params: { id: Schema.String },
+      payload: SessionExport,
+      success: HttpApiSchema.NoContent,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /** A session a worker shared, to import before opening it. */
+    HttpApiEndpoint.get("session", "/sessions/:id", {
+      params: { id: Schema.String },
+      success: SessionExport,
+      error: SessionNotFound,
     }),
     /** Report a run's summary, a commit it pushed, or that it needs a person. */
     HttpApiEndpoint.post("report", "/runs/:id/report", {

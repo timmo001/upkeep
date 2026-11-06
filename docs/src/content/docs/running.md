@@ -308,8 +308,12 @@ model chooses what to do:
 
 A heal's run page shows its session as the `opencode2 --session` command
 that resumes it, with a button to copy it and **Resume in Herdr**, which
-opens it on the worker that ran it, in the checkout the agent worked in,
-through that worker's `attention.resume` (see [Attention](#attention)).
+opens it in the checkout the agent worked in, through a worker's
+`attention.resume` (see [Attention](#attention)). When a heal ends with a
+session that needs you, the worker shares it with the server
+(`opencode session export`), so every worker with `attention.resume` gets a
+button too; one that doesn't have the session imports it first. A session
+that couldn't be shared only opens on the worker that ran it.
 
 The decision model and agents go in the worker's config file. The model is
 any TypeSafe System One API at `url`, such as Ollaya or Ollama on the worker,
@@ -566,7 +570,9 @@ a repository with no checkout there is cloned into the cache. `resume` lets
 the worker open an agent's OpenCode session from a heal's run page or a skill
 change: `command` runs in the directory the agent worked in, with
 `{session}`, `{directory}`, `{name}` (the directory's last folder) and
-`{title}` filled in:
+`{title}` filled in. A heal session another worker shared is imported first,
+into the same directory when it's on this worker too, or else into the
+checkout `launch.directory` finds:
 
 ```json
 {

@@ -649,6 +649,7 @@ test("a heal's record fills in as its worker reports", () =>
         commit: null,
         session: null,
         directory: null,
+        shared: false,
         issue: null,
       });
       expect(
@@ -666,6 +667,51 @@ test("a heal's record fills in as its worker reports", () =>
         ),
       ).toBe(0);
       expect(yield* store.healsSince("labels", { kind: "upkeep" }, 0)).toBe(0);
+    }),
+  ));
+
+test("a heal's shared session can be read back by its ID", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: {
+          of: "failed-run",
+          job: "bump",
+          target: { kind: "consumer", repo: "timmo001/a" },
+        },
+      });
+
+      const id = Option.getOrThrow(yield* store.claim(["heal"], "desktop")).id;
+
+      expect((yield* store.session("ses_a").pipe(Effect.flip))._tag).toBe(
+        "SessionNotFound",
+      );
+
+      yield* store.updateHeal(id, "desktop", { session: "ses_a" });
+      yield* store.shareSession(id, "desktop", {
+        repo: "timmo001/a",
+        export: '{"old":true}',
+      });
+      yield* store.shareSession(id, "desktop", {
+        repo: "timmo001/a",
+        export: '{"info":{}}',
+      });
+
+      expect((yield* store.run(id)).heal?.shared).toBe(true);
+      expect(yield* store.session("ses_a")).toEqual({
+        repo: "timmo001/a",
+        export: '{"info":{}}',
+      });
+      expect(
+        (yield* store
+          .shareSession(id, "laptop", { repo: "timmo001/a", export: "{}" })
+          .pipe(Effect.flip))._tag,
+      ).toBe("RunNotClaimed");
     }),
   ));
 

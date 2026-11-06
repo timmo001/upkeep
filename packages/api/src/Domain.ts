@@ -160,6 +160,13 @@ export const AgentSetup = Schema.Struct({
   launch: Schema.Boolean.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(false)),
   ),
+  /**
+   * Whether it can open an agent's session for you, with
+   * `attention.resume` in its settings. Older workers don't say.
+   */
+  resume: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
 });
 
 export interface AgentSetup extends Schema.Schema.Type<typeof AgentSetup> {}
@@ -203,6 +210,13 @@ export const Heal = Schema.Struct({
   session: Schema.NullOr(Schema.String),
   /** Where the agent worked, on the run's worker. */
   directory: Schema.NullOr(Schema.String),
+  /**
+   * Whether the worker shared the session with the server, so any worker
+   * can open it.
+   */
+  shared: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
   /** The failure's issue in triage, when the server reports to one. */
   issue: Schema.NullOr(Schema.String),
 });
@@ -497,7 +511,7 @@ export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read,
  * `start-agent` opens an agent on one worker, which only that one claims, and
- * `open-session` opens an agent's OpenCode session on the worker it ran on.
+ * `open-session` opens an agent's OpenCode session on the worker named.
  * The `skill-*` commands run as the `skill-change` job instead.
  */
 export const Command = Schema.Union([
@@ -520,8 +534,10 @@ export const Command = Schema.Union([
   }),
   /**
    * Open an agent's OpenCode session, such as a heal's or a skill change's,
-   * in the directory it worked in, on the worker it ran on, through that
-   * worker's `attention.resume`. `title` names what it worked on.
+   * on the worker named, through its `attention.resume`. `directory` is
+   * where the agent worked; on another worker, a session shared with the
+   * server is imported into that worker's checkout of its repository first.
+   * `title` names what it worked on.
    */
   Schema.Struct({
     kind: Schema.Literal("open-session"),

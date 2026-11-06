@@ -388,19 +388,36 @@ const handOff = Effect.fnUntraced(function* (
 
   yield* attention;
 
-  const handOffSetup = (yield* Settings.load()).heal?.handOff;
+  if (result.session === null || result.directory === null) return;
 
-  if (
-    handOffSetup !== undefined &&
-    result.session !== null &&
-    result.directory !== null
-  ) {
-    const { session, directory } = result;
+  const { session, directory } = result;
+  const settings = (yield* Settings.load()).heal ?? {};
 
-    const target =
-      healing.heal.target.kind === "upkeep"
-        ? "Upkeep"
-        : healing.heal.target.repo;
+  const repo =
+    healing.heal.target.kind === "consumer"
+      ? healing.heal.target.repo
+      : (settings.repo ?? "timmo001/upkeep");
+
+  // Another worker can only open the session from a copy on the server
+  yield* exec(
+    settings.opencode ?? "opencode2",
+    ["session", "export", session],
+    {
+      cwd: directory,
+      trusted: "",
+    },
+  ).pipe(
+    Effect.flatMap((exported) =>
+      reporter.shareSession({ repo, export: exported }),
+    ),
+    Effect.andThen(RunLog.info(`Shared session ${session} with the server`)),
+    Effect.catchCause((cause) =>
+      RunLog.warn(`Couldn't share the session: ${failureReason(cause)}`),
+    ),
+  );
+
+  if (settings.handOff !== undefined) {
+    const target = healing.heal.target.kind === "upkeep" ? "Upkeep" : repo;
 
     const fill = (arg: string) =>
       arg
@@ -409,7 +426,7 @@ const handOff = Effect.fnUntraced(function* (
         .replaceAll("{name}", directory.split("/").at(-1) ?? directory)
         .replaceAll("{title}", `${run.job} heal for ${target}`);
 
-    const [program = "", ...args] = handOffSetup.command.map(fill);
+    const [program = "", ...args] = settings.handOff.command.map(fill);
 
     yield* exec(program, args, { cwd: directory, trusted: "" }).pipe(
       Effect.andThen(RunLog.info(`Handed session ${session} off`)),

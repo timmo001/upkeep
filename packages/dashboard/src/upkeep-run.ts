@@ -24,6 +24,7 @@ import {
   view,
 } from "./ui.ts";
 import {
+  agents,
   cancelRun,
   dismissRun,
   jobHref,
@@ -49,7 +50,11 @@ const fact = (label: string, value: string | TemplateResult) =>
 const target = (heal: Domain.Heal) =>
   heal.target.kind === "upkeep" ? "Upkeep" : heal.target.repo;
 
-const healFacts = (heal: Domain.Heal, worker: string | null) => html`
+const healFacts = (
+  heal: Domain.Heal,
+  worker: string | null,
+  resumers: ReadonlyArray<string>,
+) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
   ${heal.decision === null ? null : fact("Decision", capitalise(heal.decision))}
@@ -94,12 +99,16 @@ const healFacts = (heal: Domain.Heal, worker: string | null) => html`
           "Session",
           worker === null || heal.directory === null
             ? html`<code>opencode2 --session ${heal.session}</code>`
-            : agentSession({
-                worker,
-                session: heal.session,
-                directory: heal.directory,
-                title: `${jobName(heal.job)} heal for ${target(heal)}`,
-              }),
+            : agentSession(
+                {
+                  worker,
+                  session: heal.session,
+                  directory: heal.directory,
+                  title: `${jobName(heal.job)} heal for ${target(heal)}`,
+                },
+                // A shared session opens on any worker that can open one
+                heal.shared ? resumers : [worker],
+              ),
         )
   }
 `;
@@ -190,6 +199,17 @@ export class UpkeepRun extends LitElement {
   readonly #jobs = new AtomController(this, () => jobs, always);
 
   readonly #runs = new AtomController(this, () => runs(""), always);
+
+  readonly #agents = new AtomController(this, () => agents, always);
+
+  /** The workers that can open an agent's session for you. */
+  #resumers() {
+    return AsyncResult.isSuccess(this.#agents.value)
+      ? this.#agents.value.value
+          .filter((each) => each.resume)
+          .map((each) => each.worker)
+      : [];
+  }
 
   /**
    * What a queued run waits behind: the runs going in its lane, and how many
@@ -308,7 +328,7 @@ export class UpkeepRun extends LitElement {
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
-          ${current.heal === null ? null : healFacts(current.heal, current.worker)}
+          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers())}
           ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${
