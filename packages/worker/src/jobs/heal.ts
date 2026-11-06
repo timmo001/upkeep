@@ -19,7 +19,6 @@ import {
 } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
-import { stripVTControlCharacters } from "node:util";
 import {
   Cause,
   Clock,
@@ -32,7 +31,6 @@ import {
 } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import { reason as failureReason } from "../Failure";
-import * as Inbox from "../Inbox";
 import * as RateLimits from "../RateLimits";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -276,78 +274,6 @@ const decideByAgent = Effect.fnUntraced(function* (
   } satisfies Chosen;
 });
 
-/** The longest stretch of log a message to a person quotes. */
-const maxQuote = 3000;
-
-/**
- * Tell a person about a heal through the Inbox, only once there's something
- * for them to do: what failed for this target, in its own log lines rather
- * than the run's summary of every failure, what Upkeep already tried, and the
- * step that's theirs.
- */
-const askPerson = (
-  healing: Healing,
-  tried: string,
-  todo: string,
-  said: string | null = null,
-) => {
-  const { heal: record, run, log } = healing;
-  const consumer = record.target.kind === "consumer";
-  const target = consumer ? record.target.repo : "Upkeep";
-  // One failed run gets a heal per repository, so the key needs the target
-  // too, or the Inbox turns every message after the first away as a replay.
-  const key = `upkeep-heal-${run.id}-${target}`;
-
-  // What the agent found says more than the raw log it started from.
-  if (said !== null)
-    return Inbox.send(
-      `Upkeep: ${target} needs you (${run.job})`,
-      [
-        ":::action",
-        todo,
-        "",
-        `${tried}.`,
-        ":::",
-        "",
-        `What the agent found (run ${run.id}):`,
-        "",
-        said.replace(/\n*Outcome:.*$/i, "").trim(),
-      ].join("\n"),
-      key,
-    );
-
-  const lines = relevant(record, log)
-    .filter(({ level }) => level !== "info" || consumer)
-    .map(({ level, message }) =>
-      stripVTControlCharacters(
-        `${level === "info" ? "" : `${level}: `}${message}`,
-      ),
-    );
-
-  const quote =
-    lines.length > 0
-      ? lines.join("\n").slice(-maxQuote)
-      : (run.error ?? "(no error)").split("\n")[0];
-
-  return Inbox.send(
-    `Upkeep: ${target} needs you (${run.job})`,
-    [
-      ":::action",
-      todo,
-      "",
-      `${tried}.`,
-      ":::",
-      "",
-      `${run.job} failed for ${target} (run ${run.id}):`,
-      "",
-      "```text",
-      quote,
-      "```",
-    ].join("\n"),
-    key,
-  );
-};
-
 /** How many times a heal starts its agent again after a temporary failure. */
 const startRetries = 3;
 
@@ -385,15 +311,14 @@ const startDelay = Effect.fnUntraced(function* (
 });
 
 /**
- * Hand a fix to an agent. A person hears about it only when the agent leaves
- * it unfixed, with the session to pick it up from. An agent that couldn't
+ * Hand a fix to an agent. One that leaves it unfixed marks the run as needing
+ * you, with the session in its heal's record. An agent that couldn't
  * start after a temporary failure, such as GitHub's rate limit, starts again
  * once it's passed; one that still can't is left for you.
  */
 const handOff = Effect.fnUntraced(function* (
   healing: Healing,
   agent: Settings.Agent,
-  why: string,
 ) {
   const reporter = yield* Reporter;
   const { run } = healing;
@@ -459,14 +384,6 @@ const handOff = Effect.fnUntraced(function* (
   );
 
   if (result.attention) yield* attention;
-
-  if (result.attention && result.session !== null)
-    yield* askPerson(
-      healing,
-      `${why}, so ${label(agent)} worked on it. ${result.action}`,
-      `Pick up where the agent stopped: \`opencode2 --session ${result.session}\`.`,
-      result.said,
-    );
 });
 
 /** Carry out a choice, adding what it did to the heal's record. */
@@ -503,14 +420,6 @@ const act = Effect.fnUntraced(function* (
       yield* reporter.report({ summary: `${action}: ${chosen.reason}` });
       yield* attention;
 
-      yield* askPerson(
-        healing,
-        `${action}: ${chosen.reason}`,
-        healing.heal.issue === null
-          ? `Fix what stops it, then run \`upkeep unpark ${run.job}\`.`
-          : `Fix what stops it, then resolve ${healing.heal.issue} in triage with a note on the fix, which unparks ${run.job}.`,
-      );
-
       return;
     }
 
@@ -526,7 +435,7 @@ const act = Effect.fnUntraced(function* (
         return;
       }
 
-      return yield* handOff(healing, chosen.agent.value, chosen.reason);
+      return yield* handOff(healing, chosen.agent.value);
     }
 
     case "ask": {
@@ -536,7 +445,7 @@ const act = Effect.fnUntraced(function* (
       const agent = agents.at(-1);
 
       if (chosen.decided && agent !== undefined)
-        return yield* handOff(healing, agent, chosen.reason);
+        return yield* handOff(healing, agent);
 
       const action = "Left for you";
 

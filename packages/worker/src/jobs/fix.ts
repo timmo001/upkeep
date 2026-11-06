@@ -149,7 +149,7 @@ export const fix = Effect.fnUntraced(function* (
   yield* RunLog.info(`Created OpenCode session ${session} in ${directory}`);
 
   // The agent runs in the background: nothing opens on the desktop, and one
-  // that needs a person is picked up from its session, which the Inbox names.
+  // that needs a person is picked up from its session, in the heal's record.
   const outcome = yield* run(
     opencode,
     [

@@ -167,7 +167,7 @@ the server every few seconds, so a click is picked up straight away.
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
 `~/.config/upkeep/worker.env`, along with a `PATH` that finds the tools the
-jobs use, such as `mise`, `opencode2` and `plannotator`, then run
+jobs use, such as `mise` and `opencode2`, then run
 `systemctl --user enable --now upkeep-worker.service`.
 
 A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
@@ -300,7 +300,7 @@ model chooses what to do:
   desktop. The agent gets `sessionMinutes` (30 by default) to finish; every
   commit it pushes to the default branch is recorded as the heal's changes,
   and what it said last as its summary. One that stopped, ran out of time or
-  asked for you is marked as needing you, and its Inbox message names the
+  asked for you is marked as needing you, and its heal's record keeps the
   session to pick it up from.
 - `park` parks the job, with the model's reason.
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
@@ -353,19 +353,6 @@ minute. Without triage, heals work the same with no memory.
 In the Home Assistant app, only the two tokens are needed when the triage
 app from the same repository is installed and running: the server asks the
 Supervisor for its address on startup and logs the one it uses.
-
-### Inbox
-
-A heal only messages the Plannotator Inbox, in the `Upkeep heals` thread,
-when there's something for a person to do: a job it parked, or a fix an
-agent left unfinished, with the session to pick it up from. The message is an
-action item that says what to do and what was tried, and quotes the log lines
-about that target, such as the one consumer's failed check out of a run over
-many. Everything else stays on the dashboard, with each heal's record on its
-run. `inbox` in the worker's `heal` settings sets the
-Plannotator command (`plannotator` by default, or `false` to send nothing),
-and `inboxProject` the folder whose Inbox project they go to, the home folder
-by default.
 
 ## Jobs
 
