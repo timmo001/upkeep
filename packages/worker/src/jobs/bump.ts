@@ -9,10 +9,13 @@
 import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
+  ByteSize,
+  Clock,
   Config,
   Data,
   Effect,
   FileSystem,
+  Option,
   Path,
   Schedule,
   Schema,
@@ -336,8 +339,70 @@ export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
 );
 
 /**
+ * Lock files an interrupted Git command leaves behind, which stop every
+ * command after it in that repository.
+ */
+const gitLocks = new Set([
+  "index.lock",
+  "HEAD.lock",
+  "config.lock",
+  "packed-refs.lock",
+  "shallow.lock",
+]);
+
+/** How old a lock is before it's taken as left by a command that died. */
+const staleLockMillis = 60 * 60 * 1000;
+
+/**
+ * Remove stale lock files from a checkout's Git directory and its submodules'
+ * under `modules/`, so a command interrupted once, such as by a restart,
+ * doesn't fail every run after it. Only empty ones over an hour old go: a
+ * live command holds one for seconds. Clearing never fails the checkout.
+ */
+const clearStaleLocks = Effect.fnUntraced(
+  function* (gitDir: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const now = yield* Clock.currentTimeMillis;
+    const pending = [gitDir];
+
+    for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
+      const names = yield* fs.readDirectory(dir);
+      // Between modules/ and a submodule's Git directory are the folders of
+      // its path, which hold nothing else
+      const isGitDir = names.includes("HEAD");
+
+      for (const name of names) {
+        const file = path.join(dir, name);
+
+        if (isGitDir && gitLocks.has(name)) {
+          const { mtime, size } = yield* fs.stat(file);
+          const changed = Option.getOrUndefined(mtime)?.getTime() ?? now;
+
+          if (
+            ByteSize.toBigInt(size) === 0n &&
+            now - changed > staleLockMillis
+          ) {
+            yield* fs.remove(file);
+            yield* RunLog.warn(`Removed a stale Git lock, ${file}`);
+          }
+        } else if (
+          (isGitDir && name === "modules") ||
+          (!isGitDir && (yield* fs.stat(file)).type === "Directory")
+        )
+          pending.push(file);
+      }
+    }
+  },
+  Effect.catchCause((cause) =>
+    RunLog.warn(`Couldn't clear stale Git locks: ${reason(cause)}`),
+  ),
+);
+
+/**
  * A clean checkout of the default branch, reusing the last one, with its
- * submodules when it has any.
+ * submodules when it has any. Stale Git locks in a reused one are cleared
+ * first.
  */
 export const checkout = Effect.fnUntraced(function* (
   repo: string,
@@ -350,6 +415,7 @@ export const checkout = Effect.fnUntraced(function* (
   const options = { cwd: directory, trusted };
 
   if (yield* fs.exists(directory)) {
+    yield* clearStaleLocks(path.join(directory, ".git"));
     yield* run("git", ["fetch", "--quiet", "origin", branch], options);
     yield* run(
       "git",
