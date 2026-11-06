@@ -44,6 +44,21 @@ test("a patch that only moves reviewed tags or pins needs no review", () => {
   ).toBe(true);
 });
 
+test("moving an import's pin in the generated marketplace too needs no review", () => {
+  const pins = [
+    patch("skills.yml", [
+      `-      upstreamSha: ${"a".repeat(40)}`,
+      `+      upstreamSha: ${"b".repeat(40)}`,
+    ]),
+    patch(".claude-plugin/marketplace.json", [
+      `-        "sha": "${"a".repeat(40)}"`,
+      `+        "sha": "${"b".repeat(40)}"`,
+    ]),
+  ].join("\n");
+
+  expect(isTagOnly(pins)).toBe(true);
+});
+
 test("a patch that touches anything else waits for you", () => {
   expect(
     isTagOnly(
@@ -59,6 +74,14 @@ test("a patch that touches anything else waits for you", () => {
         '-        reviewed: "v1.0.1"',
         '+        reviewed: "v1.1.0"',
         '+        notes: "something new"',
+      ]),
+    ),
+  ).toBe(false);
+  expect(
+    isTagOnly(
+      patch(".claude-plugin/marketplace.json", [
+        `-        "sha": "${"a".repeat(40)}"`,
+        `+        "sha": "${"b".repeat(40)}"`,
       ]),
     ),
   ).toBe(false);

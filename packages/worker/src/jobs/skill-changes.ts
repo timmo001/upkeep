@@ -63,19 +63,25 @@ const changedLines = (patch: string) => {
   return { files, lines };
 };
 
+/** Where pins live: `skills.yml`, and the marketplace generated from it. */
+const pinFiles = new Set(["skills.yml", ".claude-plugin/marketplace.json"]);
+
 /**
  * A change that only moves pins in `skills.yml`, the tags skills were
- * reviewed against or the upstream SHAs they import, which needs no review.
+ * reviewed against or the upstream SHAs they import, and the same SHAs in
+ * the generated marketplace, which needs no review.
  */
 export const isTagOnly = (patch: string) => {
   const { files, lines } = changedLines(patch);
 
   return (
-    files.size === 1 &&
     files.has("skills.yml") &&
+    [...files].every((file) => pinFiles.has(file)) &&
     lines.length > 0 &&
     lines.every((line) =>
-      /^[+-]\s+(?:reviewed: "[^"]+"|upstreamSha: [0-9a-f]{40})$/.test(line),
+      /^[+-]\s+(?:reviewed: "[^"]+"|upstreamSha: [0-9a-f]{40}|"sha": "[0-9a-f]{40}",?)$/.test(
+        line,
+      ),
     )
   );
 };
