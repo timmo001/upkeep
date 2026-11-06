@@ -1,7 +1,7 @@
 /**
  * The command job: do one thing the server asked for on demand, such as mark
- * a GitHub notification read from the Attention page, or start an agent on
- * an item there. Each run carries its
+ * a GitHub notification read from the Attention page, start an agent on
+ * an item there, or open an agent's session. Each run carries its
  * command; a run without one, such as from the run button, has nothing to do.
  */
 import { Api } from "@timmo001/effect-gh";
@@ -10,7 +10,7 @@ import { Effect } from "effect";
 import { summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { skipped } from "../Worker";
-import { launch } from "./launch";
+import { launch, resume } from "./launch";
 
 export const command = Effect.fnUntraced(function* (
   command: Domain.Command | null,
@@ -34,5 +34,8 @@ export const command = Effect.fnUntraced(function* (
 
     case "start-agent":
       return yield* launch(command);
+
+    case "open-session":
+      return yield* resume(command);
   }
 });

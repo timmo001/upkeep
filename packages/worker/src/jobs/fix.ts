@@ -111,6 +111,7 @@ export const fix = Effect.fnUntraced(function* (
   agent: Settings.Agent,
   record: (update: {
     readonly session?: string;
+    readonly directory?: string;
     readonly commit?: string;
   }) => Effect.Effect<void, unknown>,
 ) {
@@ -145,7 +146,7 @@ export const fix = Effect.fnUntraced(function* (
   const before = yield* tip(branch, options);
   const session = yield* createSession(opencode, agent, options);
 
-  yield* record({ session });
+  yield* record({ session, directory });
   yield* RunLog.info(`Created OpenCode session ${session} in ${directory}`);
 
   // The agent runs in the background: nothing opens on the desktop, and one

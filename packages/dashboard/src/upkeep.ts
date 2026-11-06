@@ -188,6 +188,24 @@ export const startAgent = UpkeepApi.runtime.fn(
     ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(runsKey))),
 );
 
+/**
+ * Open an agent's OpenCode session on the worker it ran on, in the directory
+ * it worked in.
+ */
+export const openSession = UpkeepApi.runtime.fn(
+  (payload: {
+    readonly worker: string;
+    readonly session: string;
+    readonly directory: string;
+    readonly title: string;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.attention.command({
+        payload: { kind: "open-session", ...payload },
+      }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(runsKey))),
+);
+
 /** Start a group of work with the items given in it. */
 export const createGroup = UpkeepApi.runtime.fn(
   (payload: { readonly name: string; readonly items: ReadonlyArray<string> }) =>

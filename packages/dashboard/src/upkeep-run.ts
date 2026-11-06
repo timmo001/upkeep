@@ -10,6 +10,7 @@ import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import {
   agentLabel,
+  agentSession,
   attentionBadge,
   capitalise,
   commit,
@@ -48,7 +49,7 @@ const fact = (label: string, value: string | TemplateResult) =>
 const target = (heal: Domain.Heal) =>
   heal.target.kind === "upkeep" ? "Upkeep" : heal.target.repo;
 
-const healFacts = (heal: Domain.Heal) => html`
+const healFacts = (heal: Domain.Heal, worker: string | null) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
   ${heal.decision === null ? null : fact("Decision", capitalise(heal.decision))}
@@ -84,6 +85,21 @@ const healFacts = (heal: Domain.Heal) => html`
           html`<ul>
             ${heal.actions.map((action) => html`<li>${action}</li>`)}
           </ul>`,
+        )
+  }
+  ${
+    heal.session === null
+      ? null
+      : fact(
+          "Session",
+          worker === null || heal.directory === null
+            ? html`<code>opencode2 --session ${heal.session}</code>`
+            : agentSession({
+                worker,
+                session: heal.session,
+                directory: heal.directory,
+                title: `${jobName(heal.job)} heal for ${target(heal)}`,
+              }),
         )
   }
 `;
@@ -292,7 +308,7 @@ export class UpkeepRun extends LitElement {
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
-          ${current.heal === null ? null : healFacts(current.heal)}
+          ${current.heal === null ? null : healFacts(current.heal, current.worker)}
           ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${

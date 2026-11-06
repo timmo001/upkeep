@@ -648,6 +648,7 @@ test("a heal's record fills in as its worker reports", () =>
         actions: ["Queued bump again", "Watched it pass"],
         commit: null,
         session: null,
+        directory: null,
         issue: null,
       });
       expect(

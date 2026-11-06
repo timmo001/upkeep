@@ -226,6 +226,7 @@ export const HealUpdate = Schema.Struct({
   action: Schema.optionalKey(Schema.String),
   commit: Schema.optionalKey(Schema.String),
   session: Schema.optionalKey(Schema.String),
+  directory: Schema.optionalKey(Schema.String),
 });
 
 export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}

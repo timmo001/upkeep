@@ -19,7 +19,15 @@ import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
-import { capitalise, empty, externalLink, shared, time, view } from "./ui.ts";
+import {
+  agentSession,
+  capitalise,
+  empty,
+  externalLink,
+  shared,
+  time,
+  view,
+} from "./ui.ts";
 import {
   approveSkillChange,
   dropSkillChange,
@@ -246,6 +254,19 @@ ${patch.split("\n").map((line) => {
         ${change.subject === null ? nothing : fact("Commit", change.subject)}
         ${change.summary === null ? nothing : fact("Agent said", change.summary)}
         ${change.note === null ? nothing : fact("Note", change.note)}
+        ${
+          change.session === null
+            ? nothing
+            : fact(
+                "Session",
+                agentSession({
+                  worker: change.worker,
+                  session: change.session,
+                  directory: change.directory,
+                  title: change.title,
+                }),
+              )
+        }
         ${fact(
           "Worker",
           html`${change.worker}

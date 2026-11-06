@@ -517,3 +517,40 @@ export const launch = Effect.fnUntraced(function* (
   yield* run(program, args, { cwd: directory, trusted: "" });
   yield* summary(`Started an agent on ${title} in ${repo}`);
 });
+
+/**
+ * Open an agent's OpenCode session in the directory it worked in, through
+ * the worker's `attention.resume`, such as in a terminal pane.
+ */
+export const resume = Effect.fnUntraced(function* (
+  command: Extract<Domain.Command, { readonly kind: "open-session" }>,
+) {
+  const setup = (yield* Settings.load()).attention?.resume;
+
+  if (setup === undefined)
+    return yield* new LaunchFailed({
+      message: "This worker has no attention.resume in its settings",
+    });
+
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { session, directory, title } = command;
+
+  if (!(yield* fs.exists(directory)))
+    return yield* new LaunchFailed({
+      message: `${directory} is no longer on this worker`,
+    });
+
+  const fill = (arg: string) =>
+    arg
+      .replaceAll("{session}", session)
+      .replaceAll("{directory}", directory)
+      .replaceAll("{name}", path.basename(directory))
+      .replaceAll("{title}", title);
+
+  const [program = "", ...args] = setup.command.map(fill);
+
+  yield* RunLog.info(`Opening session ${session} in ${directory}`);
+  yield* run(program, args, { cwd: directory, trusted: "" });
+  yield* summary(`Opened session ${session} for ${title}`);
+});

@@ -201,6 +201,8 @@ export const Heal = Schema.Struct({
   actions: Schema.Array(Schema.String),
   commit: Schema.NullOr(Schema.String),
   session: Schema.NullOr(Schema.String),
+  /** Where the agent worked, on the run's worker. */
+  directory: Schema.NullOr(Schema.String),
   /** The failure's issue in triage, when the server reports to one. */
   issue: Schema.NullOr(Schema.String),
 });
@@ -493,8 +495,9 @@ export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
 
 /**
  * Something the server asks a worker to do once, on demand, as a run of the
- * `command` job: `mark-read` marks a GitHub notification thread read, and
- * `start-agent` opens an agent on one worker, which only that one claims.
+ * `command` job: `mark-read` marks a GitHub notification thread read,
+ * `start-agent` opens an agent on one worker, which only that one claims, and
+ * `open-session` opens an agent's OpenCode session on the worker it ran on.
  * The `skill-*` commands run as the `skill-change` job instead.
  */
 export const Command = Schema.Union([
@@ -514,6 +517,18 @@ export const Command = Schema.Union([
     group: Schema.NullOr(Schema.String),
     repo: Schema.optionalKey(RepoName),
     prompt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4000))),
+  }),
+  /**
+   * Open an agent's OpenCode session, such as a heal's or a skill change's,
+   * in the directory it worked in, on the worker it ran on, through that
+   * worker's `attention.resume`. `title` names what it worked on.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("open-session"),
+    worker: Schema.String,
+    session: Schema.String,
+    directory: Schema.String,
+    title: Schema.String,
   }),
   /**
    * Have an agent work on a skill in its own checkout and hold what it

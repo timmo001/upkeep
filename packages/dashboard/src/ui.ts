@@ -5,8 +5,11 @@
 import {
   mdiAlertCircleOutline,
   mdiCancel,
+  mdiCheck,
   mdiCheckCircleOutline,
   mdiCloseCircleOutline,
+  mdiConsole,
+  mdiContentCopy,
   mdiLogout,
   mdiMinusCircleOutline,
   mdiOpenInNew,
@@ -18,7 +21,7 @@ import { type Cause, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
-import { token } from "./upkeep.ts";
+import { openSession, token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-badge.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
@@ -113,6 +116,18 @@ export const shared = css`
 
   .parked {
     color: var(--gw-color-warning);
+  }
+
+  .session {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--gw-space-2);
+  }
+
+  .session code {
+    user-select: all;
+    overflow-wrap: anywhere;
   }
 `;
 
@@ -309,3 +324,44 @@ export const attentionBadge = html`<gw-badge
   tone="warning"
   >needs you</gw-badge
 >`;
+
+/**
+ * An agent's OpenCode session: the command that resumes it, with a button to
+ * copy it, and one that opens it in Herdr on the worker it ran on.
+ */
+export const agentSession = (open: {
+  readonly worker: string;
+  readonly session: string;
+  readonly directory: string;
+  readonly title: string;
+}) => {
+  const resume = `opencode2 --session ${open.session}`;
+
+  return html`<span class="session">
+    <code>${resume}</code>
+    <gw-button
+      size="xs"
+      appearance="plain"
+      variant="neutral"
+      labels="hide"
+      icon=${mdiContentCopy}
+      @click=${(event: Event) => {
+        const button = event.currentTarget;
+
+        void navigator.clipboard.writeText(resume).then(() => {
+          if (button instanceof HTMLElement)
+            button.setAttribute("icon", mdiCheck);
+        });
+      }}
+      >Copy</gw-button
+    >
+    <gw-button
+      size="xs"
+      appearance="outlined"
+      variant="neutral"
+      icon=${mdiConsole}
+      @click=${() => registry.set(openSession, open)}
+      >Resume in Herdr on ${open.worker}</gw-button
+    >
+  </span>`;
+};

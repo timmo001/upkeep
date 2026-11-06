@@ -306,6 +306,11 @@ model chooses what to do:
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
   works on it as for `fix`.
 
+A heal's run page shows its session as the `opencode2 --session` command
+that resumes it, with a button to copy it and **Resume in Herdr**, which
+opens it on the worker that ran it, in the checkout the agent worked in,
+through that worker's `attention.resume` (see [Attention](#attention)).
+
 The decision model and agents go in the worker's config file. The model is
 any TypeSafe System One API at `url`, such as Ollaya or Ollama on the worker,
 with `UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers
@@ -396,7 +401,10 @@ job's runs.
 
 A package is only bumped once its version is on npm, waiting up to 20
 minutes for the publish. Clones are kept in `upkeep/bump` in the XDG cache
-directory and reused.
+directory and reused. Before a clone is reused, as by every job that keeps
+clones, empty Git lock files over an hour old are removed from it and its
+submodules, so a Git command cut off once, such as by a restart, doesn't fail
+every run after it.
 
 Set `UPKEEP_BUMP_DRY_RUN=true` to stop before each commit and log what would
 be pushed.
@@ -538,7 +546,11 @@ on, best a quick one, or the first of `heal.agents` without it. `launch`
 lets the worker start agents: `command` runs in the checkout with `{brief}`
 (the brief's file), `{directory}`, `{repo}`, `{name}` and `{title}` filled
 in, and `directory` is where your checkouts are, with `{owner}` and `{name}`;
-a repository with no checkout there is cloned into the cache:
+a repository with no checkout there is cloned into the cache. `resume` lets
+the worker open an agent's OpenCode session from a heal's run page or a skill
+change: `command` runs in the directory the agent worked in, with
+`{session}`, `{directory}`, `{name}` (the directory's last folder) and
+`{title}` filled in:
 
 ```json
 {
@@ -553,6 +565,9 @@ a repository with no checkout there is cloned into the cache:
     "launch": {
       "command": ["open-agent", "--prompt-file", "{brief}", "{directory}"],
       "directory": "~/repos/{name}"
+    },
+    "resume": {
+      "command": ["open-pane", "{directory}", "opencode2 --session {session}"]
     }
   }
 }
@@ -713,7 +728,8 @@ The dashboard's Skills page shows the held changes with their diffs. Approve
 lands one, Request changes resumes its agent with your comment (Resume) or
 starts again on any worker (Start again), Drop leaves it, and Open in Herdr
 opens an agent in its checkout through the worker's `attention.launch`, when
-that worker is up and has one. Below them is every skill: where it comes from,
+that worker is up and has one. A change made by an agent shows its session
+too, to copy or Resume in Herdr as a heal's is. Below them is every skill: where it comes from,
 how it stands against its upstream and the tools it covers, which
 repositories keep a copy and its last commits, with Ask for a change to start
 an agent on it. `skill-updates` sends what it read of the shared repository

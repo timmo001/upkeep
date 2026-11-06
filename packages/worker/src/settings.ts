@@ -101,6 +101,17 @@ const Attention = Schema.Struct({
       directory: Schema.optionalKey(Schema.String),
     }),
   ),
+  /**
+   * How this worker opens an agent's OpenCode session for you, from a heal's
+   * run or a skill change. `command` runs in the directory the agent worked
+   * in, with `{session}`, `{directory}`, `{name}` (the directory's last
+   * folder) and `{title}` replaced.
+   */
+  resume: Schema.optionalKey(
+    Schema.Struct({
+      command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    }),
+  ),
 });
 
 export type Attention = typeof Attention.Type;

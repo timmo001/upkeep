@@ -537,6 +537,12 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // Where a heal's agent worked on the worker, to open its session there
+  "0026_heal_directory": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN heal_directory TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -565,6 +571,7 @@ const RunRow = Schema.Struct({
   ),
   healCommit: Schema.NullOr(Schema.String),
   healSession: Schema.NullOr(Schema.String),
+  healDirectory: Schema.NullOr(Schema.String),
   healIssue: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   changes: Schema.fromJsonString(Schema.Array(Domain.Change)),
@@ -602,6 +609,7 @@ const toRun = ({
   healActions,
   healCommit,
   healSession,
+  healDirectory,
   healIssue,
   attention,
   ...row
@@ -627,6 +635,7 @@ const toRun = ({
           actions: healActions ?? [],
           commit: healCommit,
           session: healSession,
+          directory: healDirectory,
           issue: healIssue,
         },
 });
@@ -1495,6 +1504,7 @@ export class Store extends Context.Service<
             healActions: JSON.stringify(actions),
             healCommit: update.commit ?? current.heal.commit,
             healSession: update.session ?? current.heal.session,
+            healDirectory: update.directory ?? current.heal.directory,
           })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));
