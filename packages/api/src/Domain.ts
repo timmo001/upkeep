@@ -734,9 +734,9 @@ export const SignalKind = Schema.Literals([
   "upkeep",
   "approved",
   /**
-   * Your pull request can go in: its checks pass, or it has none, with no
-   * conflicts, no changes asked for, and no review waiting on anyone else
-   * unless it's approved.
+   * Your pull request can go in and you can merge it: its checks pass, or it
+   * has none, with no conflicts, no changes asked for, no required review
+   * still to come, and no review waiting on anyone else unless it's approved.
    */
   "ready",
   "draft",

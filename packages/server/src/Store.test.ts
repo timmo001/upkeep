@@ -77,7 +77,7 @@ test("status labels move your own items between sections, and fill in quietly", 
     }),
   ));
 
-test("your own pull request that's ready or approved needs you to merge it", () =>
+test("your own pull request that's ready to merge needs you to merge it", () =>
   run(
     Effect.gen(function* () {
       const store = yield* Store;
@@ -86,11 +86,13 @@ test("your own pull request that's ready or approved needs you to merge it", () 
       yield* store.recordAttention(
         snapshot([
           found(1, [signal("ready"), signal("unread")]),
-          found(2, [signal("approved")]),
+          found(2, [signal("approved"), signal("ready")]),
           // Failing checks block it whatever the review says
           found(3, [signal("approved"), signal("failing-checks")]),
           // Waiting on someone else's review
           found(4),
+          // Approved, but a maintainer has to merge it
+          found(5, [signal("approved")]),
         ]),
       );
 
@@ -102,6 +104,7 @@ test("your own pull request that's ready or approved needs you to merge it", () 
           [2, "needs-you"],
           [3, "blocked"],
           [4, "stale"],
+          [5, "stale"],
         ]),
       );
     }),

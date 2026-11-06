@@ -44,7 +44,10 @@ const Common = {
   createdAt: Schema.String,
   updatedAt: Schema.String,
   author: Author,
-  repository: Schema.Struct({ nameWithOwner: Schema.String }),
+  repository: Schema.Struct({
+    nameWithOwner: Schema.String,
+    viewerPermission: Schema.NullOr(Schema.String),
+  }),
   comments: Schema.Struct({ nodes: Schema.Array(Schema.NullOr(Event)) }),
   participants: Schema.Struct({
     nodes: Schema.Array(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
@@ -137,7 +140,7 @@ export type Issue = typeof Issue.Type;
 const common = `
   url number title createdAt updatedAt
   author { __typename login }
-  repository { nameWithOwner }
+  repository { nameWithOwner viewerPermission }
   comments(last: 1) { nodes { author { __typename login } createdAt } }
   participants(first: 10) { nodes { login } }
   labels(first: 20) { nodes { name } }
@@ -345,16 +348,24 @@ export const read = (
       else base = { head: node.headRefOid, branch: node.baseRefName };
 
       // In your own repositories nobody else reviews, so a green pull
-      // request with no review asked of anyone waits only on you to merge it
+      // request with no review asked of anyone waits only on you to merge it.
+      // Elsewhere a required review still to come, or no right to merge,
+      // leaves it waiting on a maintainer instead.
       const reviewWaiting = node.reviewRequests.nodes.some(
         (request) => request !== null,
       );
 
+      const canMerge = ["ADMIN", "MAINTAIN", "WRITE"].includes(
+        node.repository.viewerPermission ?? "",
+      );
+
       if (
         !node.isDraft &&
+        canMerge &&
         node.mergeable !== "CONFLICTING" &&
         (checks === undefined || checks === "SUCCESS") &&
         node.reviewDecision !== "CHANGES_REQUESTED" &&
+        node.reviewDecision !== "REVIEW_REQUIRED" &&
         (node.reviewDecision === "APPROVED" || !reviewWaiting)
       )
         signal("ready");
