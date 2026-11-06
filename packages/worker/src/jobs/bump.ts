@@ -444,6 +444,15 @@ export const install = Effect.fnUntraced(function* (
   return [...done];
 });
 
+/** The repository's own mise tasks, leaving out global ones. */
+const miseTasks = (options: {
+  readonly cwd: string;
+  readonly trusted: string;
+}) =>
+  run("mise", ["tasks", "ls", "--no-global", "--name-only"], options).pipe(
+    Effect.map((output) => output.split("\n").map((line) => line.trim())),
+  );
+
 /**
  * The checks before a push: the commands set for the repository, or else
  * its mise `check` and `build` tasks where it has them. Returns what ran.
@@ -465,13 +474,7 @@ export const check = Effect.fnUntraced(function* (
 
   if (!options.mise) return [];
 
-  const tasks = (yield* run(
-    "mise",
-    ["tasks", "ls", "--no-global", "--name-only"],
-    options,
-  ))
-    .split("\n")
-    .map((line) => line.trim());
+  const tasks = yield* miseTasks(options);
 
   const ran: Array<string> = [];
 
@@ -531,6 +534,12 @@ export const watch = Effect.fnUntraced(function* (repo: string, sha: string) {
  * Commit what's staged and push it to the default branch. When the branch
  * moved while the job ran, the commit is replayed on it once. Returns the
  * pushed commit.
+ *
+ * A fresh clone has none of the repository's git hooks, so anything one does
+ * after a commit, such as refreshing a pinned hash and committing it, would
+ * never happen. When the repository has a mise `install:hooks` task, it runs
+ * first, so the commit runs the hooks as it would on a person's checkout and
+ * the push takes any commit they add.
  */
 export const commitAndPush = Effect.fnUntraced(function* (
   message: string,
@@ -542,6 +551,12 @@ export const commitAndPush = Effect.fnUntraced(function* (
     ["push", "--quiet", "origin", `HEAD:${branch}`],
     options,
   );
+
+  if (
+    (yield* usesMise(options.cwd)) &&
+    (yield* miseTasks(options)).includes("install:hooks")
+  )
+    yield* run("mise", ["run", "install:hooks"], options);
 
   yield* run("git", ["commit", "--quiet", "-m", message], options);
 
