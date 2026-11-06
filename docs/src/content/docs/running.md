@@ -157,10 +157,12 @@ puts its run back at the front of the queue. That happens once per run: the
 second time, the run fails as lost, so a run that brings its worker down can't
 loop. A worker reads GitHub through `gh`, logged in as whoever runs it.
 
-A worker runs jobs in three lanes at once, one run per lane, so a long job
+A worker runs jobs in four lanes at once, one run per lane, so a long job
 doesn't hold up the others: heals in one, the quick API-only jobs
-(`releases`, `watch`, `labels` and `notifications`) in another, and the jobs
-that clone and push to repositories in the third, where they take turns.
+(`releases`, `watch`, `labels` and `notifications`) in another, the jobs that
+clone and push to repositories in a third, where they take turns, and what the
+dashboard asks for, such as starting an agent, in the last. That lane asks
+the server every few seconds, so a click is picked up straight away.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
@@ -519,15 +521,19 @@ the agent something, which queues a run; its answer shows under your comment,
 and a standing instruction becomes one of the **Agent rules**, which every
 run follows.
 
-**Start agent** on an item or a group opens an agent on it, on a worker you
-pick from those that can, the one used last first, with an optional prompt.
-The worker writes a brief of where it stands: its signals and description,
-unresolved review threads with their file and line, failing checks with the
-end of their logs, the issues it closes, the rest of its group, the context
-agent's notes, outside waits and your comments. It then runs its
-`attention.launch` command in the checkout, which opens the agent with the
-brief. Each group card also folds down to its heading, remembered in that
-browser.
+**Start agent** on an item or a group opens an agent on it, with an optional
+prompt, in a repository you pick: the ones its items are on are suggested
+first, Upkeep is always there to move or sort issues from, and every other
+tracked repository follows. It starts on the worker used last in that
+browser, with the others that can offered in the menu. The worker writes a
+brief of where it stands: its signals and description, unresolved review
+threads with their file and line, failing checks with the end of their logs,
+the issues it closes, the rest of its group, the context agent's notes,
+outside waits and your comments. It then runs its `attention.launch` command
+in the repository's checkout, which opens the agent with the brief. Until it
+has, the item shows how it's going: waiting for the worker, starting, then
+started or why it couldn't, with a link to the run. Each group card also
+folds down to its heading, remembered in that browser.
 
 The `attention` section of the worker's config file sets the rest. `searches`
 are extra GitHub searches, with `{since}` replaced by the date `staleDays`

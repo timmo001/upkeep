@@ -10,6 +10,7 @@
  * notes the visit and queues a collection when the last one is old.
  */
 import {
+  mdiAlertCircleOutline,
   mdiBellOutline,
   mdiCheck,
   mdiCheckCircleOutline,
@@ -31,6 +32,7 @@ import {
   mdiRobotOutline,
   mdiRocketLaunchOutline,
   mdiSourcePull,
+  mdiSwapHorizontal,
   mdiTagOutline,
 } from "@mdi/js";
 import { Domain } from "@upkeep/api";
@@ -59,11 +61,15 @@ import {
   markNotificationRead,
   openAttention,
   removeRule,
-  startAgent,
   removeWait,
+  repos,
+  runHref,
+  runs,
+  startAgent,
   updateGroup,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
+import "@timmo001/groundwork-ui/gw-spinner.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/gw-menu-button.ts";
@@ -287,6 +293,24 @@ const statusTones: Record<Domain.StatusLabel, string> = {
 /** How many links to what moved the Since you last looked line shows. */
 const maxSummaryLinks = 5;
 
+/** What an agent starts on: an item, by its URL, or a group. */
+type About = { readonly url: string } | { readonly group: string };
+
+const key = (about: About) =>
+  "url" in about ? `url:${about.url}` : `group:${about.group}`;
+
+/**
+ * Upkeep's own repository, always offered as a place to start an agent, so
+ * it can move or sort issues with Upkeep's tools at hand.
+ */
+const upkeepRepo = "timmo001/upkeep";
+
+/** How long a finished agent start shows on its item. */
+const startShownFor = 10 * 60_000;
+
+/** How long a start waits for the server's answer before it's let go. */
+const pendingFor = 30_000;
+
 export class UpkeepAttention extends LitElement {
   static override styles = [
     shared,
@@ -410,6 +434,10 @@ export class UpkeepAttention extends LitElement {
         color: var(--gw-color-text-secondary);
       }
 
+      .context.failed > .icon {
+        color: var(--gw-color-danger);
+      }
+
       .pending {
         color: var(--gw-color-text-secondary);
       }
@@ -510,63 +538,282 @@ export class UpkeepAttention extends LitElement {
   /** Workers that can open an agent, and the one used last here. */
   readonly #agents = new AtomController(this, () => agents, always);
 
+  /** The tracked repositories, offered as places to start an agent. */
+  readonly #repos = new AtomController(this, () => repos);
+
   /**
-   * Start an agent on an item or a group: a menu of the workers that can,
-   * the one used last first, then a prompt for what to ask it, which can be
-   * left empty for a look at where it stands.
+   * The latest command runs, for how each agent start is going. They're
+   * polled while one is on its way, and left alone otherwise.
    */
-  #startMenu(about: { readonly url: string } | { readonly group: string }) {
+  readonly #commands = new AtomController(
+    this,
+    () => runs("command"),
+    (result) =>
+      this.#starting.size > 0 ||
+      (AsyncResult.isSuccess(result) &&
+        result.value.some(
+          (each) =>
+            each.command?.kind === "start-agent" &&
+            (each.state === "queued" || each.state === "running"),
+        )),
+  );
+
+  /**
+   * Starts asked for here that the server hasn't answered yet, by what
+   * they're on, with the latest run on it then and when, so the click shows
+   * at once.
+   */
+  readonly #starting = new Map<
+    string,
+    { readonly before: string | null; readonly at: number }
+  >();
+
+  /** The agent starts on an item or a group, newest first. */
+  #startsOn(about: About) {
+    const result = this.#commands.value;
+
+    if (!AsyncResult.isSuccess(result)) return [];
+
+    return result.value.filter((each) => {
+      const command = each.command;
+
+      if (command?.kind !== "start-agent") return false;
+
+      return "url" in about
+        ? command.url === about.url && command.group === null
+        : command.group === about.group;
+    });
+  }
+
+  /**
+   * Where an agent can start, for an item or a group: the repositories it's
+   * on first, as suggested, then Upkeep, to move or sort issues from, then
+   * every other tracked repository.
+   */
+  #places(about: About) {
+    const page = this.#attention.value;
+    const items = AsyncResult.isSuccess(page) ? page.value.items : [];
+
+    const urls =
+      "url" in about
+        ? [about.url]
+        : (this.#groups
+            .find((group) => group.id === about.group)
+            ?.items.flatMap((link) => (link.suggested ? [] : [link.url])) ??
+          []);
+
+    const suggested = [
+      ...new Set(
+        items.flatMap((item) => (urls.includes(item.url) ? [item.repo] : [])),
+      ),
+    ];
+
+    const tracked = AsyncResult.isSuccess(this.#repos.value)
+      ? this.#repos.value.value
+      : [];
+
+    const nameOf = (repo: string) => {
+      const found = tracked.find(
+        (each) => each.repo.toLowerCase() === repo.toLowerCase(),
+      );
+
+      return found?.name ?? found?.title ?? repo;
+    };
+
+    const taken = new Set(suggested.map((repo) => repo.toLowerCase()));
+
+    const upkeep = taken.has(upkeepRepo.toLowerCase()) ? [] : [upkeepRepo];
+
+    const others = tracked
+      .map((each) => each.repo)
+      .filter(
+        (repo) =>
+          !taken.has(repo.toLowerCase()) &&
+          repo.toLowerCase() !== upkeepRepo.toLowerCase(),
+      )
+      .toSorted((a, b) => nameOf(a).localeCompare(nameOf(b)));
+
+    const place = (repo: string, group: string, description?: string) => ({
+      value: repo,
+      label: nameOf(repo),
+      description: description ?? (nameOf(repo) === repo ? undefined : repo),
+      group,
+    });
+
+    return [
+      ...suggested.map((repo) => place(repo, "Suggested")),
+      ...upkeep.map((repo) =>
+        place(repo, "Upkeep", "Move or sort the issues from here"),
+      ),
+      ...others.map((repo) => place(repo, "Tracked repositories")),
+    ];
+  }
+
+  /**
+   * Start an agent on an item or a group: a menu of where to start it, the
+   * item's own repository suggested first, then a prompt for what to ask it,
+   * which can be left empty for a look at where it stands. It starts on the
+   * worker used last here, with the others offered under the places.
+   */
+  #startMenu(about: About) {
     const result = this.#agents.value;
 
     const workers = AsyncResult.isSuccess(result)
-      ? result.value.filter((worker) => worker.launch)
+      ? result.value
+          .filter((each) => each.launch)
+          .map((each) => each.worker)
+          .toSorted((a, b) => a.localeCompare(b))
       : [];
 
-    if (workers.length === 0) return nothing;
+    const stored = localStorage.getItem(lastWorkerKey);
+    const worker = workers.find((each) => each === stored) ?? workers[0];
 
-    const last = localStorage.getItem(lastWorkerKey);
+    if (worker === undefined) return nothing;
 
-    const start = (event: Event, worker: string) => {
-      localStorage.setItem(lastWorkerKey, worker);
+    const [latest] = this.#startsOn(about);
+
+    const busy =
+      this.#starting.has(key(about)) ||
+      latest?.state === "queued" ||
+      latest?.state === "running";
+
+    const start = (event: Event, repo: string, label: string) => {
       this.#ask(
         event,
-        `Start an agent on ${worker}`,
+        `Start an agent in ${label}`,
         "What to ask it, or leave empty for where it stands",
         "",
-        (text) =>
+        (text) => {
+          this.#starting.set(key(about), {
+            before: latest?.id ?? null,
+            at: Date.now(),
+          });
           registry.set(startAgent, {
             worker,
             url: "url" in about ? about.url : null,
             group: "group" in about ? about.group : null,
+            repo,
             prompt: text === "" ? null : text,
-          }),
+          });
+          this.requestUpdate();
+        },
       );
       this.#optional = true;
     };
+
+    const places = this.#places(about);
 
     return html`<gw-menu-button
       size="xs"
       appearance="plain"
       icon=${mdiRocketLaunchOutline}
       label="Start agent"
-      heading="On which worker"
-      .items=${workers
-        .toSorted(
-          (a, b) =>
-            Number(b.worker === last) - Number(a.worker === last) ||
-            a.worker.localeCompare(b.worker),
-        )
-        .map((worker) => ({
-          value: worker.worker,
-          label: worker.worker,
-          checked: worker.worker === last,
+      heading=${workers.length > 1 ? `Start in, on ${worker}` : "Start in"}
+      ?loading=${busy}
+      .items=${places}
+      .actions=${workers
+        .filter((each) => each !== worker)
+        .map((each) => ({
+          value: `worker:${each}`,
+          label: `Use ${each} instead`,
+          icon: mdiSwapHorizontal,
         }))}
       @select=${(event: Event) => {
         const value = chosen(event);
 
-        if (value !== "") start(event, value);
+        if (value.startsWith("worker:")) {
+          localStorage.setItem(lastWorkerKey, value.slice("worker:".length));
+          this.requestUpdate();
+
+          return;
+        }
+
+        const place = places.find((each) => each.value === value);
+
+        if (place !== undefined) start(event, place.value, place.label);
       }}
     ></gw-menu-button>`;
+  }
+
+  /**
+   * How the latest agent start on an item or a group is going: on its way
+   * to a worker, waiting for one, starting, started or failed, with its run.
+   * A finished one shows for a few minutes.
+   */
+  #startStatus(about: About) {
+    const [latest] = this.#startsOn(about);
+    const pending = this.#starting.get(key(about));
+
+    // The server has answered once a newer run than the one before shows; a
+    // request that never got there stops waiting after a while
+    if (
+      pending !== undefined &&
+      ((latest !== undefined && latest.id !== pending.before) ||
+        Date.now() - pending.at > pendingFor)
+    ) {
+      this.#starting.delete(key(about));
+    }
+
+    if (this.#starting.has(key(about))) {
+      return html`<p class="context">
+        <gw-spinner size="small" label="Starting"></gw-spinner>
+        <span>Asking for an agent…</span>
+      </p>`;
+    }
+
+    if (latest === undefined) return nothing;
+
+    const command = latest.command;
+
+    const where =
+      command?.kind === "start-agent" && command.repo !== undefined
+        ? ` in ${command.repo}`
+        : "";
+
+    const on =
+      latest.worker ?? (command?.kind === "start-agent" ? command.worker : "");
+
+    const link = html`<a href=${runHref(latest.id)}>Run</a>`;
+
+    if (latest.state === "queued") {
+      return html`<p class="context">
+        <gw-spinner size="small" label="Waiting"></gw-spinner>
+        <span>Waiting for ${on} to pick up the agent${where}. ${link}</span>
+      </p>`;
+    }
+
+    if (latest.state === "running") {
+      return html`<p class="context">
+        <gw-spinner size="small" label="Starting"></gw-spinner>
+        <span
+          >${on} is gathering the brief and opening the agent${where}.
+          ${link}</span
+        >
+      </p>`;
+    }
+
+    if (
+      latest.finishedAt === null ||
+      Date.now() - latest.finishedAt > startShownFor
+    ) {
+      return nothing;
+    }
+
+    return latest.state === "succeeded"
+      ? html`<p class="context">
+          ${icon(mdiCheckCircleOutline)}
+          <span
+            >Agent started${where} on ${on} ${time(latest.finishedAt)}.
+            ${link}</span
+          >
+        </p>`
+      : html`<p class="context failed">
+          ${icon(mdiAlertCircleOutline)}
+          <span
+            >Couldn't start the agent${where}: ${latest.error ?? latest.state}.
+            ${link}</span
+          >
+        </p>`;
   }
 
   /** The popover the prompts share, kept outside the page header. */
@@ -746,6 +993,7 @@ export class UpkeepAttention extends LitElement {
     const { group } = block;
 
     return html`<gw-stack gap="s">
+      ${this.#startStatus({ group: group.id })}
       ${
         group.followUp === null
           ? nothing
@@ -889,7 +1137,7 @@ export class UpkeepAttention extends LitElement {
   }
 
   /** A button asking for a comment for the agent, about an item or a group. */
-  #commentButton(about: { readonly url: string } | { readonly group: string }) {
+  #commentButton(about: About) {
     return html`<gw-button
       size="xs"
       appearance="plain"
@@ -1010,7 +1258,7 @@ export class UpkeepAttention extends LitElement {
           ${moved ? html`<gw-chip size="xs" tone="accent">Moved</gw-chip>` : nothing}
           ${this.#signals(item)}
         </div>
-        ${this.#context(item)}
+        ${this.#context(item)} ${this.#startStatus({ url: item.url })}
         <div class="actions">
           ${
             item.notification?.unread === true

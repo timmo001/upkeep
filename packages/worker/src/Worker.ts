@@ -59,6 +59,11 @@ export type Handlers = Readonly<Record<Domain.JobId, Handler>>;
 export interface WorkOptions {
   /** How long to wait before asking again when there's nothing to run. */
   readonly pollInterval?: Duration.Input;
+  /**
+   * The same for the command lane, shorter so what the dashboard asks for,
+   * such as starting an agent, is picked up in seconds.
+   */
+  readonly commandPollInterval?: Duration.Input;
   /** How often to tell the server a run is still going. */
   readonly heartbeatInterval?: Duration.Input;
 }
@@ -226,6 +231,7 @@ export const work = Effect.fn("Worker.work")(function* (
   const client = yield* Client;
   const jobs = Record.keys(handlers);
   const pollInterval = options.pollInterval ?? "30 seconds";
+  const commandPollInterval = options.commandPollInterval ?? "3 seconds";
   const heartbeatInterval = options.heartbeatInterval ?? "1 minute";
 
   const status = yield* Status.make;
@@ -279,9 +285,14 @@ export const work = Effect.fn("Worker.work")(function* (
     ),
   );
 
-  const lane = (laneJobs: ReadonlyArray<string>) => {
+  // The command lane asks every few seconds, so it leaves reporting the
+  // agents and what needs attention to the others
+  const lane = (name: Domain.Lane, laneJobs: ReadonlyArray<string>) => {
+    const command = name === "command";
+    const wait = command ? commandPollInterval : pollInterval;
+
     const next = holdOff.pipe(
-      Effect.andThen(agents),
+      Effect.andThen(command ? Effect.succeed({}) : agents),
       Effect.flatMap((setup) =>
         client.work.claim({ payload: { jobs: laneJobs, ...setup } }),
       ),
@@ -289,7 +300,9 @@ export const work = Effect.fn("Worker.work")(function* (
       Effect.flatMap(({ run }) =>
         Option.match(Option.fromNullishOr(run), {
           onNone: () =>
-            attention.pipe(Effect.andThen(Effect.sleep(pollInterval))),
+            command
+              ? Effect.sleep(wait)
+              : attention.pipe(Effect.andThen(Effect.sleep(wait))),
           onSome: (claimed) =>
             status.started(claimed.job).pipe(
               Effect.andThen(
@@ -311,7 +324,7 @@ export const work = Effect.fn("Worker.work")(function* (
       Effect.catchCause((cause) =>
         Effect.logWarning("Couldn't ask the server for work", cause).pipe(
           Effect.andThen(status.update({ reachable: false })),
-          Effect.andThen(Effect.sleep(pollInterval)),
+          Effect.andThen(Effect.sleep(wait)),
         ),
       ),
     );
@@ -325,13 +338,16 @@ export const work = Effect.fn("Worker.work")(function* (
     Catalogue.jobs.find((known) => known.id === job)?.lane ?? "repos";
 
   const lanes = Domain.Lane.literals
-    .map((name) => jobs.filter((job) => laneOf(job) === name))
-    .filter((jobsInLane) => jobsInLane.length > 0);
+    .map((name) => [name, jobs.filter((job) => laneOf(job) === name)] as const)
+    .filter(([, jobsInLane]) => jobsInLane.length > 0);
 
-  return yield* Effect.all(lanes.map(lane), {
-    concurrency: "unbounded",
-    discard: true,
-  });
+  return yield* Effect.all(
+    lanes.map(([name, laneJobs]) => lane(name, laneJobs)),
+    {
+      concurrency: "unbounded",
+      discard: true,
+    },
+  );
 });
 
 /**

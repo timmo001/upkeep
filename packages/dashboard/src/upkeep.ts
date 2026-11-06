@@ -169,12 +169,16 @@ export const markNotificationRead = UpkeepApi.runtime.fn((thread: string) =>
   ),
 );
 
-/** Open an agent on an item or a group, on the worker given. */
+/**
+ * Open an agent on an item or a group, on the worker given, in the
+ * repository given.
+ */
 export const startAgent = UpkeepApi.runtime.fn(
   (payload: {
     readonly worker: string;
     readonly url: string | null;
     readonly group: string | null;
+    readonly repo: string;
     readonly prompt: string | null;
   }) =>
     UpkeepApi.use((client) =>

@@ -16,9 +16,11 @@ export type JobId = typeof JobId.Type;
  * Which of a worker's lanes runs a job. Each lane runs one run at a time, so
  * a job only waits behind the jobs in its own lane: `heal` for heals, which
  * can run a fix agent for a long while, `quick` for jobs that only call APIs,
- * and `repos` for jobs that clone and push to repositories, which take turns.
+ * `repos` for jobs that clone and push to repositories, which take turns, and
+ * `command` for what the dashboard asks for, which a worker checks for often
+ * so a click is answered in seconds.
  */
-export const Lane = Schema.Literals(["heal", "quick", "repos"]);
+export const Lane = Schema.Literals(["heal", "quick", "repos", "command"]);
 
 export type Lane = typeof Lane.Type;
 
@@ -350,13 +352,15 @@ export const Command = Schema.Union([
   }),
   /**
    * Open an agent on an Attention item, or a group's items, on the worker
-   * named, with a brief of where it stands and your prompt.
+   * named, with a brief of where it stands and your prompt. `repo` is the
+   * repository it starts in; without it, the first item's.
    */
   Schema.Struct({
     kind: Schema.Literal("start-agent"),
     worker: Schema.String,
     url: Schema.NullOr(Schema.String),
     group: Schema.NullOr(Schema.String),
+    repo: Schema.optionalKey(RepoName),
     prompt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4000))),
   }),
 ]);

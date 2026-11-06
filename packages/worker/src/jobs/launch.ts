@@ -3,9 +3,9 @@
  * items, stand (signals, description, unresolved threads with their file and
  * line, failing checks with their log tails, linked issues, the rest of the
  * group, the context agent's notes, outside waits and your comments) into a
- * brief, then run the worker's `attention.launch` command in the checkout,
- * which opens the agent with it. The agent is yours to steer; Upkeep only
- * starts it.
+ * brief, then run the worker's `attention.launch` command in the checkout of
+ * the repository picked, the item's by default, which opens the agent with
+ * it. The agent is yours to steer; Upkeep only starts it.
  */
 import { Graphql, Repository, Workflow } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
@@ -331,8 +331,15 @@ const briefOf = Effect.fnUntraced(function* (
   items: ReadonlyArray<Domain.AttentionItem>,
   group: Domain.AttentionGroup | undefined,
   prompt: string | null,
+  repo: string,
 ) {
   const titles = new Map(page.items.map((item) => [item.url, item]));
+
+  // Started somewhere else, such as Upkeep to move issues, it works on the
+  // items through gh rather than in their checkout
+  const elsewhere = items.every(
+    (item) => item.repo.toLowerCase() !== repo.toLowerCase(),
+  );
 
   const parts = yield* Effect.forEach(items, (item) => describe(item, page), {
     concurrency: 3,
@@ -349,7 +356,9 @@ const briefOf = Effect.fnUntraced(function* (
     prompt ??
       "Look at where this stands and what it needs from me next, then tell me what you'd do before changing anything.",
     "",
-    "This brief comes from Upkeep's Attention page. For a pull request, check out its branch with `gh pr checkout` first.",
+    elsewhere
+      ? `This brief comes from Upkeep's Attention page. You're started in ${repo}, not the repository of what it's about, so work on those through \`gh\` with \`--repo\` rather than checking them out here, unless I ask.`
+      : "This brief comes from Upkeep's Attention page. For a pull request, check out its branch with `gh pr checkout` first.",
     "",
     ...(group === undefined
       ? []
@@ -420,6 +429,7 @@ const directoryFor = Effect.fnUntraced(function* (
   const directory = `${yield* cacheRoot}/agents/${repo}`;
 
   if (!(yield* fs.exists(directory))) {
+    yield* RunLog.info(`Cloning ${repo} into ${directory}`);
     yield* fs.makeDirectory(`${yield* cacheRoot}/agents/${owner}`, {
       recursive: true,
     });
@@ -468,22 +478,35 @@ export const launch = Effect.fnUntraced(function* (
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const brief = yield* briefOf(page, items, group, command.prompt);
+  const repo = command.repo ?? first.repo;
+  const title = group?.name ?? first.title;
+
+  yield* RunLog.info(
+    `Gathering where ${items.length === 1 ? "the item stands" : `${items.length} items stand`}, and finding ${repo}'s checkout`,
+  );
+
+  // Reading GitHub for the brief and finding or cloning the checkout don't
+  // depend on each other, so they go together
+  const [brief, directory] = yield* Effect.all(
+    [
+      briefOf(page, items, group, command.prompt, repo),
+      directoryFor(repo, setup.directory),
+    ],
+    { concurrency: 2 },
+  );
+
   const briefs = `${yield* cacheRoot}/briefs`;
   const file = path.join(briefs, `${Date.now()}.md`);
 
   yield* fs.makeDirectory(briefs, { recursive: true });
   yield* fs.writeFileString(file, brief);
 
-  const directory = yield* directoryFor(first.repo, setup.directory);
-  const title = group?.name ?? first.title;
-
   const fill = (arg: string) =>
     arg
       .replaceAll("{brief}", file)
       .replaceAll("{directory}", directory)
-      .replaceAll("{repo}", first.repo)
-      .replaceAll("{name}", first.repo.split("/").at(-1) ?? first.repo)
+      .replaceAll("{repo}", repo)
+      .replaceAll("{name}", repo.split("/").at(-1) ?? repo)
       .replaceAll("{title}", title);
 
   const [program = "", ...args] = setup.command.map(fill);
@@ -492,5 +515,5 @@ export const launch = Effect.fnUntraced(function* (
     `Wrote the brief to ${file}, starting the agent in ${directory}`,
   );
   yield* run(program, args, { cwd: directory, trusted: "" });
-  yield* summary(`Started an agent on ${title} in ${directory}`);
+  yield* summary(`Started an agent on ${title} in ${repo}`);
 });

@@ -151,10 +151,10 @@ export const command: Job = {
   id: "command",
   name: "Command",
   description:
-    "Do one thing the dashboard asks, such as mark a notification read",
+    "Do one thing the dashboard asks, such as mark a notification read or start an agent",
   schedule: null,
   onRelease: false,
-  lane: "quick",
+  lane: "command",
   tracked: false,
 };
 

@@ -46,6 +46,7 @@ const laneLabels = new Map<string, string>([
   ["quick", "Quick lane: short jobs"],
   ["repos", "Repositories lane: jobs that change repositories"],
   ["heal", "Heal lane: fixes for failed runs"],
+  ["command", "Command lane: what the dashboard asks for"],
 ]);
 
 /** What starts a job besides its run button, with a schedule in words. */
