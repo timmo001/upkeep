@@ -385,7 +385,8 @@ by default.
 | `command`           | On request       | Does one thing the dashboard asks, such as mark a notification read. A failed command shows on its run and is never healed.                                                                                                                                                                                                                                                                                                                                                |
 
 The `labels` job reads the conventions from a groundwork checkout, set by
-`UPKEEP_GROUNDWORK` on the worker.
+`UPKEEP_GROUNDWORK` on the worker, running its CLI with the checkout's pinned
+Bun through `mise exec`.
 
 ### Bump
 

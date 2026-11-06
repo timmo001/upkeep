@@ -104,15 +104,26 @@ export const plan = (
   return changes;
 };
 
-/** Every repository's wanted labels, from the groundwork checkout. */
+/**
+ * Every repository's wanted labels, from the groundwork checkout. It runs
+ * through mise, so it gets groundwork's pinned Bun even when the worker's
+ * `PATH` has no mise shims, as a service started before the session's is.
+ */
 const manifest = Effect.fnUntraced(function* () {
   const groundwork = yield* Config.String("UPKEEP_GROUNDWORK");
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const output = yield* spawner.string(
-    ChildProcess.make("bun", ["run", "src/cli.ts", "labels", "--all"], {
-      cwd: `${groundwork}/packages/conventions`,
-    }),
+    ChildProcess.make(
+      "mise",
+      ["exec", "--", "bun", "run", "src/cli.ts", "labels", "--all"],
+      {
+        cwd: `${groundwork}/packages/conventions`,
+        stdin: "ignore",
+        extendEnv: true,
+        env: { MISE_YES: "1" },
+      },
+    ),
   );
 
   return yield* Schema.decodeUnknownEffect(
