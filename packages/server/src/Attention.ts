@@ -34,7 +34,9 @@ const blocking: ReadonlySet<Domain.SignalKind> = new Set([
  * else is only watched. On your own, the shared status labels say more: a
  * decision waits on you, In Progress isn't backlog, and Blocked, On Hold or
  * Future is. The Blocked label means waiting on something else, so unlike
- * failing checks it has nothing for you to fix.
+ * failing checks it has nothing for you to fix. Your own pull request that's
+ * approved, or ready to merge with nobody else asked to review, needs you to
+ * merge it rather than waiting.
  */
 export const sectionOf = (
   item: Pick<
@@ -73,6 +75,10 @@ export const sectionOf = (
       (kinds.has("draft") || (item.kind === "issue" && !item.involved)))
   )
     return "backlog";
+
+  // Your own pull request that's approved or ready to merge waits on you
+  if (item.kind === "pull" && (kinds.has("approved") || kinds.has("ready")))
+    return "needs-you";
 
   return quiet && item.noted !== true ? "stale" : "waiting";
 };

@@ -77,6 +77,36 @@ test("status labels move your own items between sections, and fill in quietly", 
     }),
   ));
 
+test("your own pull request that's ready or approved needs you to merge it", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const signal = (kind: Domain.SignalKind) => ({ kind, detail: null });
+
+      yield* store.recordAttention(
+        snapshot([
+          found(1, [signal("ready"), signal("unread")]),
+          found(2, [signal("approved")]),
+          // Failing checks block it whatever the review says
+          found(3, [signal("approved"), signal("failing-checks")]),
+          // Waiting on someone else's review
+          found(4),
+        ]),
+      );
+
+      const page = yield* store.attention();
+
+      expect(page.items.map((item) => [item.number, item.section])).toEqual(
+        expect.arrayContaining([
+          [1, "needs-you"],
+          [2, "needs-you"],
+          [3, "blocked"],
+          [4, "stale"],
+        ]),
+      );
+    }),
+  ));
+
 const snapshot = (
   items: ReadonlyArray<Domain.AttentionFound>,
   complete = true,

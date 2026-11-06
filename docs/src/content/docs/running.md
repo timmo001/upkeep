@@ -473,7 +473,9 @@ The `attention` job reads what involves you on GitHub and sends it all to the
 server, which sorts each item into a section by its signals, with no model:
 
 - **Needs you:** a review requested, changes requested, unresolved threads,
-  a mention, or a reply from someone else in the last `staleDays`.
+  a mention, or a reply from someone else in the last `staleDays`. Your own
+  pull request is here too once it's approved, or ready to merge: its checks
+  pass with no conflicts, and no review is asked of anyone else.
 - **Blocked:** your own, with failing checks, conflicts, or an Upkeep finding
   for its repository. A base branch that moved under its files shows as a
   signal, but doesn't block on its own.

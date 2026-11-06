@@ -545,6 +545,12 @@ export const SignalKind = Schema.Literals([
   /** Upkeep has a run for the repository that needs a person. */
   "upkeep",
   "approved",
+  /**
+   * Your pull request can go in: its checks pass, or it has none, with no
+   * conflicts, no changes asked for, and no review waiting on anyone else
+   * unless it's approved.
+   */
+  "ready",
   "draft",
   /** Its notification is unread. */
   "unread",
@@ -565,6 +571,7 @@ export const signalLabel = (kind: SignalKind) =>
     "base-moved": "base moved",
     upkeep: "Upkeep needs you",
     approved: "approved",
+    ready: "ready to merge",
     draft: "draft",
     unread: "unread",
   })[kind];

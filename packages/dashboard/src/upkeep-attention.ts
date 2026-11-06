@@ -107,7 +107,7 @@ const sections: ReadonlyArray<{
     id: "needs-you",
     heading: "Needs you",
     description:
-      "Reviews asked of you, changes requested, replies and mentions",
+      "Reviews asked of you, changes requested, replies, mentions, and yours ready to merge",
   },
   {
     id: "blocked",
@@ -158,6 +158,7 @@ const tones: Record<Domain.SignalKind, string> = {
   "base-moved": "warning",
   upkeep: "warning",
   approved: "success",
+  ready: "success",
   draft: "neutral",
   unread: "info",
 };

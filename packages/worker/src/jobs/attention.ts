@@ -343,6 +343,21 @@ export const read = (
 
       if (node.mergeable === "CONFLICTING") signal("conflicts");
       else base = { head: node.headRefOid, branch: node.baseRefName };
+
+      // In your own repositories nobody else reviews, so a green pull
+      // request with no review asked of anyone waits only on you to merge it
+      const reviewWaiting = node.reviewRequests.nodes.some(
+        (request) => request !== null,
+      );
+
+      if (
+        !node.isDraft &&
+        node.mergeable !== "CONFLICTING" &&
+        (checks === undefined || checks === "SUCCESS") &&
+        node.reviewDecision !== "CHANGES_REQUESTED" &&
+        (node.reviewDecision === "APPROVED" || !reviewWaiting)
+      )
+        signal("ready");
     }
   }
 
