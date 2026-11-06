@@ -382,6 +382,8 @@ by default.
 | `sync`              | Hourly           | Runs groundwork's sync over the apps with a `sync.json`: carries their QML edits back to groundwork, copies its changes out, then checks and pushes each one. See [Sync](#sync).                                                                                                                                                                                                                                                                                           |
 | `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
+| `skill-consumers`   | Hourly           | Syncs the shared skills into the repositories listed in the skills repository's `consumers.yml`, through its own `skill-maintenance`. See [Skills](#skills).                                                                                                                                                                                                                                                                                                               |
+| `skill-updates`     | Hourly           | Hands the latest completed skill updates workflow run to an agent through `skill-maintenance updates-agent device`, on a worker with the config for it. See [Skills](#skills).                                                                                                                                                                                                                                                                                             |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
@@ -669,3 +671,31 @@ to move the edit into groundwork or a wrapper.
 Clones are kept in `upkeep/sync` in the XDG cache directory. Set
 `UPKEEP_SYNC_DRY_RUN=true` to log what would change instead, without changing
 anything.
+
+### Skills
+
+The skill jobs run the shared skills repository's own `skill-maintenance`,
+the signed-in account's `skills`, so its upkeep runs once on a worker rather
+than on a timer on every machine. Each run clones the repository's default
+branch into `upkeep/skills` in the XDG cache directory and builds
+`skill-maintenance` there, so it always runs the latest pushed version, and
+its output goes to the run's log as it's written.
+
+Every hour, `skill-consumers` runs `skill-maintenance consumers`, which adds,
+updates and removes the skill copies of each repository listed in
+`consumers.yml` and pushes them to its default branch.
+
+Every hour, `skill-updates` runs `skill-maintenance updates-agent device`
+with the config named in the worker's config file:
+
+```json
+{
+  "skills": {
+    "updatesAgent": "/path/to/skill-updates-agent.yml"
+  }
+}
+```
+
+A worker without it skips the job. A workflow run that's already been
+processed, or one deferred because another device has it or the checkout has
+local work, ends the run as skipped.

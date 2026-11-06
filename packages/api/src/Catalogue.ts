@@ -125,6 +125,28 @@ export const watch: Job = {
   tracked: false,
 };
 
+export const skillConsumers: Job = {
+  id: "skill-consumers",
+  name: "Skill consumers",
+  description:
+    "Sync the shared skills into the repositories listed in the skills repository's consumers.yml",
+  schedule: "25 * * * *",
+  onRelease: false,
+  lane: "repos",
+  tracked: false,
+};
+
+export const skillUpdates: Job = {
+  id: "skill-updates",
+  name: "Skill updates",
+  description:
+    "Hand the latest completed skill updates workflow run to an agent, which opens a pull request for each update",
+  schedule: "40 * * * *",
+  onRelease: false,
+  lane: "repos",
+  tracked: false,
+};
+
 export const summary: Job = {
   id: "summary",
   name: "Summary",
@@ -182,6 +204,8 @@ export const jobs: ReadonlyArray<Job> = [
   sync,
   deps,
   ci,
+  skillConsumers,
+  skillUpdates,
   summary,
   attentionContext,
   command,
