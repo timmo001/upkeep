@@ -140,7 +140,7 @@ export const skillUpdates: Job = {
   id: "skill-updates",
   name: "Skill updates",
   description:
-    "Hand the latest completed skill updates workflow run to an agent, which opens a pull request for each update",
+    "Check the shared skills against their upstreams and tools, pushing the updates that need no review and listing what needs an agent",
   schedule: "40 * * * *",
   onRelease: false,
   lane: "repos",

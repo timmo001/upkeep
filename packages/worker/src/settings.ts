@@ -174,16 +174,6 @@ export const Settings = Schema.Struct({
       inboxProject: Schema.optionalKey(Schema.String),
     }),
   ),
-  skills: Schema.optionalKey(
-    Schema.Struct({
-      /**
-       * The absolute path of a `skill-maintenance updates-agent device`
-       * config, which the skill-updates job runs with. Without it, the job
-       * does nothing on this worker.
-       */
-      updatesAgent: Schema.optionalKey(Schema.String),
-    }),
-  ),
 });
 
 export type Settings = typeof Settings.Type;

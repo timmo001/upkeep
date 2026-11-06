@@ -383,7 +383,7 @@ by default.
 | `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
 | `skill-consumers`   | Hourly           | Syncs the shared skills into the repositories listed in the skills repository's `consumers.yml`, through its own `skill-maintenance`. See [Skills](#skills).                                                                                                                                                                                                                                                                                                               |
-| `skill-updates`     | Hourly           | Hands the latest completed skill updates workflow run to an agent through `skill-maintenance updates-agent device`, on a worker with the config for it. See [Skills](#skills).                                                                                                                                                                                                                                                                                             |
+| `skill-updates`     | Hourly           | Pushes the shared skills' updates that need no review, and fails listing what needs an agent. See [Skills](#skills).                                                                                                                                                                                                                                                                                                                                                       |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
@@ -685,17 +685,13 @@ Every hour, `skill-consumers` runs `skill-maintenance consumers`, which adds,
 updates and removes the skill copies of each repository listed in
 `consumers.yml` and pushes them to its default branch.
 
-Every hour, `skill-updates` runs `skill-maintenance updates-agent device`
-with the config named in the worker's config file:
+Every hour, `skill-updates` reads `skill-maintenance updates --json` and
+`skill-reviews --json`. Imports with no local edits, including those that
+only move their pinned SHA, are applied with `updates --update`, checked with
+`mise run validate`, then committed and pushed straight to the default branch.
+Imports that follow one tool release land together, as `Update <repo> to
+<tag>`. An import that fails validation is reset and left out.
 
-```json
-{
-  "skills": {
-    "updatesAgent": "/path/to/skill-updates-agent.yml"
-  }
-}
-```
-
-A worker without it skips the job. A workflow run that's already been
-processed, or one deferred because another device has it or the checkout has
-local work, ends the run as skipped.
+What needs an agent, such as upstream changes to merge into a skill's local
+edits or a skill to review against a new tool release, fails the run and is
+listed in its log.
