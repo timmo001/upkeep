@@ -79,11 +79,14 @@ that it starts seconds after the release rather than up to 30 minutes later.
      | tr -d '\n' | bunx wrangler secret put WEBHOOK_SECRET
    ```
 
-5. Create a Cloudflare API token with Queues edit, then set the Home
-   Assistant app's `events_account_id`, `events_queue_id` (from
-   `bunx wrangler queues info upkeep-events`) and `events_token`. Outside the
-   app, they're `UPKEEP_EVENTS_ACCOUNT_ID`, `UPKEEP_EVENTS_QUEUE_ID` and
-   `UPKEEP_EVENTS_TOKEN`.
+5. Create a Cloudflare API token limited to your account, with only Queues
+   Write, then set the Home Assistant app's `events_account_id` (from
+   `bunx wrangler whoami`), `events_queue_id` (from
+   `bunx wrangler queues info upkeep-events`) and `events_token`, and restart
+   it. Outside the app, they're `UPKEEP_EVENTS_ACCOUNT_ID`,
+   `UPKEEP_EVENTS_QUEUE_ID` and `UPKEEP_EVENTS_TOKEN`. Keeping all three in
+   one 1Password item makes them easy to set again. The app's log says
+   "Pulling GitHub events from the Cloudflare Queue" once it's on.
 
 The App's **Advanced** page lists each delivery and its response: `202` when
 it was queued or isn't an event Upkeep takes, `204` for the ping, and `401`
