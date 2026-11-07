@@ -16,13 +16,14 @@ import {
   Effect,
   Exit,
   Option,
+  Predicate,
   Record,
   Ref,
   Schedule,
   Schema,
 } from "effect";
 import type { FileSystem, Path } from "effect";
-import type { HttpClient } from "effect/http";
+import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
 import * as Notify from "./Notify";
@@ -240,6 +241,15 @@ const execute = Effect.fnUntraced(function* (
     Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id, scope)]),
     Effect.onExit((exit) =>
       client.work.finish({ params, payload: outcome(exit) }).pipe(
+        // A server restarting, such as for an upgrade, is back within a
+        // minute, and a run whose end isn't reported is only requeued
+        Effect.retry({
+          while: (error) =>
+            HttpClientError.isHttpClientError(error) &&
+            Predicate.isTagged(error.reason, "TransportError"),
+          schedule: Schedule.exponential("1 second"),
+          times: 6,
+        }),
         Effect.andThen(
           Effect.logInfo(`Finished ${run.job}: ${outcome(exit).outcome}`),
         ),

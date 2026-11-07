@@ -197,7 +197,9 @@ worker is stopped mid-run,
 such as by a restart after an upgrade, or goes quiet for 10 minutes, the server
 puts its run back at the front of the queue. That happens once per run: the
 second time, the run fails as lost, so a run that brings its worker down can't
-loop. A worker reads GitHub through `gh`, logged in as whoever runs it.
+loop. A run that ends while the server is restarting keeps trying to report
+how it ended for about a minute, so it isn't left running until it's lost. A
+worker reads GitHub through `gh`, logged in as whoever runs it.
 
 A worker runs jobs in five lanes at once, one run per lane, so a long job
 doesn't hold up the others: heals in one, the quick API-only jobs
