@@ -462,7 +462,10 @@ export const checkout = Effect.fnUntraced(function* (
       ["checkout", "--quiet", "--force", "-B", branch, `origin/${branch}`],
       options,
     );
-    yield* run("git", ["clean", "--quiet", "-fdx"], options);
+    // The second -f also removes untracked nested repositories, such as a
+    // submodule the branch has since removed, which a job's `git add --all`
+    // would otherwise commit back as a gitlink
+    yield* run("git", ["clean", "--quiet", "-ffdx"], options);
   } else
     yield* Repository.clone({
       repository: repo,
