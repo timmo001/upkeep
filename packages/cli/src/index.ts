@@ -843,11 +843,99 @@ const repos = Command.make("repos").pipe(
   Command.withSubcommands([reposAdd, reposList, reposRename, reposRemove]),
 );
 
-/** What a repository's inbox rule says, as the CLI names it. */
+/** Where an inbox entry or a repository's entries go, as the CLI names it. */
 const placings = ["bumps", "worth", "upkeep"] as const;
 
-const ruleRoutine = (placing: (typeof placings)[number]) =>
+const routineOf = (placing: (typeof placings)[number]) =>
   placing === "upkeep" ? null : placing === "bumps";
+
+const placedBy: Record<Domain.EntryPlacer, string> = {
+  upkeep: "",
+  repository: "  (repository rule)",
+  you: "  (moved)",
+};
+
+const inboxList = Command.make(
+  "list",
+  {
+    days: Flag.Int("days").pipe(
+      Flag.withDescription("How many days back, up to 30"),
+      Flag.optional,
+    ),
+    json,
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const inbox = yield* client.inbox.get({
+        query: Option.match(input.days, {
+          onNone: () => ({}),
+          onSome: (days) => ({ days }),
+        }),
+      });
+
+      if (input.json) return yield* Console.log(JSON.stringify(inbox, null, 2));
+
+      if (inbox.entries.length === 0) {
+        return yield* Console.log("Nothing in the inbox.");
+      }
+
+      for (const entry of inbox.entries) {
+        const tab =
+          entry.kind === "needs"
+            ? "needs you"
+            : entry.routine
+              ? "bumps"
+              : "worth";
+
+        yield* Console.log(
+          `${entry.id}  ${tab}  ${entry.title}${placedBy[entry.placedBy]}`,
+        );
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "List the inbox's entries with their IDs and whether each is worth reading or a version bump",
+  ),
+);
+
+const inboxMove = Command.make(
+  "move",
+  {
+    entry: Argument.String("entry").pipe(
+      Argument.withDescription("The entry's ID, from upkeep inbox list"),
+    ),
+    placing: Argument.Literals("placing", placings).pipe(
+      Argument.withDescription(
+        "bumps to fold it into the version bumps, worth to show it as worth reading, or upkeep to hand it back to Upkeep's call",
+      ),
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const entry = yield* client.inbox.place({
+        params: { id: input.entry },
+        payload: { routine: routineOf(input.placing) },
+      });
+
+      yield* Console.log(
+        `${entry.title} is in ${entry.routine ? "the version bumps" : "what's worth reading"}${placedBy[entry.placedBy]}`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Move an inbox entry to the version bumps or what's worth reading. The move holds for later versions of the same update or drift.",
+  ),
+);
 
 const inboxRules = Command.make(
   "rules",
@@ -891,7 +979,7 @@ const inboxRule = Command.make(
       const client = yield* Client;
 
       yield* client.inbox.rule({
-        payload: { repo: input.repo, routine: ruleRoutine(input.placing) },
+        payload: { repo: input.repo, routine: routineOf(input.placing) },
       });
 
       yield* Console.log(
@@ -910,9 +998,9 @@ const inboxRule = Command.make(
 
 const inbox = Command.make("inbox").pipe(
   Command.withDescription(
-    "Manage where the inbox puts each repository's entries",
+    "Read the inbox and choose what's worth reading and what's a version bump",
   ),
-  Command.withSubcommands([inboxRules, inboxRule]),
+  Command.withSubcommands([inboxList, inboxMove, inboxRules, inboxRule]),
 );
 
 /** A session from `upkeep://open/<session>?directory=…&title=…`, or its bare ID. */

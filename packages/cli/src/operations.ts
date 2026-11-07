@@ -29,6 +29,8 @@ export const access = {
   track: "write",
   rename: "write",
   untrack: "write",
+  inbox: "read",
+  inbox_move: "write",
   inbox_rules: "read",
   inbox_rule: "write",
 } satisfies { readonly [Name in ToolName]: Access };

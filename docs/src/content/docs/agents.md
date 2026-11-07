@@ -29,10 +29,12 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `unpark`      | Write  | Lets a parked job be queued again                       |
 | `pause`       | Write  | Turns a job off until it's resumed                      |
 | `resume`      | Write  | Turns a paused job back on                              |
+| `inbox`       | Read   | Lists the inbox's entries and where each is             |
+| `inbox_move`  | Write  | Moves an entry to the version bumps or worth reading    |
 | `inbox_rules` | Read   | Lists the inbox's repository rules                      |
 | `inbox_rule`  | Write  | Sets which inbox tab a repository's entries go to       |
 
-`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause`, `resume`, `inbox_rules` and `inbox_rule` talk to the server in `UPKEEP_SERVER` as the admin in
+`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause`, `resume` and the `inbox` operations talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
 Managing tokens stays a CLI command for people, since it
 hands out secrets.

@@ -17,6 +17,7 @@ Prefer the `upkeep` Code Mode namespace, then the MCP server (`upkeep mcp`); fal
 - `upkeep runs --job heal` lists heals: what each one heals, what was decided and what was done (read).
 - `upkeep unpark <job>` lets a parked job be queued again (write). With triage set up, resolving the job's triage issue unparks it too.
 - `upkeep repos list --json` lists the repositories Upkeep works on and the jobs each is opted into (read). `upkeep repos add <owner/name>`, with `--job` to opt into only some jobs, and `upkeep repos remove <owner/name>` change them (write).
+- `upkeep inbox list --json` lists the inbox's entries with their IDs, whether each is a version bump (`routine`) and who put it there (`placedBy`) (read). `upkeep inbox move <entry> bumps|worth|upkeep` moves one, and the move holds for later versions of the same update (write).
 - `upkeep inbox rules --json` lists the inbox's repository rules (read). `upkeep inbox rule <owner/name> bumps|worth|upkeep` puts every entry from a repository in the version bumps or what's worth reading, or lets Upkeep decide again (write).
 - `upkeep agent tools --json` prints every operation with its input schema and how an agent may use it; `upkeep agent call <tool>` runs one with JSON input on stdin.
 

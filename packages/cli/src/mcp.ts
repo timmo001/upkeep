@@ -205,6 +205,30 @@ const Activity = Tool.make("activity", {
   failureMode: "return",
 }).annotate(Tool.Readonly, true);
 
+const Inbox = Tool.make("inbox", {
+  description:
+    "The inbox: each entry's ID, what it is, and whether it's worth reading or a version bump (routine), with placedBy saying whether Upkeep, a repository rule or a person put it there. `days` defaults to 7, up to 30.",
+  parameters: Schema.Struct({ days: Schema.optionalKey(Schema.Finite) }),
+  success: Domain.Inbox,
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const InboxMove = Tool.make("inbox_move", {
+  description:
+    "Move an inbox entry to the version bumps (routine true) or what's worth reading (routine false), or hand it back to Upkeep's call (routine null). The move holds for later versions of the same update or drift. Something that needs a person stays where it is.",
+  parameters: Schema.Struct({
+    entry: Schema.String,
+    routine: Schema.NullOr(Schema.Boolean),
+  }),
+  success: Domain.Entry,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const InboxRules = Tool.make("inbox_rules", {
   description:
     "List the inbox's repository rules: every entry from the repository goes to the version bumps (routine) or to what's worth reading",
@@ -249,6 +273,8 @@ export const Tools = Toolkit.make(
   Track,
   Rename,
   Untrack,
+  Inbox,
+  InboxMove,
   InboxRules,
   InboxRule,
 );
@@ -408,6 +434,24 @@ export const toolsLayer = Tools.toLayer(
             client.repos
               .untrack({ params: repoParams(input.repo) })
               .pipe(Effect.as({ repo: input.repo })),
+          ),
+        ),
+      inbox: (input: { readonly days?: number | undefined }) =>
+        onServer(
+          Client.use((client) =>
+            client.inbox.get({ query: { days: input.days } }),
+          ),
+        ),
+      inbox_move: (input: {
+        readonly entry: string;
+        readonly routine: boolean | null;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.inbox.place({
+              params: { id: input.entry },
+              payload: { routine: input.routine },
+            }),
           ),
         ),
       inbox_rules: () =>
