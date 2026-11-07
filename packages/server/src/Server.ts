@@ -123,14 +123,16 @@ const scopeTo = Effect.fn("scopeTo")(function* (
     (tracked) => tracked.repo.toLowerCase() === repo.toLowerCase(),
   );
 
-  if (found === undefined || (job.tracked && !found.jobs.includes(job.id))) {
+  const needs = Catalogue.trackingJob(job);
+
+  if (found === undefined || (needs !== null && !found.jobs.includes(needs))) {
     return yield* new Api.RepoNotScopable({
       id: job.id,
       repo,
       reason:
         found === undefined
           ? "it isn't tracked"
-          : `it isn't tracked for ${job.id}`,
+          : `it isn't tracked for ${needs}`,
     });
   }
 
@@ -1738,11 +1740,13 @@ const handleEvent = Effect.fn("handleEvent")(function* (
 
     // A narrowed run only goes to a job the repository is tracked for; a run
     // of the whole job, such as sync on a groundwork push, needs neither
+    const needs = Catalogue.trackingJob(job);
+
     if (
       repo !== null &&
       (tracked === undefined ||
         !Catalogue.scopable(job) ||
-        (job.tracked && !tracked.jobs.includes(job.id)))
+        (needs !== null && !tracked.jobs.includes(needs)))
     )
       continue;
 

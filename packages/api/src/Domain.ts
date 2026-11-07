@@ -47,6 +47,11 @@ export const Job = Schema.Struct({
    */
   tracked: Schema.Boolean,
   /**
+   * Another job whose tracked repositories it works on, with no opt-in of its
+   * own, such as `drift-review` with `drift`'s. Missing from older servers.
+   */
+  trackedAs: Schema.optionalKey(JobId),
+  /**
    * Whether it runs once on every live worker rather than once overall, to
    * update the machine itself. Missing from older servers.
    */

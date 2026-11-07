@@ -81,6 +81,18 @@ export const drift: Job = {
   tracked: true,
 };
 
+export const driftReview: Job = {
+  id: "drift-review",
+  name: "Drift review",
+  description:
+    "On request, have an agent review each repository as a whole against the current release of every tool in its tooling.yml, for what it's still missing, not only what changed since the last review",
+  schedule: null,
+  onRelease: false,
+  lane: "repos",
+  tracked: false,
+  trackedAs: drift.id,
+};
+
 export const sync: Job = {
   id: "sync",
   name: "Sync",
@@ -271,7 +283,16 @@ export const machineJobs: ReadonlyArray<Job> = [
  * work on the repositories tracked for them, and watch, which reads every
  * tracked repository.
  */
-export const scopable = (job: Job) => job.tracked || job.id === watch.id;
+export const scopable = (job: Job) =>
+  job.tracked || job.trackedAs !== undefined || job.id === watch.id;
+
+/**
+ * The job a repository has to be tracked for to be worked on by this one: the
+ * job itself, the one it borrows (`trackedAs`), or none, for a job that
+ * works on every tracked repository or none.
+ */
+export const trackingJob = (job: Job) =>
+  job.trackedAs ?? (job.tracked ? job.id : null);
 
 export const jobs: ReadonlyArray<Job> = [
   releases,
@@ -283,6 +304,7 @@ export const jobs: ReadonlyArray<Job> = [
   notifications,
   stalledUpdates,
   drift,
+  driftReview,
   sync,
   deps,
   ci,

@@ -1,7 +1,35 @@
 /** How the drift job picks a tool's newest tag and records a review. */
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
-import { decode, derivedFiles, newestTag, recordReviewed } from "./drift";
+import { Catalogue } from "@upkeep/api";
+import {
+  decode,
+  derivedFiles,
+  needsFullReview,
+  newestTag,
+  recordReviewed,
+} from "./drift";
+
+test("a full review asks for everything missing, and moves reviewed only when behind", () => {
+  const tool = { repo: "basecamp/omarchy", reviewed: "v4.4.0" };
+
+  const behind = needsFullReview(tool, "v4.5.0");
+  const current = needsFullReview(tool, "v4.4.0");
+
+  expect(behind).toContain(
+    "review the whole repository against basecamp/omarchy v4.5.0",
+  );
+  expect(behind).toContain("set its `reviewed` to v4.5.0");
+  expect(current).not.toContain("set its `reviewed`");
+  expect(current).toContain("not only the changes its last review covered");
+});
+
+test("drift review works on drift's repositories, with no opt-in of its own", () => {
+  expect(Catalogue.trackingJob(Catalogue.driftReview)).toBe("drift");
+  expect(Catalogue.scopable(Catalogue.driftReview)).toBe(true);
+  expect(Catalogue.trackingJob(Catalogue.drift)).toBe("drift");
+  expect(Catalogue.trackingJob(Catalogue.watch)).toBeNull();
+});
 
 test("the newest tag is the highest stable version matching the pattern", () => {
   const tags = [

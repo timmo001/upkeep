@@ -79,6 +79,11 @@ const prompt = (
           `The run was syncing the copies ${repo} takes from groundwork, listed in its sync.json. A copy changed in both is settled by moving the app's edit into groundwork, or into a wrapper in the app, then running groundwork's sync for this app (\`bun packages/sync/src/cli.ts run --app <this checkout>\` in groundwork) and pushing both. Anything else failed in the checks or CI after the push, and is fixed forward here.`,
         ]
       : []),
+    ...(run.job === "drift-review"
+      ? [
+          `Nothing broke: you were asked to review ${repo} as a whole against the current release of each tool in its tooling.yml, as the log lists, for what it's still missing rather than only what changed since the last review. Read each tool's docs and release notes against what ${repo} covers, add what's missing, run its checks, and push to the default branch. Leave anything large or uncertain for a person, saying what's missing. Finding nothing missing is \`Outcome: nothing to fix\`.`,
+        ]
+      : []),
     ...(run.job === "ci"
       ? [
           `${repo}'s CI is red on its default branch. The log has the failed run's failed steps and how its checks went here: tell a real failure from one only CI sees (a lockfile, the runner, a secret). Fix the cause, push, then watch CI on the commit until it passes.`,

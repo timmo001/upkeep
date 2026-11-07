@@ -453,6 +453,7 @@ Supervisor for its address on startup and logs the one it uses.
 | `notifications`     | Every 15 minutes | Dismisses unread GitHub notifications for Renovate and Dependabot pull requests that have merged, and logs each one. A thread that changed since it was read is left, and anything else stays unread.                                                                                                                                                                                                                                                                      |
 | `stalled-updates`   | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`             | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
+| `drift-review`      | On request       | Hands each repository tracked for `drift` to an agent, through a heal, to review as a whole against the current release of every tool in its `tooling.yml`: what it's still missing, not only what changed since the last review. See [Drift](#drift).                                                                                                                                                                                                                     |
 | `sync`              | Hourly           | Runs groundwork's sync over the apps with a `sync.json`: carries their QML edits back to groundwork, copies its changes out, then checks and pushes each one. See [Sync](#sync).                                                                                                                                                                                                                                                                                           |
 | `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
@@ -760,6 +761,22 @@ the release needs a review, so nothing is pushed for it. The repository is
 logged with what to review, its `review` note and the release links, and the
 run fails naming it, so a heal hands the review to an agent, which records
 the tag once it's done.
+
+`drift` only sees what changed since the release last reviewed, so a
+repository can still be behind on what its tools already had. Run
+`drift-review` for that, on request only, so its findings never repeat on their
+own:
+
+```bash
+upkeep run drift-review --repo timmo001/system-bridge
+```
+
+For each tool, it logs a review of the whole repository against the tool's
+current release, with the tool's `review` note: features, commands, flags and
+config options it doesn't cover yet, and snapshots or derived files that no
+longer match. The repository's run then fails, and a heal hands it to an
+agent, which adds what's missing or says nothing is. Without `--repo` it
+reviews every repository tracked for `drift`; it has no opt-in of its own.
 
 Clones are kept in `upkeep/drift` in the XDG cache directory. Set
 `UPKEEP_DRIFT_DRY_RUN=true` to log what would be pushed instead, without

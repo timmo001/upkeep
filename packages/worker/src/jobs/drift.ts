@@ -255,6 +255,20 @@ export const needsReview = (
     ` Once it's reviewed, ${tool.update === undefined ? "" : `run \`${tool.update} ${tag}\`, `}set its \`reviewed\` to ${tag} in ${toolingFile}, and push to the default branch.`,
   ].join("");
 
+/**
+ * What an agent needs to review a repository as a whole against a tool's
+ * current release: everything it's behind on, not only what changed since
+ * the release last reviewed.
+ */
+export const needsFullReview = (tool: Tool, tag: string) =>
+  [
+    `review the whole repository against ${tool.repo} ${tag}, ${tag === tool.reviewed ? "not only the changes its last review covered" : `not only what changed since ${tool.reviewed}`}:`,
+    " features, commands, flags and config options the tool has that the repository doesn't cover yet, and snapshots or derived files that no longer match.",
+    tool.review === undefined ? "" : ` ${tool.review}`,
+    ` Release: https://github.com/${tool.repo}/releases/tag/${tag}.`,
+    ` Add what's missing and push it to the default branch${tag === tool.reviewed ? "" : `, then set its \`reviewed\` to ${tag} in ${toolingFile}`}. If nothing is missing, say so.`,
+  ].join("");
+
 export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.orElse(() =>
     Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
@@ -528,4 +542,103 @@ export const drift = Effect.fnUntraced(function* () {
 
   // Nothing moved, as after drift's own push comes back as an event
   if (updated.length === 0) return skipped;
+});
+
+/**
+ * List what an agent should review one repository for: each tool in its
+ * tooling.yml against its current release, as a whole. Fails with the list,
+ * so the heal hands it to an agent, or returns `skipped` for an archived or
+ * forked repository or one with no tools.
+ */
+export const reviewRepository = Effect.fnUntraced(function* (
+  repo: string,
+  root: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const info = yield* Api.json(
+    { endpoint: `repos/${repo}`, method: "GET" },
+    RepositoryInfo,
+  );
+
+  if (info.archived || info.fork) {
+    yield* RunLog.info(
+      `${repo}: skipped, ${info.archived ? "archived" : "a fork"}`,
+    );
+
+    return "skipped" satisfies Outcome;
+  }
+
+  const directory = path.join(root, repo);
+  const options = { cwd: directory, trusted: root };
+
+  yield* checkout(repo, info.default_branch, directory, root);
+
+  const { tools } = yield* decode(
+    yield* fs.readFileString(path.join(directory, toolingFile)),
+  );
+
+  if (tools.length === 0) return "skipped" satisfies Outcome;
+
+  for (const tool of tools) {
+    const tag = yield* latest(tool, options).pipe(
+      Effect.catchCause((cause) =>
+        RunLog.warn(
+          `${repo}: couldn't read ${tool.repo}'s latest release, so review against ${tool.reviewed}: ${reason(cause)}`,
+        ).pipe(Effect.as(tool.reviewed)),
+      ),
+    );
+
+    yield* RunLog.warn(`${repo}: ${needsFullReview(tool, tag)}`);
+  }
+
+  return yield* new DriftError({
+    message: `${tools.length} ${tools.length === 1 ? "tool" : "tools"} to review as a whole`,
+  });
+});
+
+/**
+ * The drift review: on request, hand each repository tracked for drift to an
+ * agent, through a heal, to review as a whole against the current release of
+ * every tool it lists. It has no schedule, so its findings never repeat on
+ * their own; narrow it to one repository with `--repo`.
+ */
+export const driftReview = Effect.fnUntraced(function* () {
+  const root = yield* cacheRoot;
+  const tracked = yield* trackedFor(Catalogue.drift.id);
+  const repos = (yield* repositories()).filter(tracked);
+  const failed: Array<string> = [];
+
+  yield* RunLog.info(`Reviewing ${repos.length} repositories as a whole`);
+
+  yield* Effect.forEach(
+    repos,
+    (repo) =>
+      reviewRepository(repo, root).pipe(
+        Effect.catchCause((cause) =>
+          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
+            Effect.andThen(Effect.sync(() => failed.push(repo))),
+          ),
+        ),
+      ),
+    { concurrency: 2, discard: true },
+  );
+
+  yield* summary(
+    failed.length === 0
+      ? "Nothing to review"
+      : `Handed ${listed(failed)} to an agent to review as a whole`,
+  );
+
+  if (failed.length > 0)
+    return yield* new ConsumersFailed({
+      action: "review",
+      repos: failed.toSorted(),
+    });
+
+  // A lone literal return would widen to string, which no handler returns
+  const nothing: typeof skipped = skipped;
+
+  return nothing;
 });
