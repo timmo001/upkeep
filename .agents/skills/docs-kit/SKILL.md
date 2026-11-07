@@ -39,7 +39,9 @@ on `main`, follow the installed release.
    themes, import `themes/all.css` too and pass `themes` to `HeaderSearch` from
    a wrapper, as the README shows: the site's own theme first, then any other
    Groundwork themes, then the optional ones from `optionalThemeChoices`,
-   which carry their `family` and `mode`.
+   which carry their `family` and `mode`. For a site in another language, pass
+   `label`, `modeLabel`, `modeLabels`, `unavailableHint` and `githubLabel` to
+   `HeaderSearch`.
 5. Generate brand images with `writeBrandImages` from a site script rather than
    a copied generator. Commit the PNGs it writes. Remind the user that GitHub's
    social preview needs a manual upload.
