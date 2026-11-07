@@ -54,6 +54,24 @@ second port for ingress, 8099 in the app. It only answers `--ingress-from`
 treats every request as an admin's, since Home Assistant has already signed
 the user in.
 
+## Status
+
+```bash
+upkeep status
+upkeep status --json
+upkeep status --bar-json
+```
+
+`upkeep status` is Upkeep's one status, from the server's `/api/status`, which
+the bar, the OpenCode footer and agents all read, so each shows the same
+count. It's `ok`, `warning` while anything needs you, or `degraded` while no
+worker has asked for work in the last half hour. What needs you is each inbox
+entry that needs a person, such as a heal that asked or a parked job, and each
+skill change waiting for your approval, with the dashboard page to deal with
+it. `--json` adds the `bar` and `footer` lines, and `--bar-json` prints only
+the bar's: a text with the count, empty when nothing needs you, a tooltip
+listing what does, and an `upkeep-<health>` class.
+
 ## Dashboard
 
 The server serves the dashboard at its root, such as
@@ -302,7 +320,8 @@ the repository's oldest heal is a day old, unless a later run of the job
 reaches that repository first. The job's dashboard page lists the heals
 waiting. A job failing in itself past that is parked instead. The server stops
 queueing a parked job on its schedule or on releases, though it can still be
-run by hand, and `upkeep status --json` shows why it's parked.
+run by hand, and `upkeep status` lists it among what needs you, with the job's
+page, which says why it's parked.
 `upkeep unpark <job>` lets it be queued again.
 
 A heal reads the failed run's error and the end of its log, and a decision

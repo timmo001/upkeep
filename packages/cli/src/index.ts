@@ -22,6 +22,7 @@ import { Jobs } from "./jobs/Jobs";
 import { serveMcp } from "./mcp";
 import { toolNames } from "./operations";
 import { layerAdminEnv, layerOptions } from "./options";
+import * as Status from "./status";
 
 const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON for scripts and agents instead of text"),
@@ -34,21 +35,72 @@ const server = Flag.String("server").pipe(
   Flag.withFallbackConfig(Config.String("UPKEEP_SERVER")),
 );
 
-const status = Command.make(
-  "status",
+const jobs = Command.make(
+  "jobs",
   { json },
-  Effect.fn("status")(function* ({ json }) {
-    const jobs = yield* (yield* Jobs).list();
+  Effect.fn("jobs")(function* ({ json }) {
+    const list = yield* (yield* Jobs).list();
 
-    if (json) return yield* Console.log(JSON.stringify({ jobs }, null, 2));
+    if (json)
+      return yield* Console.log(JSON.stringify({ jobs: list }, null, 2));
 
-    if (jobs.length === 0) return yield* Console.log("No jobs yet");
+    if (list.length === 0) return yield* Console.log("No jobs yet");
 
-    for (const job of jobs) {
+    for (const job of list) {
       yield* Console.log(`${job.name}  ${job.description}`);
     }
   }),
 ).pipe(Command.withDescription("List the jobs upkeep runs"));
+
+const status = Command.make(
+  "status",
+  {
+    server,
+    json,
+    barJson: Flag.Boolean("bar-json").pipe(
+      Flag.withDescription(
+        "Print only the bar's text, tooltip and class, for a status bar",
+      ),
+      Flag.withDefault(false),
+    ),
+  },
+  Effect.fn(
+    function* (input) {
+      const current = yield* (yield* Client).status.get();
+
+      if (input.barJson)
+        return yield* Console.log(JSON.stringify(Status.bar(current)));
+
+      if (input.json)
+        return yield* Console.log(
+          JSON.stringify(
+            {
+              ...current,
+              bar: Status.bar(current),
+              footer: Status.footer(current),
+            },
+            null,
+            2,
+          ),
+        );
+
+      yield* Console.log(current.summary);
+
+      for (const item of current.needs) yield* Console.log(`  ${item.title}`);
+
+      yield* Console.log(
+        current.workers.length === 0
+          ? "No worker is live"
+          : `Workers: ${current.workers.join(", ")}`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Show what needs you, from the server: the one status the bar and dashboard read",
+  ),
+);
 
 /** The Code Mode manifest: every operation with how an agent may use it. */
 const agentTools = Command.make(
@@ -817,6 +869,7 @@ const upkeep = Command.make("upkeep").pipe(
   Command.withDescription("Keep repositories and their consumers up to date"),
   Command.withSubcommands([
     status,
+    jobs,
     run,
     runs,
     log,

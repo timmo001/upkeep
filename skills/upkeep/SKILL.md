@@ -7,7 +7,8 @@ description: Read, start, retry and cancel Upkeep's runs from an agent. Use when
 
 Prefer the `upkeep` Code Mode namespace, then the MCP server (`upkeep mcp`); fall back to the CLI with `--json`. Server operations need `UPKEEP_SERVER` and `UPKEEP_ADMIN_TOKEN`.
 
-- `upkeep status --json` lists the jobs Upkeep runs.
+- `upkeep status --json` says what needs you, with the dashboard page for each, the parked jobs and the live workers. Start here.
+- `upkeep jobs --json` lists the jobs Upkeep runs.
 - `upkeep runs --json` lists runs, newest first; filter with `--job` and `--state failed`.
 - `upkeep log <run> --json` prints a run's log as JSON lines. A failed run's `error` holds why it failed.
 - `upkeep run <job>` queues a run (write). `upkeep run <job> --local` runs it on this machine and reports nothing, which is the safe way to try a job. Add `--repo owner/name` to work on only that tracked repository.

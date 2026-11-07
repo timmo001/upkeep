@@ -7,7 +7,7 @@ import type { Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
 import { Events } from "./Events";
-import { pullEvents } from "./Server";
+import { pullEvents, status } from "./Server";
 import { Store } from "./Store";
 
 const release = (tag: string): Domain.GitHubEvent => ({
@@ -24,6 +24,41 @@ const release = (tag: string): Domain.GitHubEvent => ({
   workflow: null,
   at: 1,
 });
+
+test("the status counts what needs you, and says when no worker is live", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const quiet = yield* status();
+
+      expect(quiet.health).toBe("degraded");
+      expect(quiet.needs).toEqual([]);
+
+      yield* store.setAgents("desktop", {
+        decisions: null,
+        agents: [],
+        launch: false,
+        resume: false,
+      });
+
+      expect((yield* status()).health).toBe("ok");
+      expect((yield* status()).summary).toBe("Nothing needs you");
+
+      yield* store.park("drift", "It failed 3 times today", null);
+
+      const parked = yield* status();
+
+      expect(parked.health).toBe("warning");
+      expect(parked.parked).toEqual(["drift"]);
+      expect(parked.needs.map((item) => item.kind)).toEqual(["needs"]);
+      expect(parked.needs[0]?.path).toBe("jobs/drift");
+      expect(parked.workers).toEqual(["desktop"]);
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
 
 test("a burst of pushes queues one run of each job the repository is tracked for", () => {
   const push = (delivery: string): Domain.GitHubEvent => ({

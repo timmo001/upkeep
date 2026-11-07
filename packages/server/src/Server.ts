@@ -733,6 +733,81 @@ const ActivityHandlers = HttpApiBuilder.group(
   }),
 );
 
+/** Join counted things into a line: `2 need you, 1 skill change waiting`. */
+const counted = (parts: ReadonlyArray<string | null>) =>
+  parts.filter((part) => part !== null).join(", ");
+
+/**
+ * Upkeep's one status: what needs you (inbox entries that need a person,
+ * such as a heal that asked or a parked job, and skill changes waiting for
+ * approval), the parked jobs and the live workers.
+ */
+export const status = Effect.fn("status")(function* () {
+  const store = yield* Store;
+  const now = yield* Clock.currentTimeMillis;
+  const workers = yield* liveWorkers();
+  const parked = [...(yield* store.parked()).keys()].toSorted();
+  const inbox = yield* store.inbox(now - Api.inboxDays * 86_400_000);
+
+  const entries: ReadonlyArray<Domain.NeedsYou> = inbox.entries
+    .filter((entry) => entry.kind === "needs")
+    .map((entry) => ({
+      kind: "needs",
+      title: entry.title,
+      path:
+        entry.run !== null
+          ? `runs/${encodeURIComponent(entry.run)}`
+          : entry.job !== null
+            ? `jobs/${encodeURIComponent(entry.job)}`
+            : "",
+      at: entry.lastAt,
+    }));
+
+  const changes: ReadonlyArray<Domain.NeedsYou> = (yield* store.skillChanges())
+    .filter((change) => change.state === "waiting")
+    .map((change) => ({
+      kind: "skill-change",
+      title: `Skill change waiting: ${change.title}`,
+      path: "skills",
+      at: change.at,
+    }));
+
+  const needs = [...entries, ...changes].toSorted((a, b) => b.at - a.at);
+
+  const health: Domain.Health =
+    workers.length === 0 ? "degraded" : needs.length > 0 ? "warning" : "ok";
+
+  const summary =
+    needs.length === 0
+      ? workers.length === 0
+        ? "Nothing needs you, but no worker is live"
+        : "Nothing needs you"
+      : counted([
+          entries.length === 0
+            ? null
+            : `${entries.length} ${entries.length === 1 ? "thing needs" : "things need"} you`,
+          changes.length === 0
+            ? null
+            : `${changes.length} skill ${changes.length === 1 ? "change" : "changes"} waiting`,
+          workers.length === 0 ? "no worker live" : null,
+        ]);
+
+  return { health, summary, needs, parked, workers, at: now };
+});
+
+const StatusHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "status",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      get: () =>
+        status().pipe(Effect.provideService(Store, store), Effect.orDie),
+    });
+  }),
+);
+
 const InboxHandlers = HttpApiBuilder.group(
   Api.Api,
   "inbox",
@@ -1346,6 +1421,7 @@ const apiRoutes = (
       JobsHandlers,
       RunsHandlers,
       ActivityHandlers,
+      StatusHandlers,
       InboxHandlers,
       AttentionHandlers,
       WorkHandlers,

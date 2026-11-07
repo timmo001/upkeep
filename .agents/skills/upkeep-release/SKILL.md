@@ -44,7 +44,8 @@ Install through the `ha-bridge` Code Mode namespace, not the CLI or SSH:
    and the release notes are yours.
 3. `call_action` with `action: "update.install"` on the same target.
 4. `get_updates` on it: installed and latest match, nothing in progress.
-5. `upkeep.status` lists what the release added, such as a new job.
+5. `upkeep.jobs` lists what the release added, such as a new job, and
+   `upkeep.status` shows the server healthy with its workers live.
 
 Workers lose the server for a minute while the app restarts. They retry on
 their poll interval, so a worker log warning about a refused connection then

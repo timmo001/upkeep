@@ -19,6 +19,14 @@ export class UpkeepError extends Schema.TaggedError<UpkeepError>()(
 // Failures go back to the client as the tool's result, so an agent can read
 // them and carry on.
 const Status = Tool.make("status", {
+  description:
+    "Upkeep's one status from the server in $UPKEEP_SERVER: its health, what needs you with the dashboard page for each, the parked jobs and the live workers",
+  success: Domain.Status,
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const JobsTool = Tool.make("jobs", {
   description: "List the jobs upkeep runs",
   success: Schema.Struct({ jobs: Schema.Array(Job) }),
   failure: JobsError,
@@ -200,6 +208,7 @@ const Activity = Tool.make("activity", {
 /** Every operation an agent can call, shared by MCP and Code Mode. */
 export const Tools = Toolkit.make(
   Status,
+  JobsTool,
   Runs,
   Activity,
   Log,
@@ -238,7 +247,8 @@ export const toolsLayer = Tools.toLayer(
     const jobs = yield* Jobs;
 
     return {
-      status: () => Effect.map(jobs.list(), (list) => ({ jobs: list })),
+      status: () => onServer(Client.use((client) => client.status.get())),
+      jobs: () => Effect.map(jobs.list(), (list) => ({ jobs: list })),
       runs: (query: {
         readonly job?: string | undefined;
         readonly state?: Domain.RunState | undefined;

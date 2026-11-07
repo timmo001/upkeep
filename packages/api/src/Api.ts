@@ -49,6 +49,7 @@ import {
   SkillChangeState,
   SkillsPage,
   SkillsSnapshot,
+  Status,
   TrackedRepo,
   WorkerAgents,
 } from "./Domain";
@@ -611,6 +612,23 @@ export class ActivityGroup extends HttpApiGroup.make("activity")
       title: "Activity",
       description:
         "What happened lately: how runs ended, the commits they pushed and what needs a person",
+    }),
+  ) {}
+
+export class StatusGroup extends HttpApiGroup.make("status")
+  .add(
+    /**
+     * Upkeep's one status: its health, what needs you and the live workers,
+     * which the CLI, the bar and the dashboard all read.
+     */
+    HttpApiEndpoint.get("get", "/", { success: Status }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/status")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Status",
+      description: "How Upkeep is as a whole, and what needs you",
     }),
   ) {}
 
@@ -1219,6 +1237,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(JobsGroup)
   .add(RunsGroup)
   .add(ActivityGroup)
+  .add(StatusGroup)
   .add(InboxGroup)
   .add(AttentionGroup)
   .add(WorkGroup)

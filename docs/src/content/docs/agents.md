@@ -18,7 +18,8 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 
 | Operation | Access | Does                                                    |
 | --------- | ------ | ------------------------------------------------------- |
-| `status`  | Read   | Lists the jobs Upkeep runs                              |
+| `status`  | Read   | Says what needs you, the parked jobs and live workers   |
+| `jobs`    | Read   | Lists the jobs Upkeep runs                              |
 | `runs`    | Read   | Lists runs on the server, newest first                  |
 | `log`     | Read   | Prints a run's log                                      |
 | `run`     | Write  | Queues a run, reusing one of the same job still waiting |
@@ -29,7 +30,7 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `pause`   | Write  | Turns a job off until it's resumed                      |
 | `resume`  | Write  | Turns a paused job back on                              |
 
-`runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause` and `resume` talk to the server in `UPKEEP_SERVER` as the admin in
+`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause` and `resume` talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
 Managing tokens stays a CLI command for people, since it
 hands out secrets.

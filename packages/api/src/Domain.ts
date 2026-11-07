@@ -797,6 +797,47 @@ export const JobStatus = Schema.Struct({
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}
 
+/**
+ * How Upkeep is as a whole: `ok`, `warning` while anything needs you, or
+ * `degraded` while no worker is live to run anything.
+ */
+export const Health = Schema.Literals(["ok", "warning", "degraded"]);
+
+export type Health = typeof Health.Type;
+
+/** Something that needs you, pointing at where to deal with it. */
+export const NeedsYou = Schema.Struct({
+  kind: Schema.Literals(["needs", "skill-change"]),
+  title: Schema.String,
+  /**
+   * The dashboard page it's on, relative to the dashboard: `runs/<id>`,
+   * `jobs/<id>`, `skills`, or empty for the inbox.
+   */
+  path: Schema.String,
+  at: Schema.Finite,
+});
+
+export interface NeedsYou extends Schema.Schema.Type<typeof NeedsYou> {}
+
+/**
+ * Upkeep's one status, which the CLI, the bar, the OpenCode footer and the
+ * dashboard all read, so each shows the same count.
+ */
+export const Status = Schema.Struct({
+  health: Health,
+  /** One line saying what needs you, or that nothing does. */
+  summary: Schema.String,
+  /** What needs you, newest first. */
+  needs: Schema.Array(NeedsYou),
+  /** The parked jobs, which also show in `needs`. */
+  parked: Schema.Array(JobId),
+  /** The workers that asked for work in the last half hour. */
+  workers: Schema.Array(Schema.String),
+  at: Schema.Finite,
+});
+
+export interface Status extends Schema.Schema.Type<typeof Status> {}
+
 export const LogLevel = Schema.Literals(["info", "warn", "error"]);
 
 export type LogLevel = typeof LogLevel.Type;
