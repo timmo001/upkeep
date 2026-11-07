@@ -69,7 +69,7 @@ worker has asked for work in the last half hour. What needs you is each inbox
 entry that needs a person, such as a heal that asked or a parked job, and each
 skill change waiting for your approval, with the dashboard page to deal with
 it. `--json` adds the `bar` and `footer` lines, and `--bar-json` prints only
-the bar's: a text with the count, empty when nothing needs you, a tooltip
+the bar's: a wrench and the count, empty when nothing needs you, a tooltip
 listing what does, and an `upkeep-<health>` class.
 
 ## Dashboard

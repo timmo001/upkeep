@@ -20,14 +20,17 @@ const tooltip = (status: Domain.Status) =>
       : `Workers: ${status.workers.join(", ")}`,
   ].join("\n");
 
+/** Font Awesome's wrench, which Nerd Fonts carry, so the bar's count says what it's for. */
+const icon = "";
+
 /** The bar: the count that needs you, empty and hidden when nothing does. */
 export const bar = (status: Domain.Status): Line => ({
   text:
     status.needs.length === 0
       ? status.health === "degraded"
-        ? "!"
+        ? `${icon} !`
         : ""
-      : String(status.needs.length),
+      : `${icon} ${status.needs.length}`,
   tooltip: tooltip(status),
   class: `upkeep-${status.health}`,
 });
