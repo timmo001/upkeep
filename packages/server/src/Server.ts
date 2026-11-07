@@ -875,6 +875,8 @@ const WorkHandlers = HttpApiBuilder.group(
 
         return { run: Option.getOrNull(run) };
       }),
+      status: () =>
+        status().pipe(Effect.provideService(Store, store), Effect.orDie),
       heartbeat: Effect.fn(function* ({ params }) {
         const worker = yield* Api.CurrentWorker;
 

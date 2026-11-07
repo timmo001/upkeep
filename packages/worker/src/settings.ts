@@ -116,8 +116,23 @@ const Attention = Schema.Struct({
 
 export type Attention = typeof Attention.Type;
 
+/**
+ * How this worker tells you something new needs you, such as a heal that
+ * asked, a parked job or a skill change waiting. `command` runs once for each,
+ * with `{title}` and `{url}` (its dashboard page) replaced, such as
+ * `notify-send`. `dashboard` is where the pages are, `$UPKEEP_SERVER` by
+ * default; set it to the Home Assistant sidebar's address to open them there.
+ */
+const Notify = Schema.Struct({
+  command: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+  dashboard: Schema.optionalKey(Schema.String),
+});
+
+export type Notify = typeof Notify.Type;
+
 export const Settings = Schema.Struct({
   attention: Schema.optionalKey(Attention),
+  notify: Schema.optionalKey(Notify),
   /**
    * Opt in to naming tracked repositories from your own list, over their
    * README titles. The watch job runs `command` each time and reads the JSON

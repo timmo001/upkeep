@@ -18,12 +18,14 @@ import {
   Option,
   Record,
   Ref,
+  Schedule,
   Schema,
 } from "effect";
 import type { FileSystem, Path } from "effect";
 import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
+import * as Notify from "./Notify";
 import * as RateLimits from "./RateLimits";
 import { narrowTo, Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
@@ -356,8 +358,13 @@ export const work = Effect.fn("Worker.work")(function* (
     .map((name) => [name, jobs.filter((job) => laneOf(job) === name)] as const)
     .filter(([, jobsInLane]) => jobsInLane.length > 0);
 
+  // Telling you what's new that needs you runs beside the lanes, once a minute
+  const notify = (yield* Notify.make).pipe(
+    Effect.repeat(Schedule.spaced("1 minute")),
+  );
+
   return yield* Effect.all(
-    lanes.map(([name, laneJobs]) => lane(name, laneJobs)),
+    [...lanes.map(([name, laneJobs]) => lane(name, laneJobs)), notify],
     {
       concurrency: "unbounded",
       discard: true,

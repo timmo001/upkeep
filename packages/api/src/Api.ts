@@ -813,6 +813,8 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
       error: WorkerOutdated,
     }),
+    /** Upkeep's one status, for a worker to tell you when something new needs you. */
+    HttpApiEndpoint.get("status", "/status", { success: Status }),
     /** Tell the server the run is still going. */
     HttpApiEndpoint.post("heartbeat", "/runs/:id/heartbeat", {
       params: { id: Schema.String },

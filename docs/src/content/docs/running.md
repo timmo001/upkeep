@@ -72,6 +72,25 @@ it. `--json` adds the `bar` and `footer` lines, and `--bar-json` prints only
 the bar's: a wrench and the count, empty when nothing needs you, a tooltip
 listing what does, and an `upkeep-<health>` class.
 
+### Notifications
+
+A worker with `notify` in its config file tells you when something new needs
+you, and nothing else: no green runs, and decisions still go to the
+Plannotator Inbox. Once a minute it reads the status and runs `command` for
+each item it hasn't seen, with `{title}` and `{url}` (the item's dashboard
+page) filled in. `dashboard` is where those pages are, `$UPKEEP_SERVER` by
+default. The first read after the worker starts only records what's there, so
+a restart doesn't repeat old notifications.
+
+```json
+{
+  "notify": {
+    "command": ["notify-send", "-a", "Upkeep", "{title}", "{url}"],
+    "dashboard": "http://homeassistant.local:7272"
+  }
+}
+```
+
 ## Dashboard
 
 The server serves the dashboard at its root, such as
