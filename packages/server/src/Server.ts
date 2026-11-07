@@ -1674,18 +1674,44 @@ const dashboard = (options: { readonly ingress: boolean }) =>
 
 /**
  * Queue each scheduled job on its cron. A failure is logged and the schedule
- * carries on; a run that's still waiting isn't queued twice.
+ * carries on; a run that's still waiting isn't queued twice. On start, a job
+ * whose last tick passed while the server was down, with no scheduled run
+ * since, is queued once rather than waiting for its next tick.
  */
 export const scheduler = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* Store;
+    const now = yield* Clock.currentTimeMillis;
+
+    const last = yield* store
+      .lastScheduled()
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError(cause).pipe(Effect.as(new Map<string, number>())),
+        ),
+      );
 
     for (const job of Catalogue.jobs) {
       if (job.schedule === null || job.machine === true) continue;
 
-      yield* queue({ job: job.id, trigger: "schedule", release: null }).pipe(
+      const queued = last.get(job.id);
+      const tick = Cron.prev(Cron.parseUnsafe(job.schedule), now).getTime();
+
+      const scheduled = queue({
+        job: job.id,
+        trigger: "schedule",
+        release: null,
+      }).pipe(
         Effect.provideService(Store, store),
         Effect.catchCause(Effect.logError),
+      );
+
+      if (queued !== undefined && queued < tick)
+        yield* Effect.logInfo(
+          `Catching up ${job.id}, whose last tick passed while the server was down`,
+        ).pipe(Effect.andThen(scheduled));
+
+      yield* scheduled.pipe(
         Effect.schedule(Schedule.cron(job.schedule)),
         Effect.forkScoped,
       );

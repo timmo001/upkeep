@@ -371,6 +371,11 @@ model chooses what to do:
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
   works on it as for `fix`.
 
+An agent that can't start because of GitHub, such as a rate limit, a network
+error or `gh` failing without a word, starts again after a minute, then two,
+then four. If it still can't and the run failed on `gh` too, it looks like a
+GitHub outage, so the job is queued again instead of left for you.
+
 A heal's run page shows its session as the `opencode2 --session` command
 that resumes it, with a button to copy it and **Resume in Herdr**, which
 opens it in the checkout the agent worked in, through a worker's
@@ -507,6 +512,10 @@ With [GitHub events](/events) set up, `bump`, `watch`, `sync`, `deps`,
 `drift`, `ci` and `skill-consumers` also start seconds after the release,
 push or workflow run that concerns them, and the schedules above catch what
 an event misses.
+
+A job whose scheduled time passed while the server was down, such as during
+an upgrade, runs once as the server starts, rather than waiting for its next
+time.
 
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker, running its CLI with the checkout's pinned

@@ -981,6 +981,8 @@ export class Store extends Context.Service<
       ReadonlyMap<string, ReadonlyArray<Domain.Run>>,
       StoreError
     >;
+    /** When each job last had a run queued by its schedule, by job. */
+    lastScheduled(): Effect.Effect<ReadonlyMap<string, number>, StoreError>;
     /** Take the oldest waiting run of one of these jobs for a worker. */
     claim(
       jobs: ReadonlyArray<string>,
@@ -1515,6 +1517,16 @@ export class Store extends Context.Service<
         byJob.set(row.job, [...(byJob.get(row.job) ?? []), row]);
 
       return byJob;
+    }, Effect.mapError(storeError));
+
+    const lastScheduled = Effect.fn("Store.lastScheduled")(function* () {
+      const rows = yield* sql<{ job: string; at: number }>`
+        SELECT job, max(queued_at) AS at FROM runs
+        WHERE trigger = 'schedule'
+        GROUP BY job
+      `;
+
+      return new Map(rows.map((row) => [row.job, row.at]));
     }, Effect.mapError(storeError));
 
     const claim = Effect.fn("Store.claim")(
@@ -3684,6 +3696,7 @@ export class Store extends Context.Service<
       run,
       latestRuns,
       machineRuns,
+      lastScheduled,
       claim: announce(
         touchesIf(
           (taken: Option.Option<Domain.Run>) => Option.isSome(taken),

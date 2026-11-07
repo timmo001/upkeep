@@ -303,6 +303,23 @@ const decideByAgent = Effect.fnUntraced(function* (
 /** How many times a heal starts its agent again after a temporary failure. */
 const startRetries = 3;
 
+const isGh = (error: unknown): error is GhCommandError | GhTimeoutError =>
+  error instanceof GhCommandError || error instanceof GhTimeoutError;
+
+/**
+ * Whether gh failed in a way waiting can get past. One that printed nothing
+ * was most likely stopped or cut off, as in a GitHub or network outage.
+ */
+const ghTransient = (error: GhCommandError | GhTimeoutError) =>
+  isTransient(error) ||
+  (error instanceof GhCommandError &&
+    error.stderr.trim() === "" &&
+    error.stdout.trim() === "");
+
+/** Whether a run failed on a gh command, from its error's first line. */
+const failedOnGh = (run: Domain.Run) =>
+  /^Gh(Command|Timeout)Error\b/.test(run.error ?? "");
+
 /**
  * How long to wait before starting the agent again: until GitHub's rate limit
  * resets, or a backoff of a minute, then two, then four, for a network error
@@ -314,10 +331,7 @@ const startDelay = Effect.fnUntraced(function* (
 ) {
   const error = Cause.squash(cause);
 
-  if (
-    !(error instanceof GhCommandError || error instanceof GhTimeoutError) ||
-    !isTransient(error)
-  )
+  if (!isGh(error) || !ghTransient(error))
     return Option.none<Duration.Duration>();
 
   const backoff = Duration.minutes(2 ** attempt);
@@ -340,7 +354,8 @@ const startDelay = Effect.fnUntraced(function* (
  * Hand a fix to an agent. One that leaves it unfixed marks the run as needing
  * you, with the session in its heal's record. An agent that couldn't
  * start after a temporary failure, such as GitHub's rate limit, starts again
- * once it's passed; one that still can't is left for you.
+ * once it's passed; one that still can't is left for you, unless gh failed
+ * for the run too, when the job runs again.
  */
 const handOff = Effect.fnUntraced(function* (
   healing: Healing,
@@ -392,12 +407,31 @@ const handOff = Effect.fnUntraced(function* (
 
   const result = yield* start(0).pipe(
     Effect.catchCause((cause) =>
-      Effect.succeed({
-        action: `Left for you: the agent couldn't start, ${failureReason(cause)}`,
-        session: null,
-        directory: null,
-        attention: true,
-        said: null,
+      Effect.gen(function* () {
+        // gh failing for the run and for the agent too looks like an outage,
+        // not something an agent can fix, so the job runs again instead.
+        if (!started && isGh(Cause.squash(cause)) && failedOnGh(run)) {
+          const queued = yield* reporter.retry();
+
+          return {
+            action:
+              queued === null
+                ? `Didn't queue ${run.job} again: it's parked. gh failed for the agent's start too, ${failureReason(cause)}`
+                : `Queued ${run.job} again as ${queued.id}: gh failed for the agent's start too, ${failureReason(cause)}, which looks like an outage`,
+            session: null,
+            directory: null,
+            attention: false,
+            said: null,
+          };
+        }
+
+        return {
+          action: `Left for you: the agent couldn't start, ${failureReason(cause)}`,
+          session: null,
+          directory: null,
+          attention: true,
+          said: null,
+        };
       }),
     ),
   );
