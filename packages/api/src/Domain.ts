@@ -64,6 +64,62 @@ export const Release = Schema.Struct({
 
 export interface Release extends Schema.Schema.Type<typeof Release> {}
 
+/** A repository as `owner/name`. */
+export const RepoName = Schema.String.check(
+  Schema.isPattern(/^[\w.-]+\/[\w.-]+$/),
+);
+
+/** The GitHub webhook events Upkeep takes. */
+export const GitHubEventName = Schema.Literals([
+  "release",
+  "push",
+  "workflow_run",
+]);
+
+export type GitHubEventName = typeof GitHubEventName.Type;
+
+/** The most changed paths a push event carries. */
+export const maxEventPaths = 300;
+
+/**
+ * What Upkeep reads from one GitHub webhook delivery, as the events Worker
+ * queues it: a queue message is capped at 128 KB, and a push payload can be
+ * far bigger, so only these fields are kept.
+ */
+export const GitHubEvent = Schema.Struct({
+  /** GitHub's delivery ID, from `X-GitHub-Delivery`, which a repeat keeps. */
+  delivery: Schema.String.check(Schema.isMinLength(1)),
+  event: GitHubEventName,
+  /** Such as `released` or `completed`; null for a push. */
+  action: Schema.NullOr(Schema.String),
+  repo: RepoName,
+  defaultBranch: Schema.NullOr(Schema.String),
+  /** Who caused it, by login. */
+  sender: Schema.NullOr(Schema.String),
+  /** For a push: the ref pushed, such as `refs/heads/main`. */
+  ref: Schema.NullOr(Schema.String),
+  /** For a push: the paths its commits added, changed or removed, at most `maxEventPaths`. */
+  paths: Schema.Array(Schema.String),
+  /** For a push: whether it changed more paths than `paths` holds. */
+  truncated: Schema.Boolean,
+  /** For a release: its tag and page. */
+  release: Schema.NullOr(
+    Schema.Struct({ tag: Schema.String, url: Schema.String }),
+  ),
+  /** For a workflow run: its workflow's name, branch and conclusion. */
+  workflow: Schema.NullOr(
+    Schema.Struct({
+      name: Schema.String,
+      branch: Schema.NullOr(Schema.String),
+      conclusion: Schema.NullOr(Schema.String),
+    }),
+  ),
+  /** When the Worker received it. */
+  at: Schema.Finite,
+});
+
+export interface GitHubEvent extends Schema.Schema.Type<typeof GitHubEvent> {}
+
 /** What started a run. A heal is queued by the server for a failed run. */
 export const Trigger = Schema.Literals([
   "schedule",
@@ -95,11 +151,6 @@ export type RunState = typeof RunState.Type;
 export const Outcome = Schema.Literals(["succeeded", "skipped", "failed"]);
 
 export type Outcome = typeof Outcome.Type;
-
-/** A repository as `owner/name`. */
-export const RepoName = Schema.String.check(
-  Schema.isPattern(/^[\w.-]+\/[\w.-]+$/),
-);
 
 /**
  * A repository Upkeep looks after, and the jobs it's opted into. A job that

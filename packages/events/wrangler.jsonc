@@ -1,0 +1,28 @@
+// The Cloudflare Worker at the GitHub App's webhook URL. It checks each
+// delivery's signature and queues what Upkeep reads for the server to pull.
+// The webhook secret is a Worker secret (WEBHOOK_SECRET), never in here.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "upkeep-events",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "events.upkeep.timmo.dev",
+      "custom_domain": true,
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "EVENTS",
+        "queue": "upkeep-events",
+      },
+    ],
+  },
+  "observability": {
+    "enabled": true,
+  },
+}
