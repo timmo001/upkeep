@@ -765,6 +765,22 @@ const WorkHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       claim: Effect.fn(function* ({ payload }) {
         const worker = yield* Api.CurrentWorker;
+        const speaks = payload.protocol ?? 0;
+
+        // An older worker couldn't decode what it would be given, so it gets
+        // nothing rather than a run it strands
+        if (speaks < Api.protocol) {
+          yield* Effect.logWarning(
+            `Refused work to ${worker.name}: it's older than the server`,
+          ).pipe(
+            Effect.annotateLogs({ protocol: speaks, server: Api.protocol }),
+          );
+
+          return yield* new Api.WorkerOutdated({
+            worker: speaks,
+            server: Api.protocol,
+          });
+        }
 
         if (payload.agents !== undefined) {
           yield* store

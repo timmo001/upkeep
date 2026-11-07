@@ -106,6 +106,25 @@ export class RepoNotScopable extends Schema.TaggedError<RepoNotScopable>()(
   }
 }
 
+/**
+ * The version of what a worker has to read from the server. Bump it whenever
+ * a run gains a value an older worker can't decode, such as a new trigger, so
+ * the server refuses older workers before handing them a run rather than
+ * leaving it stranded until the lost-run sweep.
+ */
+export const protocol = 1;
+
+/** A worker claimed work with an older protocol than the server's. */
+export class WorkerOutdated extends Schema.TaggedError<WorkerOutdated>()(
+  "WorkerOutdated",
+  { worker: Schema.Int, server: Schema.Int },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `This worker is older than the server (protocol ${this.worker}, the server's is ${this.server}), so it's given no runs until upkeep is updated here`;
+  }
+}
+
 export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
   "RunNotFound",
   { id: Schema.String },
@@ -764,13 +783,17 @@ export class WorkGroup extends HttpApiGroup.make("work")
     /**
      * Take the oldest waiting run of one of these jobs, if there is one.
      * `agents` is how the worker is set up to heal, which the dashboard shows.
+     * A worker sending an older `protocol` than the server's, or none, is
+     * refused before any run is taken.
      */
     HttpApiEndpoint.post("claim", "/claim", {
       payload: Schema.Struct({
         jobs: Schema.Array(JobId),
         agents: Schema.optionalKey(AgentSetup),
+        protocol: Schema.optionalKey(Schema.Int),
       }),
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
+      error: WorkerOutdated,
     }),
     /** Tell the server the run is still going. */
     HttpApiEndpoint.post("heartbeat", "/runs/:id/heartbeat", {

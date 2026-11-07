@@ -8,7 +8,7 @@
  * new work until then.
  */
 import type { Gh } from "@timmo001/effect-gh";
-import { Catalogue, Client, Domain } from "@upkeep/api";
+import { Api, Catalogue, Client, Domain } from "@upkeep/api";
 import {
   Cause,
   Clock,
@@ -302,7 +302,9 @@ export const work = Effect.fn("Worker.work")(function* (
     const next = holdOff.pipe(
       Effect.andThen(command ? Effect.succeed({}) : agents),
       Effect.flatMap((setup) =>
-        client.work.claim({ payload: { jobs: laneJobs, ...setup } }),
+        client.work.claim({
+          payload: { jobs: laneJobs, protocol: Api.protocol, ...setup },
+        }),
       ),
       Effect.tap(() => status.update({ reachable: true })),
       Effect.flatMap(({ run }) =>
@@ -328,6 +330,11 @@ export const work = Effect.fn("Worker.work")(function* (
               Effect.flatMap((failed) => status.finished(claimed.job, failed)),
             ),
         }),
+      ),
+      Effect.catchTag("WorkerOutdated", (outdated) =>
+        Effect.logWarning(`${outdated.message}: update upkeep-git`).pipe(
+          Effect.andThen(Effect.sleep(wait)),
+        ),
       ),
       Effect.catchCause((cause) =>
         Effect.logWarning("Couldn't ask the server for work", cause).pipe(

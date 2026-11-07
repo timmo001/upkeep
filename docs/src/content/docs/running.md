@@ -172,6 +172,13 @@ On Arch, the `upkeep-git` package builds the binary from main and installs a
 jobs use, such as `mise` and `opencode2`, then run
 `systemctl --user enable --now upkeep-worker.service`.
 
+Workers follow main and the server ships through releases, so a worker can be
+older than the server. Each claim carries the worker's protocol, and the server
+gives a worker older than itself no runs at all rather than one it can't read:
+the worker logs that it's older than the server and needs `upkeep-git`
+updated, and picks up work again once it is. Update the workers before a
+release that raises the protocol.
+
 A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
 `$UPKEEP_WORKER_STATUS`: a `health`, a one-line `summary` and when it was
 `updated`. The summary says what's running, how the last run ended, which
