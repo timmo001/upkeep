@@ -424,6 +424,11 @@ Supervisor for its address on startup and logs the one it uses.
 | `up-tools`          | Daily at 05:10   | Installs and upgrades every worker's mise tools. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                                |
 | `up-plugins`        | Daily at 05:20   | Updates every worker's agent plugins, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                       |
 
+With [GitHub events](/events) set up, `bump`, `watch`, `sync`, `deps`,
+`drift`, `ci` and `skill-consumers` also start seconds after the release,
+push or workflow run that concerns them, and the schedules above catch what
+an event misses.
+
 The `labels` job reads the conventions from a groundwork checkout, set by
 `UPKEEP_GROUNDWORK` on the worker, running its CLI with the checkout's pinned
 Bun through `mise exec`.
