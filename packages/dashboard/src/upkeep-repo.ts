@@ -205,6 +205,7 @@ export class UpkeepRepo extends LitElement {
             shown.length === 0
               ? empty(mdiCheckCircleOutline, "Nothing here with these filters.")
               : html`<upkeep-feed
+                  storage-key="upkeep.repo.days"
                   .entries=${shown}
                   .titles=${titles}
                 ></upkeep-feed>`

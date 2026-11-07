@@ -15,6 +15,10 @@ import {
 import type { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
+import type {
+  TableColumn,
+  TableRow,
+} from "@timmo001/groundwork-ui/gw-table.ts";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
@@ -22,12 +26,15 @@ import { plural } from "./entries.ts";
 import {
   agentSession,
   capitalise,
+  drawn,
   empty,
   externalLink,
   shared,
   time,
   view,
+  written,
 } from "./ui.ts";
+import { cell } from "./upkeep-cell.ts";
 import {
   approveSkillChange,
   dropSkillChange,
@@ -38,9 +45,11 @@ import {
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
+import "@timmo001/groundwork-ui/gw-code.ts";
 import "@timmo001/groundwork-ui/gw-expansion.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
+import "@timmo001/groundwork-ui/gw-table.ts";
 import "@timmo001/groundwork-ui/layout.ts";
 
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
@@ -101,8 +110,8 @@ export class UpkeepSkills extends LitElement {
       }
 
       dd {
+        min-width: 0;
         margin: 0;
-        white-space: pre-wrap;
       }
 
       dd ul {
@@ -110,23 +119,13 @@ export class UpkeepSkills extends LitElement {
         padding-left: 1.25em;
       }
 
-      pre {
-        margin: 0;
-        padding: var(--gw-space-3);
-        max-height: 32rem;
-        overflow: auto;
-        border-radius: var(--gw-space-2);
-        background: var(--gw-color-surface-lower);
-        font-size: var(--gw-font-size-s);
-        line-height: 1.5;
+      gw-code,
+      gw-table {
+        margin-block-end: var(--gw-space-4);
       }
 
-      .add {
-        color: var(--gw-color-success, green);
-      }
-
-      .remove {
-        color: var(--gw-color-danger, red);
+      gw-table {
+        --gw-table-max-height: 20rem;
       }
 
       .muted {
@@ -222,38 +221,36 @@ export class UpkeepSkills extends LitElement {
     </gw-popover>`;
   }
 
-  /** A patch with its added and removed lines tinted. */
-  #patch(patch: string) {
-    return html`<pre>
-${patch.split("\n").map((line) => {
-        const kind =
-          line.startsWith("+") && !line.startsWith("+++")
-            ? "add"
-            : line.startsWith("-") && !line.startsWith("---")
-              ? "remove"
-              : "";
-
-        return html`<span class=${kind}>${line}</span> `;
-      })}</pre>`;
-  }
-
   #change(change: Domain.SkillChange, workers: Domain.SkillsPage["workers"]) {
-    const worker = workers.find((each) => each.worker === change.worker);
-    const up = worker !== undefined && Date.now() - worker.at < upFor;
-
     return html`<gw-expansion
       heading=${change.title}
       description=${`${change.repo}, ${capitalise(change.work)}`}
       ?open=${change.state === "waiting"}
+      .draw=${drawn(() => this.#changeBody(change, workers))}
     >
       <gw-chip slot="actions" size="xs" tone=${stateTone[change.state]}
         >${change.state}</gw-chip
       >
-      <dl>
-        ${fact("Why", change.reason)}
+    </gw-expansion>`;
+  }
+
+  /** What a change shows open: why, what the agent said, its diff and actions. */
+  #changeBody(
+    change: Domain.SkillChange,
+    workers: Domain.SkillsPage["workers"],
+  ) {
+    const worker = workers.find((each) => each.worker === change.worker);
+    const up = worker !== undefined && Date.now() - worker.at < upFor;
+
+    return html`<dl>
+        ${fact("Why", written(change.reason))}
         ${change.subject === null ? nothing : fact("Commit", change.subject)}
-        ${change.summary === null ? nothing : fact("Agent said", change.summary)}
-        ${change.note === null ? nothing : fact("Note", change.note)}
+        ${
+          change.summary === null
+            ? nothing
+            : fact("Agent said", written(change.summary))
+        }
+        ${change.note === null ? nothing : fact("Note", written(change.note))}
         ${
           change.session === null
             ? nothing
@@ -280,7 +277,15 @@ ${patch.split("\n").map((line) => {
         )}
         ${fact("Updated", time(change.at))}
       </dl>
-      ${change.patch === null ? nothing : this.#patch(change.patch)}
+      ${
+        change.patch === null
+          ? nothing
+          : html`<gw-code
+              diff
+              label=${`The change to ${change.title}`}
+              .content=${change.patch}
+            ></gw-code>`
+      }
       ${
         open(change)
           ? html`<gw-row gap="s">
@@ -329,8 +334,7 @@ ${patch.split("\n").map((line) => {
               >
             </gw-row>`
           : nothing
-      }
-    </gw-expansion>`;
+      }`;
   }
 
   #skill(repo: string, skill: Domain.SkillInfo) {
@@ -346,6 +350,7 @@ ${patch.split("\n").map((line) => {
     return html`<gw-expansion
       heading=${skill.name}
       description=${skill.description}
+      .draw=${drawn(() => this.#skillBody(repo, skill))}
     >
       <gw-chip slot="actions" size="xs" tone=${sourceTone[skill.source]}
         >${skill.source}</gw-chip
@@ -356,7 +361,76 @@ ${patch.split("\n").map((line) => {
             >${text}</gw-chip
           >`,
       )}
-      <dl>
+    </gw-expansion>`;
+  }
+
+  /** A skill's last commits, newest first, as a table. */
+  #commits(repo: string, commits: Domain.SkillInfo["commits"]) {
+    const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
+
+    const draw =
+      (
+        content: (
+          commit: Domain.SkillInfo["commits"][number],
+        ) => TemplateResult | string,
+        width: string | undefined,
+      ) =>
+      (row: TableRow) => {
+        const commit = bySha.get(String(row.id));
+
+        return cell(
+          commit === undefined ? "" : content(commit),
+          width === undefined ? "fill" : { width },
+        );
+      };
+
+    const columns: TableColumn[] = [
+      {
+        id: "sha",
+        header: "Commit",
+        cell: draw(
+          (commit) =>
+            externalLink(
+              `https://github.com/${repo}/commit/${commit.sha}`,
+              html`<code>${commit.sha.slice(0, 7)}</code>`,
+            ),
+          "6rem",
+        ),
+      },
+      {
+        id: "subject",
+        header: "Change",
+        wide: true,
+        cell: draw((commit) => commit.subject, undefined),
+      },
+      {
+        id: "at",
+        header: "When",
+        searchable: false,
+        cell: draw((commit) => time(commit.at), "7rem"),
+      },
+    ];
+
+    return html`<gw-table
+      label="Commits"
+      contained
+      row-key="id"
+      sort="at"
+      descending
+      search-label="Search commits"
+      .columns=${columns}
+      .rows=${commits.map((commit) => ({
+        id: commit.sha,
+        sha: commit.sha,
+        subject: commit.subject,
+        at: commit.at,
+      }))}
+    ></gw-table>`;
+  }
+
+  /** What a skill shows open: where it's from, how it stands, its commits. */
+  #skillBody(repo: string, skill: Domain.SkillInfo) {
+    return html`<dl>
         ${
           skill.origin === null
             ? nothing
@@ -402,27 +476,8 @@ ${patch.split("\n").map((line) => {
             ? nothing
             : fact("Copies in", skill.copies.join(", "))
         }
-        ${
-          skill.commits.length === 0
-            ? nothing
-            : fact(
-                "Commits",
-                html`<ul>
-                  ${skill.commits.map(
-                    (commit) =>
-                      html`<li>
-                        ${externalLink(
-                          `https://github.com/${repo}/commit/${commit.sha}`,
-                          html`<code>${commit.sha.slice(0, 7)}</code>`,
-                        )}
-                        ${commit.subject}
-                        <span class="muted">${time(commit.at)}</span>
-                      </li>`,
-                  )}
-                </ul>`,
-              )
-        }
       </dl>
+      ${skill.commits.length === 0 ? nothing : this.#commits(repo, skill.commits)}
       <gw-button
         size="small"
         appearance="outlined"
@@ -431,8 +486,7 @@ ${patch.split("\n").map((line) => {
         @click=${(event: Event) =>
           this.#ask(event, { kind: "request", repo, skill: skill.name })}
         >Ask for a change</gw-button
-      >
-    </gw-expansion>`;
+      >`;
   }
 
   #render(page: Domain.SkillsPage) {
@@ -460,11 +514,14 @@ ${patch.split("\n").map((line) => {
             : html`<gw-expansion
                 heading="Ended lately"
                 description=${plural(ended.length, "change")}
-              >
-                <gw-stack gap="s">
-                  ${ended.map((change) => this.#change(change, page.workers))}
-                </gw-stack>
-              </gw-expansion>`
+                storage-key="upkeep.skills.ended"
+                .draw=${drawn(
+                  () =>
+                    html`<gw-stack gap="s">
+                      ${ended.map((change) => this.#change(change, page.workers))}
+                    </gw-stack>`,
+                )}
+              ></gw-expansion>`
         }
         <gw-input
           class="search"

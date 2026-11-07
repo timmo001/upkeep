@@ -1,15 +1,17 @@
 /**
- * `upkeep-feed`: inbox entries by day, as one list windowed with TanStack
- * Virtual, so only the rows on screen are drawn however long it gets. Each
- * entry is a groundwork expansion panel saying what it did; its commits, and
- * links to the job and run behind it, are only drawn once it's opened, which
- * also marks it read.
+ * `upkeep-feed`: inbox entries under days that fold, as a groundwork
+ * `gw-list`, so only the entries on screen are drawn however long it gets.
+ * Each entry is an expansion panel saying what it did; its changes, as a
+ * table, and links to the job and run behind it are only drawn once it's
+ * opened, which also marks it read.
  */
-import { WindowVirtualizerController } from "@tanstack/lit-virtual";
 import { Catalogue, type Domain } from "@upkeep/api";
-import { css, html, LitElement, nothing } from "lit";
-import { ref } from "lit/directives/ref.js";
-import { repeat } from "lit/directives/repeat.js";
+import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
+import type {
+  TableColumn,
+  TableRow,
+} from "@timmo001/groundwork-ui/gw-table.ts";
+import { css, html, LitElement, nothing, render } from "lit";
 import { registry } from "./AtomController.ts";
 import {
   dayOf,
@@ -22,86 +24,44 @@ import {
   type Titles,
 } from "./entries.ts";
 import { externalLink, shared, time } from "./ui.ts";
+import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import { jobHref, markRead, runHref } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/gw-dot.ts";
-import "@timmo001/groundwork-ui/gw-expansion.ts";
+import "@timmo001/groundwork-ui/gw-list.ts";
+import "@timmo001/groundwork-ui/gw-table.ts";
 import "@timmo001/groundwork-ui/layout.ts";
 
-type Row =
-  | { readonly kind: "day"; readonly key: string; readonly day: string }
-  | {
-      readonly kind: "entry";
-      readonly key: string;
-      readonly entry: Domain.Entry;
-    };
+const keyOf = (entry: Domain.Entry) => entry.id;
 
-/** Day headings before each day's entries, newest first. */
-const rowsOf = (entries: ReadonlyArray<Domain.Entry>) => {
-  const rows: Array<Row> = [];
-  let last = "";
+/** The day an entry belongs to, as the start of that day, so it sorts and keeps. */
+const dayKey = (entry: Domain.Entry) =>
+  String(new Date(entry.lastAt).setHours(0, 0, 0, 0));
 
-  for (const entry of entries) {
-    const day = dayOf(entry.lastAt);
-
-    if (day !== last) {
-      rows.push({ kind: "day", key: `day:${day}`, day });
-      last = day;
-    }
-
-    rows.push({ kind: "entry", key: entry.id, entry });
-  }
-
-  return rows;
-};
+const dayLabel = (value: string) => dayOf(Number(value));
 
 export class UpkeepFeed extends LitElement {
   static override properties = {
     entries: { attribute: false },
     titles: { attribute: false },
+    storageKey: { attribute: "storage-key" },
   };
 
   static override styles = [
     shared,
     css`
-      .day {
-        padding: var(--gw-space-5) 0 var(--gw-space-2);
-        color: var(--gw-color-text-secondary);
-        font-size: var(--gw-font-size-s);
-        font-weight: var(--gw-font-weight-strong);
-      }
-
-      .entry {
-        padding-bottom: var(--gw-space-2);
-      }
-
       .read::part(heading) {
         font-weight: normal;
         color: var(--gw-color-text-secondary);
       }
 
-      .items {
-        margin: var(--gw-space-2) 0 0;
-        padding: 0;
-        list-style: none;
-        font-size: var(--gw-font-size-s);
-      }
-
-      .items li {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--gw-space-2);
-        align-items: baseline;
-        padding: var(--gw-space-1) 0;
-      }
-
-      .items li + li {
-        border-top: 1px dashed var(--gw-color-border-quiet);
-      }
-
       .when {
         color: var(--gw-color-text-secondary);
         font-size: var(--gw-font-size-s);
+      }
+
+      gw-table {
+        --gw-table-max-height: 24rem;
       }
     `,
   ];
@@ -110,31 +70,43 @@ export class UpkeepFeed extends LitElement {
 
   declare titles: Titles;
 
-  /** The entries opened, whose commits are drawn. */
-  readonly #open = new Set<string>();
+  /** Where the days folded away are kept, so each page keeps its own. */
+  declare storageKey: string;
 
-  readonly #virtualizer = new WindowVirtualizerController<HTMLDivElement>(
-    this,
-    { count: 0, estimateSize: () => 72, overscan: 8 },
-  );
+  /** Draws an entry into the list, made again when the titles change. */
+  #draw = (entry: Domain.Entry, target: HTMLElement) => {
+    render(this.#entry(entry), target);
+  };
 
   constructor() {
     super();
     this.entries = [];
     this.titles = new Map();
+    this.storageKey = "";
   }
 
-  #toggle(entry: Domain.Entry, event: Event) {
-    const open =
-      event.currentTarget instanceof HTMLElement &&
-      event.currentTarget.hasAttribute("open");
+  override willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (changed.has("titles")) {
+      this.#draw = (entry, target) => {
+        render(this.#entry(entry), target);
+      };
+    }
+  }
 
-    if (open) this.#open.add(entry.id);
-    else this.#open.delete(entry.id);
+  /** Marks an entry read once it's opened, after the frame that opens it. */
+  #toggled(entry: Domain.Entry, event: Event) {
+    if (
+      event.target !== event.currentTarget ||
+      !(event.currentTarget instanceof GwExpansion) ||
+      !event.currentTarget.open ||
+      entry.readAt !== null
+    ) {
+      return;
+    }
 
-    if (open && entry.readAt === null) registry.set(markRead, [entry.id]);
-
-    this.requestUpdate();
+    requestAnimationFrame(() => {
+      setTimeout(() => registry.set(markRead, [entry.id]));
+    });
   }
 
   /** Links to the job behind an entry and, while it's kept, its run. */
@@ -156,109 +128,128 @@ export class UpkeepFeed extends LitElement {
     }`;
   }
 
+  /** What an entry changed, newest first, as a table of its own. */
+  #changes(entry: Domain.Entry) {
+    const byId = new Map(
+      entry.items.map((item, index) => [String(index), item]),
+    );
+
+    const draw =
+      (
+        content: (item: Domain.Entry["items"][number]) => CellContent,
+        size: CellSize,
+      ) =>
+      (row: TableRow) => {
+        const item = byId.get(String(row.id));
+
+        return cell(item === undefined ? "" : content(item), size);
+      };
+
+    const columns: TableColumn[] = [
+      {
+        id: "repo",
+        header: "Repository",
+        cell: draw((item) => titleOf(item.repo, this.titles), {
+          width: "9rem",
+        }),
+      },
+      {
+        id: "text",
+        header: "Change",
+        wide: true,
+        cell: draw(
+          (item) =>
+            item.url === null ? item.text : externalLink(item.url, item.text),
+          "fill",
+        ),
+      },
+      {
+        id: "at",
+        header: "When",
+        searchable: false,
+        cell: draw((item) => time(item.at), { width: "7rem" }),
+      },
+    ];
+
+    return html`<gw-table
+      label="Changes"
+      contained
+      row-key="id"
+      sort="at"
+      descending
+      search-label="Search changes"
+      .columns=${columns}
+      .rows=${entry.items.map((item, index) => ({
+        id: String(index),
+        repo: titleOf(item.repo, this.titles),
+        text: item.text,
+        at: item.at,
+      }))}
+    ></gw-table>`;
+  }
+
+  /** What an entry shows open: what it was, when, where from, and its changes. */
+  #body(entry: Domain.Entry) {
+    const kind = kinds[entry.kind];
+    const fixes = fixesOf(entry);
+
+    return html`<gw-stack gap="s">
+      <gw-row gap="s">
+        <gw-chip size="xs" tone=${entry.you ? "accent" : kind.tone}
+          >${entry.you ? "You" : kind.label}</gw-chip
+        >
+        ${
+          fixes.length > 0
+            ? html`<gw-chip size="xs" tone="success"
+                >${plural(fixes.length, "fix", "fixes")} by Upkeep</gw-chip
+              >`
+            : nothing
+        }
+        ${
+          entry.routine
+            ? html`<gw-chip size="xs">Version bump</gw-chip>`
+            : nothing
+        }
+        <span class="when">${time(entry.lastAt)}</span>
+        ${entry.url === null ? nothing : externalLink(entry.url, "The release")}
+        ${this.#source(entry)}
+      </gw-row>
+      ${this.#changes(entry)}
+    </gw-stack>`;
+  }
+
   #entry(entry: Domain.Entry) {
     const { heading, description } = describe(entry, this.titles);
-    const kind = kinds[entry.kind];
     const unread = entry.readAt === null;
-    const open = this.#open.has(entry.id);
-    const fixes = fixesOf(entry);
 
     return html`<gw-expansion
       class=${unread ? "" : "read"}
       heading=${heading}
       description=${description}
-      ?open=${open}
-      @toggle=${(event: Event) => this.#toggle(entry, event)}
+      .draw=${(target: HTMLElement) => {
+        render(this.#body(entry), target);
+      }}
+      @toggle=${(event: Event) => this.#toggled(entry, event)}
     >
       <gw-dot
         slot="icon"
         tone=${unread ? "accent" : "neutral"}
         label=${unread ? "Unread" : "Read"}
       ></gw-dot>
-      ${
-        open
-          ? html`<gw-row gap="s">
-                <gw-chip size="xs" tone=${entry.you ? "accent" : kind.tone}
-                  >${entry.you ? "You" : kind.label}</gw-chip
-                >
-                ${
-                  fixes.length > 0
-                    ? html`<gw-chip size="xs" tone="success"
-                        >${plural(fixes.length, "fix", "fixes")} by
-                        Upkeep</gw-chip
-                      >`
-                    : nothing
-                }
-                ${
-                  entry.routine
-                    ? html`<gw-chip size="xs">Version bump</gw-chip>`
-                    : nothing
-                }
-                <span class="when">${time(entry.lastAt)}</span>
-                ${entry.url === null ? nothing : externalLink(entry.url, "The release")}
-                ${this.#source(entry)}
-              </gw-row>
-              <ul class="items">
-                ${entry.items.toReversed().map(
-                  (item) =>
-                    html`<li>
-                      <gw-chip size="xs"
-                        >${titleOf(item.repo, this.titles)}</gw-chip
-                      >
-                      ${item.url === null ? item.text : externalLink(item.url, item.text)}
-                      <span class="when">${time(item.at)}</span>
-                    </li>`,
-                )}
-              </ul>`
-          : nothing
-      }
     </gw-expansion>`;
   }
 
   override render() {
-    const rows = rowsOf(this.entries);
-    const virtualizer = this.#virtualizer.getVirtualizer();
-
-    virtualizer.setOptions({
-      ...virtualizer.options,
-      count: rows.length,
-      getItemKey: (index) => rows[index]?.key ?? index,
-      // Where the list starts on the page, which the window scrolls past
-      scrollMargin: this.getBoundingClientRect().top + window.scrollY,
-    });
-
-    const items = virtualizer.getVirtualItems();
-    const offset = (items[0]?.start ?? 0) - virtualizer.options.scrollMargin;
-
-    return html`<div
-      style="position: relative; height: ${virtualizer.getTotalSize()}px"
-    >
-      <div
-        style="position: absolute; inset: 0 0 auto; transform: translateY(${offset}px)"
-      >
-        ${repeat(
-          items,
-          (item) => item.key,
-          (item) => {
-            const row = rows[item.index];
-
-            if (row === undefined) return nothing;
-
-            return html`<div
-              data-index=${item.index}
-              class=${row.kind}
-              ${ref((element) => {
-                if (element instanceof HTMLDivElement) {
-                  virtualizer.measureElement(element);
-                }
-              })}
-            >
-              ${row.kind === "day" ? row.day : this.#entry(row.entry)}
-            </div>`;
-          },
-        )}
-      </div>
-    </div>`;
+    return html`<gw-list
+      label="What changed"
+      storage-key=${this.storageKey}
+      estimate="64"
+      .items=${this.entries}
+      .keyOf=${keyOf}
+      .groupOf=${dayKey}
+      .groupLabel=${dayLabel}
+      .draw=${this.#draw}
+    ></gw-list>`;
   }
 }
 

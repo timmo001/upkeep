@@ -65,7 +65,10 @@ const dayLabel = (day: string) => {
 };
 
 export class UpkeepRuns extends LitElement {
-  static override properties = { job: {} };
+  static override properties = {
+    job: {},
+    groupsCollapsed: { type: Boolean, attribute: "groups-collapsed" },
+  };
 
   static override styles = [
     shared,
@@ -81,9 +84,13 @@ export class UpkeepRuns extends LitElement {
   /** The job to show the runs of, or every job's when empty. */
   declare job: string;
 
+  /** Starts with every day folded away. */
+  declare groupsCollapsed: boolean;
+
   constructor() {
     super();
     this.job = "";
+    this.groupsCollapsed = false;
   }
 
   readonly #runs = new AtomController(this, () => runs(this.job), always);
@@ -207,8 +214,11 @@ export class UpkeepRuns extends LitElement {
     ];
 
     return html`<gw-table
+      storage-key=${this.job === "" ? "upkeep.runs.table" : "upkeep.job-runs.table"}
       label="Runs"
       group="day"
+      ?groups-collapsed=${this.groupsCollapsed}
+      contained
       row-key="id"
       search-label="Search runs"
       .columns=${columns}

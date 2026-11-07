@@ -19,7 +19,7 @@ import {
 import { type Api, Catalogue, type Domain } from "@upkeep/api";
 import { type Cause, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
-import { css, html, svg, type TemplateResult } from "lit";
+import { css, html, render, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
 import { openSession, token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
@@ -27,6 +27,7 @@ import "@timmo001/groundwork-ui/gw-badge.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-empty-state.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
+import "@timmo001/groundwork-ui/gw-markdown.ts";
 import "./upkeep-sign-in.ts";
 
 /** Styles every element shares. */
@@ -309,13 +310,18 @@ export const view = <A>(
 export const empty = (path: string, message: string) =>
   html`<gw-empty-state icon=${path}><p>${message}</p></gw-empty-state>`;
 
-/** A pushed commit: its repository, short SHA linked to it, and subject. */
-export const commit = (change: Domain.Change) =>
-  html`<span class="commit"
-    ><span class="muted">${change.repo.split("/").at(-1)}</span>
-    ${externalLink(change.url, html`<code>${change.sha.slice(0, 7)}</code>`)}
-    ${change.subject}</span
-  >`;
+/**
+ * An expansion panel's `draw`: draws a template into the panel the first
+ * time it opens, so a closed panel costs nothing.
+ */
+export const drawn =
+  (content: () => TemplateResult) => (target: HTMLElement) => {
+    render(content(), target);
+  };
+
+/** Text a person or an agent wrote, read as markdown. */
+export const written = (text: string) =>
+  html`<gw-markdown .content=${text}></gw-markdown>`;
 
 /** A badge for a run that left something for a person. */
 export const attentionBadge = html`<gw-badge

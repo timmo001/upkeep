@@ -33,20 +33,24 @@ import {
   mdiRocketLaunchOutline,
   mdiSourcePull,
   mdiSwapHorizontal,
-  mdiTagOutline,
 } from "@mdi/js";
 import { Domain } from "@upkeep/api";
-import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import { getStorage } from "@timmo001/groundwork-ui/storage.ts";
+import type {
+  TableColumn,
+  TableRow,
+} from "@timmo001/groundwork-ui/gw-table.ts";
 import { Option, Schema } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
-import { empty, externalLink, icon, shared, time, view } from "./ui.ts";
+import { drawn, empty, externalLink, icon, shared, time, view } from "./ui.ts";
+import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
   addRule,
   addWait,
@@ -72,9 +76,11 @@ import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-spinner.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
+import "@timmo001/groundwork-ui/gw-expansion.ts";
 import "@timmo001/groundwork-ui/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
+import "@timmo001/groundwork-ui/gw-table.ts";
 import "@timmo001/groundwork-ui/layout.ts";
 
 type Scope = "work" | "personal" | "all";
@@ -86,13 +92,41 @@ const scopes: ReadonlyArray<{ readonly value: Scope; readonly label: string }> =
     { value: "all", label: "All" },
   ];
 
+/** Where groups were kept folded before each panel kept its own state. */
 const collapsedKey = "upkeep.attention.collapsed";
+
+/** Where a group's panel keeps whether it's open. */
+const groupKey = (id: string) => `upkeep.attention.group.${id}`;
+
+/** Where a folded section's panel keeps whether it's open. */
+const sectionKey = (id: string) => `upkeep.attention.section.${id}`;
+
+/** Where Since you last looked keeps whether its full list shows. */
+const sinceKey = "upkeep.attention.since";
 
 const lastWorkerKey = "upkeep.attention.worker";
 
 const decodeCollapsed = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(Schema.String)),
 );
+
+/** Moves the groups folded under the old shared key to their own keys, once. */
+const migrateCollapsed = () => {
+  const old = localStorage.getItem(collapsedKey);
+
+  if (old === null) return;
+
+  const store = getStorage();
+
+  for (const id of Option.getOrElse(
+    decodeCollapsed(old),
+    (): ReadonlyArray<string> => [],
+  )) {
+    store.set(groupKey(id), false);
+  }
+
+  localStorage.removeItem(collapsedKey);
+};
 
 const isScope = (value: string): value is Scope =>
   scopes.some((scope) => scope.value === value);
@@ -210,27 +244,76 @@ const chosen = (event: Event) => {
   });
 };
 
-/** One thing that moved on an item, or its going. */
-const line = (change: Domain.AttentionChange) =>
-  html`<li>
-    ${icon(change.gone ? mdiCheckCircleOutline : mdiRefresh)}
-    <div class="body">
-      <span class=${change.gone ? "title gone" : "title"}
-        >${externalLink(change.url, change.title)}</span
-      >
-      <div class="meta">
-        <span>${change.repo}</span>
-        <span>${time(change.at)}</span>
-        ${
+/** A table column's cell, drawn from the row's own record by its ID. */
+const drawFrom =
+  <T>(byId: ReadonlyMap<string, T>) =>
+  (content: (each: T) => CellContent, size: CellSize) =>
+  (row: TableRow) => {
+    const each = byId.get(String(row.id));
+
+    return cell(each === undefined ? "" : content(each), size);
+  };
+
+/** What moved on items, or their going, as a table of its own. */
+const changeTable = (
+  changes: ReadonlyArray<Domain.AttentionChange>,
+  label: string,
+) => {
+  const draw = drawFrom(
+    new Map(changes.map((change, index) => [String(index), change])),
+  );
+
+  const columns: TableColumn[] = [
+    {
+      id: "repo",
+      header: "Repository",
+      cell: draw((change) => change.repo, { width: "11rem" }),
+    },
+    {
+      id: "title",
+      header: "Item",
+      wide: true,
+      cell: draw((change) => externalLink(change.url, change.title), "fill"),
+    },
+    {
+      id: "what",
+      header: "What moved",
+      sortable: false,
+      cell: draw(
+        (change) =>
           change.gone
-            ? html`<gw-chip size="xs" tone="success">Gone</gw-chip>`
+            ? [html`<gw-chip size="xs" tone="success">Gone</gw-chip>`]
             : change.what.map(
                 (what) => html`<gw-chip size="xs">${what}</gw-chip>`,
-              )
-        }
-      </div>
-    </div>
-  </li>`;
+              ),
+        { width: "12rem" },
+      ),
+    },
+    {
+      id: "at",
+      header: "When",
+      searchable: false,
+      cell: draw((change) => time(change.at), { width: "7rem" }),
+    },
+  ];
+
+  return html`<gw-table
+    label=${label}
+    contained
+    row-key="id"
+    sort="at"
+    descending
+    search-label="Search"
+    .columns=${columns}
+    .rows=${changes.map((change, index) => ({
+      id: String(index),
+      repo: change.repo,
+      title: change.title,
+      what: change.gone ? "Gone" : change.what.join(", "),
+      at: change.at,
+    }))}
+  ></gw-table>`;
+};
 
 /** A group with the items it shows now, and the section it sits in. */
 interface Block {
@@ -328,21 +411,18 @@ export class UpkeepAttention extends LitElement {
         list-style: none;
       }
 
-      .items li,
-      .changes li {
+      .items li {
         display: grid;
         grid-template-columns: auto 1fr;
         gap: var(--gw-space-1) var(--gw-space-3);
         padding: var(--gw-space-3) 0;
       }
 
-      .items li + li,
-      .changes li + li {
+      .items li + li {
         border-top: 1px dashed var(--gw-color-border-quiet);
       }
 
-      .items li > .icon,
-      .changes li > .icon {
+      .items li > .icon {
         margin-top: 0.2em;
         color: var(--gw-color-text-secondary);
       }
@@ -383,8 +463,12 @@ export class UpkeepAttention extends LitElement {
         margin-inline-start: var(--gw-space-3);
       }
 
-      .since + .changes {
+      .since + gw-table {
         margin-top: var(--gw-space-2);
+      }
+
+      gw-table {
+        --gw-table-max-height: 24rem;
       }
 
       .body {
@@ -472,24 +556,6 @@ export class UpkeepAttention extends LitElement {
   /** Your latest comments, shown on what each is about. */
   #comments: ReadonlyArray<Domain.AttentionComment> = [];
 
-  /** Groups folded down to their heading, kept in this browser. */
-  #collapsed = new Set(
-    Option.getOrElse(
-      decodeCollapsed(localStorage.getItem(collapsedKey) ?? "[]"),
-      (): ReadonlyArray<string> => [],
-    ),
-  );
-
-  #setCollapsed(group: string, collapsed: boolean) {
-    if (this.#collapsed.has(group) === collapsed) return;
-
-    if (collapsed) this.#collapsed.add(group);
-    else this.#collapsed.delete(group);
-
-    localStorage.setItem(collapsedKey, JSON.stringify([...this.#collapsed]));
-    this.requestUpdate();
-  }
-
   #prompt: GwPopover | undefined;
 
   #promptInput: GwInput | undefined;
@@ -533,8 +599,8 @@ export class UpkeepAttention extends LitElement {
   /** Whether the prompt open now saves with nothing typed. */
   #optional = false;
 
-  /** Whether Since you last looked shows its full list. */
-  #sinceOpen = false;
+  /** Whether Since you last looked shows its full list, kept in this browser. */
+  #sinceOpen = getStorage().get(sinceKey) === true;
 
   /** Workers that can open an agent, and the one used last here. */
   readonly #agents = new AtomController(this, () => agents, always);
@@ -899,16 +965,9 @@ export class UpkeepAttention extends LitElement {
     return html`<gw-expansion
       heading=${group.name}
       description=${`${group.source === "github" ? "Linked on GitHub" : "Grouped by you"}, ${plural(block.items.length, "item")}`}
-      ?open=${!this.#collapsed.has(group.id)}
-      @toggle=${(event: Event) => {
-        // Expansions inside the group bubble their toggle up through it
-        if (
-          event.target === event.currentTarget &&
-          event.currentTarget instanceof GwExpansion
-        ) {
-          this.#setCollapsed(group.id, !event.currentTarget.open);
-        }
-      }}
+      open
+      storage-key=${groupKey(group.id)}
+      .draw=${drawn(() => this.#blockBody(block, since))}
     >
       <span slot="actions">${this.#startMenu({ group: group.id })}</span>
       <gw-menu-button
@@ -985,7 +1044,6 @@ export class UpkeepAttention extends LitElement {
           }
         }}
       ></gw-menu-button>
-      ${this.#blockBody(block, since)}
     </gw-expansion>`;
   }
 
@@ -1037,6 +1095,7 @@ export class UpkeepAttention extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    migrateCollapsed();
     registry.set(openAttention, undefined);
   }
 
@@ -1161,51 +1220,55 @@ export class UpkeepAttention extends LitElement {
     return html`<gw-expansion
       heading=${`Agent rules (${page.rules.length})`}
       description="Standing instructions the context agent follows on every run"
-    >
-      <gw-stack gap="s">
-        ${
-          page.rules.length === 0
-            ? html`<p class="description">
-                None yet. A comment that's a standing instruction becomes one.
-              </p>`
-            : html`<ul class="waits">
-                ${page.rules.map(
-                  (rule) =>
-                    html`<li>
-                      ${icon(mdiRobotOutline)}
-                      <span>${rule.text}</span>
-                      <gw-button
-                        size="xs"
-                        appearance="plain"
-                        variant="neutral"
-                        labels="hide"
-                        icon=${mdiClose}
-                        label="Remove"
-                        @click=${() => registry.set(removeRule, rule.id)}
-                      ></gw-button>
-                    </li>`,
-                )}
-              </ul>`
-        }
-        <div class="actions">
-          <gw-button
-            size="xs"
-            appearance="outlined"
-            variant="neutral"
-            icon=${mdiPlus}
-            @click=${(event: Event) =>
-              this.#ask(
-                event,
-                "New rule",
-                "Such as: skip threads I'm only subscribed to",
-                "",
-                (text) => registry.set(addRule, text),
+      storage-key=${sectionKey("rules")}
+      .draw=${drawn(() => this.#rulesBody(page))}
+    ></gw-expansion>`;
+  }
+
+  #rulesBody(page: Domain.Attention) {
+    return html`<gw-stack gap="s">
+      ${
+        page.rules.length === 0
+          ? html`<p class="description">
+              None yet. A comment that's a standing instruction becomes one.
+            </p>`
+          : html`<ul class="waits">
+              ${page.rules.map(
+                (rule) =>
+                  html`<li>
+                    ${icon(mdiRobotOutline)}
+                    <span>${rule.text}</span>
+                    <gw-button
+                      size="xs"
+                      appearance="plain"
+                      variant="neutral"
+                      labels="hide"
+                      icon=${mdiClose}
+                      label="Remove"
+                      @click=${() => registry.set(removeRule, rule.id)}
+                    ></gw-button>
+                  </li>`,
               )}
-            >Add a rule</gw-button
-          >
-        </div>
-      </gw-stack>
-    </gw-expansion>`;
+            </ul>`
+      }
+      <div class="actions">
+        <gw-button
+          size="xs"
+          appearance="outlined"
+          variant="neutral"
+          icon=${mdiPlus}
+          @click=${(event: Event) =>
+            this.#ask(
+              event,
+              "New rule",
+              "Such as: skip threads I'm only subscribed to",
+              "",
+              (text) => registry.set(addRule, text),
+            )}
+          >Add a rule</gw-button
+        >
+      </div>
+    </gw-stack>`;
   }
 
   /** Its status and type labels, then what GitHub says about it. */
@@ -1312,29 +1375,64 @@ export class UpkeepAttention extends LitElement {
       : html`<gw-expansion
           heading=${`Latest releases (${releases.length})`}
           description="Of the repositories above, newest first"
-        >
-          <ul class="changes">
-            ${releases.map(
-              (release) =>
-                html`<li>
-                  ${icon(mdiTagOutline)}
-                  <div class="body">
-                    <span class="title"
-                      >${externalLink(release.url, `${release.repo} ${release.tag}`)}</span
-                    >
-                    <div class="meta">
-                      <span>${time(release.seenAt)}</span>
-                      ${
-                        page.since !== null && release.seenAt > page.since
-                          ? html`<gw-chip size="xs" tone="accent">New</gw-chip>`
-                          : nothing
-                      }
-                    </div>
-                  </div>
-                </li>`,
-            )}
-          </ul>
-        </gw-expansion>`;
+          storage-key=${sectionKey("releases")}
+          .draw=${drawn(() => this.#releaseTable(page, releases))}
+        ></gw-expansion>`;
+  }
+
+  #releaseTable(
+    page: Domain.Attention,
+    releases: Domain.Attention["releases"],
+  ) {
+    const draw = drawFrom(
+      new Map(releases.map((release, index) => [String(index), release])),
+    );
+
+    const columns: TableColumn[] = [
+      {
+        id: "repo",
+        header: "Repository",
+        wide: true,
+        cell: draw((release) => release.repo, "fill"),
+      },
+      {
+        id: "tag",
+        header: "Release",
+        cell: draw((release) => externalLink(release.url, release.tag), {
+          width: "9rem",
+        }),
+      },
+      {
+        id: "seen",
+        header: "Seen",
+        searchable: false,
+        cell: draw(
+          (release) =>
+            html`${time(release.seenAt)}${
+              page.since !== null && release.seenAt > page.since
+                ? html` <gw-chip size="xs" tone="accent">New</gw-chip>`
+                : nothing
+            }`,
+          { width: "10rem" },
+        ),
+      },
+    ];
+
+    return html`<gw-table
+      label="Latest releases"
+      contained
+      row-key="id"
+      sort="seen"
+      descending
+      search-label="Search releases"
+      .columns=${columns}
+      .rows=${releases.map((release, index) => ({
+        id: String(index),
+        repo: release.repo,
+        tag: release.tag,
+        seen: release.seenAt,
+      }))}
+    ></gw-table>`;
   }
 
   /** What went over the last week, whatever the scope, as a history. */
@@ -1346,11 +1444,9 @@ export class UpkeepAttention extends LitElement {
       : html`<gw-expansion
           heading=${`Gone (${gone.length})`}
           description="Closed, or no longer involving you, over the last week"
-        >
-          <ul class="changes">
-            ${gone.map(line)}
-          </ul>
-        </gw-expansion>`;
+          storage-key=${sectionKey("gone")}
+          .draw=${drawn(() => changeTable(gone, "Gone"))}
+        ></gw-expansion>`;
   }
 
   #changes(page: Domain.Attention, scope: Scope) {
@@ -1397,19 +1493,14 @@ export class UpkeepAttention extends LitElement {
                 aria-expanded=${open ? "true" : "false"}
                 @click=${() => {
                   this.#sinceOpen = !this.#sinceOpen;
+                  getStorage().set(sinceKey, this.#sinceOpen);
                   this.requestUpdate();
                 }}
                 >${open ? "Hide" : "Details"}</gw-button
               >`
         }
       </div>
-      ${
-        open
-          ? html`<ul class="changes">
-              ${changes.map(line)}
-            </ul>`
-          : nothing
-      }
+      ${open ? changeTable(changes, "What moved") : nothing}
     </gw-card>`;
   }
 
@@ -1580,16 +1671,19 @@ export class UpkeepAttention extends LitElement {
                   return html`<gw-expansion
                     heading=${`${section.heading} (${count(section.id)})`}
                     description=${section.description}
-                  >
-                    <gw-stack gap="s">
-                      ${placed(section.id).map((block) =>
-                        this.#block(block, page.since),
-                      )}
-                      <ul class="items">
-                        ${items.map((item) => this.#item(item, page.since))}
-                      </ul>
-                    </gw-stack>
-                  </gw-expansion>`;
+                    storage-key=${sectionKey(section.id)}
+                    .draw=${drawn(
+                      () =>
+                        html`<gw-stack gap="s">
+                          ${placed(section.id).map((block) =>
+                            this.#block(block, page.since),
+                          )}
+                          <ul class="items">
+                            ${items.map((item) => this.#item(item, page.since))}
+                          </ul>
+                        </gw-stack>`,
+                    )}
+                  ></gw-expansion>`;
                 })}
                 ${
                   parked.length === 0
@@ -1597,11 +1691,14 @@ export class UpkeepAttention extends LitElement {
                     : html`<gw-expansion
                         heading=${`Parked (${parked.length})`}
                         description="Groups put away for now"
-                      >
-                        <gw-stack gap="s">
-                          ${parked.map((block) => this.#block(block, page.since))}
-                        </gw-stack>
-                      </gw-expansion>`
+                        storage-key=${sectionKey("parked")}
+                        .draw=${drawn(
+                          () =>
+                            html`<gw-stack gap="s">
+                              ${parked.map((block) => this.#block(block, page.since))}
+                            </gw-stack>`,
+                        )}
+                      ></gw-expansion>`
                 }
                 ${
                   hidden.length === 0
@@ -1609,11 +1706,14 @@ export class UpkeepAttention extends LitElement {
                     : html`<gw-expansion
                         heading=${`Hidden (${hidden.length})`}
                         description="Each comes back once anything about it changes"
-                      >
-                        <ul class="items">
-                          ${hidden.map((item) => this.#item(item, page.since))}
-                        </ul>
-                      </gw-expansion>`
+                        storage-key=${sectionKey("hidden")}
+                        .draw=${drawn(
+                          () =>
+                            html`<ul class="items">
+                              ${hidden.map((item) => this.#item(item, page.since))}
+                            </ul>`,
+                        )}
+                      ></gw-expansion>`
                 }
                 ${this.#releases(page, shown)} ${this.#gone(page)}
                 ${this.#rules(page)}

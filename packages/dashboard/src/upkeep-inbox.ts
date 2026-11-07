@@ -230,6 +230,7 @@ export class UpkeepInbox extends LitElement {
             shown.length === 0
               ? empty(mdiCheckCircleOutline, "Nothing here with these filters.")
               : html`<upkeep-feed
+                  storage-key="upkeep.inbox.days"
                   .entries=${shown}
                   .titles=${titles}
                 ></upkeep-feed>`

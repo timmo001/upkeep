@@ -5,15 +5,18 @@
  */
 import { mdiArrowLeft, mdiCancel, mdiCheck, mdiReplay } from "@mdi/js";
 import { Domain } from "@upkeep/api";
+import type {
+  TableColumn,
+  TableRow,
+} from "@timmo001/groundwork-ui/gw-table.ts";
 import { AsyncResult } from "effect/reactivity";
-import { css, html, LitElement, type TemplateResult } from "lit";
+import { css, html, LitElement, render, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import {
   agentLabel,
   agentSession,
   attentionBadge,
   capitalise,
-  commit,
   duration,
   externalLink,
   formatTime,
@@ -22,7 +25,9 @@ import {
   stateBadge,
   time,
   view,
+  written,
 } from "./ui.ts";
+import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
   agents,
   cancelRun,
@@ -39,9 +44,87 @@ import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-page-header.ts";
 import "@timmo001/groundwork-ui/gw-section-title.ts";
+import "@timmo001/groundwork-ui/gw-list.ts";
+import "@timmo001/groundwork-ui/gw-table.ts";
 
 const going = (state: Domain.RunState) =>
   state === "queued" || state === "running";
+
+/** A log line, as `gw-list` draws it. */
+const drawLine = (line: Domain.LogLine, target: HTMLElement) => {
+  render(
+    html`<div class="line ${line.level}">
+      <time datetime=${new Date(line.at).toISOString()}
+        >${formatTime(line.at)}</time
+      ><span>${line.message}</span>
+    </div>`,
+    target,
+  );
+};
+
+/** The commits a run pushed, newest first, as a table. */
+const changeTable = (changes: ReadonlyArray<Domain.Change>) => {
+  const byId = new Map(changes.map((change) => [change.url, change]));
+
+  const draw =
+    (content: (change: Domain.Change) => CellContent, size: CellSize) =>
+    (row: TableRow) => {
+      const change = byId.get(String(row.id));
+
+      return cell(change === undefined ? "" : content(change), size);
+    };
+
+  const columns: TableColumn[] = [
+    {
+      id: "repo",
+      header: "Repository",
+      cell: draw((change) => change.repo.split("/").at(-1) ?? change.repo, {
+        width: "10rem",
+      }),
+    },
+    {
+      id: "sha",
+      header: "Commit",
+      cell: draw(
+        (change) =>
+          externalLink(
+            change.url,
+            html`<code>${change.sha.slice(0, 7)}</code>`,
+          ),
+        { width: "6rem" },
+      ),
+    },
+    {
+      id: "subject",
+      header: "Change",
+      wide: true,
+      cell: draw((change) => change.subject, "fill"),
+    },
+    {
+      id: "at",
+      header: "When",
+      searchable: false,
+      cell: draw((change) => time(change.at), { width: "7rem" }),
+    },
+  ];
+
+  return html`<gw-table
+    label="Commits"
+    contained
+    row-key="id"
+    sort="at"
+    descending
+    search-label="Search commits"
+    .columns=${columns}
+    .rows=${changes.map((change) => ({
+      id: change.url,
+      repo: change.repo,
+      sha: change.sha,
+      subject: change.subject,
+      at: change.at,
+    }))}
+  ></gw-table>`;
+};
 
 const fact = (label: string, value: string | TemplateResult) =>
   html`<dt>${label}</dt>
@@ -140,34 +223,38 @@ export class UpkeepRun extends LitElement {
         padding-left: 1.25em;
       }
 
-      pre {
-        margin: 0;
-        padding: var(--gw-space-3);
-        overflow-x: auto;
+      gw-list.log {
+        --gw-list-gap: 0;
+        --gw-list-max-height: 36rem;
+
+        padding: var(--gw-space-2) var(--gw-space-3);
         border-radius: var(--gw-space-2);
         background: var(--gw-color-surface-lower);
+        font-family: var(--gw-font-mono);
         font-size: var(--gw-font-size-s);
         line-height: 1.5;
-        white-space: pre-wrap;
-        word-break: break-word;
+      }
+
+      gw-table {
+        --gw-table-max-height: 24rem;
+      }
+
+      gw-markdown,
+      gw-table {
+        display: block;
+        margin-block-end: var(--gw-space-4);
       }
 
       .line {
         display: grid;
         grid-template-columns: max-content 1fr;
         gap: var(--gw-space-3);
+        white-space: pre-wrap;
+        word-break: break-word;
       }
 
       .line time {
         color: var(--gw-color-text-secondary);
-      }
-
-      .summary {
-        white-space: pre-wrap;
-      }
-
-      .changes {
-        padding-left: 1.25em;
       }
 
       .warn {
@@ -334,15 +421,13 @@ export class UpkeepRun extends LitElement {
           current.summary === null
             ? null
             : html`<gw-section-title>Summary</gw-section-title>
-                <p class="summary">${current.summary}</p>`
+                ${written(current.summary)}`
         }
         ${
           current.changes.length === 0
             ? null
             : html`<gw-section-title>Commits</gw-section-title>
-                <ul class="changes">
-                  ${current.changes.map((change) => html`<li>${commit(change)}</li>`)}
-                </ul>`
+                ${changeTable(current.changes)}`
         }
         ${
           current.error === null
@@ -357,15 +442,14 @@ export class UpkeepRun extends LitElement {
             ? html`<p class="muted">
                 ${going(current.state) ? "Nothing logged yet." : "No log."}
               </p>`
-            : html`<pre>
-${lines.map(
-                  (line) =>
-                    html`<div class="line ${line.level}">
-                      <time datetime=${new Date(line.at).toISOString()}
-                        >${formatTime(line.at)}</time
-                      ><span>${line.message}</span>
-                    </div>`,
-                )}</pre>`,
+            : html`<gw-list
+                class="log"
+                label="Log"
+                contained
+                estimate="22"
+                .items=${lines}
+                .draw=${drawLine}
+              ></gw-list>`,
         )}
       `,
     );

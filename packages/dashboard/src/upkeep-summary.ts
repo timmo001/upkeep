@@ -9,7 +9,7 @@ import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { AtomController, registry } from "./AtomController.ts";
-import { shared, time } from "./ui.ts";
+import { drawn, shared, time, written } from "./ui.ts";
 import { runHref, runJob, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-expansion.ts";
@@ -40,15 +40,6 @@ export class UpkeepSummary extends LitElement {
       }
 
       .written {
-        margin-top: var(--gw-space-3);
-      }
-
-      .written p {
-        margin: 0;
-        line-height: 1.6;
-      }
-
-      .written p + p {
         margin-top: var(--gw-space-3);
       }
 
@@ -86,11 +77,14 @@ export class UpkeepSummary extends LitElement {
     }
 
     if (run.state === "succeeded" && run.summary !== null) {
-      return html`<gw-expansion class="written" heading="Agent summary">
-        ${run.summary
-          .split(/\n\s*\n/)
-          .map((paragraph) => html`<p>${paragraph.trim()}</p>`)}
-      </gw-expansion>`;
+      const summary = run.summary;
+
+      return html`<gw-expansion
+        class="written"
+        heading="Agent summary"
+        storage-key="upkeep.inbox.summary"
+        .draw=${drawn(() => written(summary))}
+      ></gw-expansion>`;
     }
 
     return html`<p class="status muted">
