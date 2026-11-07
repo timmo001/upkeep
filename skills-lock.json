@@ -17,10 +17,10 @@
     },
     "docs-kit": {
       "source": "timmo001/groundwork",
-      "ref": "77a824f4235ee6663ecbb92ecb6428a332e61761",
+      "ref": "1c52fb97d34a97025d42726dc53b597866704fdc",
       "sourceType": "github",
       "skillPath": "skills/docs-kit/SKILL.md",
-      "computedHash": "874d5fac726f4647264ae4c8ed57948a7578bcaafd269be3597bd808773d5ce2",
+      "computedHash": "b95de8042b3e373ab6c5f430b685525bc5358008d3005f59dbc8f3cb160c35b5",
       "installMode": "copy"
     },
     "effect": {

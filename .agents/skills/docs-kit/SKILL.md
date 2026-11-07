@@ -28,7 +28,12 @@ on `main`, follow the installed release.
 4. Start `theme.css` with `@import "@timmo001/docs-kit/blume/theme.css";`, then
    the app's Groundwork theme, such as
    `@import "@timmo001/docs-kit/blume/themes/bridge.css";` (Base until the app
-   has its own), and the theme's font files. Leave `theme.accent` out of the
+   has its own), and the theme's font files. An app whose own theme isn't in
+   Groundwork's set renders its stylesheet with `blumeThemeCss` from
+   `@timmo001/groundwork-tokens/runtime` in a site script, which writes it into
+   `theme.css` between marker comments, as the docs-kit README shows. Blume
+   copies `theme.css` into its build folder, so a relative `@import` of a
+   generated file breaks the build. Leave `theme.accent` out of the
    config. Put site overrides, such as the `--home-banner-*` properties, after
    them. `HeaderSearch` brings a Light, Dark and Darker picker; to offer more
    themes, import `themes/all.css` too and pass `themes` to `HeaderSearch` from
