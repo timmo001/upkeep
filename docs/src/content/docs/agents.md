@@ -43,15 +43,20 @@ hands out secrets.
 
 The plugin in `packages/opencode` reads the manifest from the `upkeep` on your
 `PATH`, so its tools always match the binary. Write tools ask first, under the
-`upkeep.write` permission. Add it to your global OpenCode config:
+`upkeep.write` permission.
+
+Its TUI part is Solid JSX, which OpenCode only compiles outside
+`node_modules`, so it loads from a built `dist/tui.js` rather than straight
+from GitHub. Run `mise run build` in a checkout, again after each pull, and add
+the checkout's plugin directory to your global OpenCode config:
 
 ```jsonc
 {
-  "plugins": ["github:timmo001/upkeep#main::path:packages/opencode"],
+  "plugins": ["/path/to/upkeep/packages/opencode"],
 }
 ```
 
-Its TUI part puts the count of what needs you in the prompt footer, from
+The TUI part puts the count of what needs you in the prompt footer, from
 `upkeep status --json`, so it matches the bar. It reads it again every minute,
 shows nothing while nothing needs you, and lists each item when clicked.
 

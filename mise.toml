@@ -113,10 +113,16 @@ description = "Stop the background server"
 run = "pitchfork stop server"
 
 [tasks.build]
-description = "Compile a minified, bytecode-cached upkeep binary to dist/upkeep"
-depends = ["install"]
+description = "Compile a minified, bytecode-cached upkeep binary to dist/upkeep, and the OpenCode plugin's TUI part"
+depends = ["install", "build:opencode"]
 dir = "packages/cli"
 run = ["bun run build", "mkdir -p ../../dist", "cp dist/upkeep ../../dist/upkeep"]
+
+[tasks."build:opencode"]
+description = "Compile the OpenCode plugin's TUI part to packages/opencode/dist/tui.js"
+depends = ["install"]
+dir = "packages/opencode"
+run = "bun run build"
 
 [tasks.test]
 description = "Run every package's tests"

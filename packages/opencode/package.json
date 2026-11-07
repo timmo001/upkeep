@@ -6,9 +6,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./tui": "./src/tui.tsx"
+    "./tui": "./dist/tui.js"
   },
   "scripts": {
+    "build": "bun scripts/build.ts",
     "test": "bun test --pass-with-no-tests",
     "lint": "oxlint .",
     "typecheck": "tsc"
