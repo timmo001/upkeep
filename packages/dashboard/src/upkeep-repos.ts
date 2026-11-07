@@ -3,7 +3,7 @@
  * how much is unread in it, when it last changed and the jobs it's opted
  * into. Each card opens the repository's own page.
  */
-import { mdiMagnify } from "@mdi/js";
+import { phMagnifyingGlass } from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -102,7 +102,7 @@ export class UpkeepRepos extends LitElement {
           label="Search repositories"
           label-hidden
           placeholder="Search repositories"
-          icon=${mdiMagnify}
+          icon=${phMagnifyingGlass}
           .value=${this.#search}
           @input=${(event: Event) => {
             const target = event.currentTarget;
@@ -113,7 +113,7 @@ export class UpkeepRepos extends LitElement {
         ></gw-input>
         ${
           shown.length === 0
-            ? empty(mdiMagnify, "No repository matches.")
+            ? empty(phMagnifyingGlass, "No repository matches.")
             : html`<gw-grid>
                 ${shown.map(
                   ({ repo, title, activity }) =>

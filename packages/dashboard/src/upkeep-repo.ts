@@ -3,7 +3,7 @@
  * it, its GitHub link, the jobs it's opted into, and what changed in it from
  * the inbox, with the same kind tabs, filters and windowed feed as the inbox.
  */
-import { mdiCheckCircleOutline, mdiGithub, mdiPencil } from "@mdi/js";
+import { phCheckCircle, phGithubLogo, phPencilSimple } from "./icons.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { Catalogue, type Domain } from "@upkeep/api";
@@ -80,7 +80,7 @@ export class UpkeepRepo extends LitElement {
       slot="actions"
       appearance="outlined"
       variant="neutral"
-      icon=${mdiPencil}
+      icon=${phPencilSimple}
       @click=${(event: Event) => {
         if (this.#name !== undefined) {
           this.#name.value = found.name ?? found.title ?? "";
@@ -165,7 +165,7 @@ export class UpkeepRepo extends LitElement {
             slot="actions"
             appearance="outlined"
             variant="neutral"
-            icon=${mdiGithub}
+            icon=${phGithubLogo}
             ><a
               href=${`https://github.com/${this.repo}`}
               target="_blank"
@@ -203,7 +203,7 @@ export class UpkeepRepo extends LitElement {
           ></upkeep-filters>
           ${
             shown.length === 0
-              ? empty(mdiCheckCircleOutline, "Nothing here with these filters.")
+              ? empty(phCheckCircle, "Nothing here with these filters.")
               : html`<upkeep-feed
                   storage-key="upkeep.repo.days"
                   .entries=${shown}

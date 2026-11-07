@@ -2,7 +2,7 @@
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
  * the nav, the theme picker and sign out, and the page the route picks.
  */
-import { mdiLogout } from "@mdi/js";
+import { phSignOut } from "./icons.ts";
 import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -178,7 +178,7 @@ export class UpkeepApp extends LitElement {
                 appearance="plain"
                 variant="neutral"
                 labels="auto"
-                icon=${mdiLogout}
+                icon=${phSignOut}
                 @click=${this.#signOut}
                 >Sign out</gw-button
               >`

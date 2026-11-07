@@ -3,19 +3,19 @@
  * how a request's result shows while it loads or when it fails.
  */
 import {
-  mdiAlertCircleOutline,
-  mdiCancel,
-  mdiCheck,
-  mdiCheckCircleOutline,
-  mdiCloseCircleOutline,
-  mdiConsole,
-  mdiContentCopy,
-  mdiLogout,
-  mdiMinusCircleOutline,
-  mdiOpenInNew,
-  mdiPlayCircleOutline,
-  mdiProgressClock,
-} from "@mdi/js";
+  phWarningCircle,
+  phProhibit,
+  phCheck,
+  phCheckCircle,
+  phXCircle,
+  phTerminalWindow,
+  phCopy,
+  phSignOut,
+  phMinusCircle,
+  phArrowSquareOut,
+  phPlayCircle,
+  phHourglass,
+} from "./icons.ts";
 import { type Api, Catalogue, type Domain } from "@upkeep/api";
 import { type Cause, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
@@ -132,7 +132,7 @@ export const shared = css`
   }
 `;
 
-/** A Material Design icon, from one of `@mdi/js`'s paths. */
+/** A Phosphor icon, from one of `icons.ts`'s paths. */
 export const icon = (path: string) =>
   html`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
     ${svg`<path d=${path}></path>`}
@@ -148,7 +148,7 @@ export const externalLink = (href: string, content: string | TemplateResult) =>
     href=${href}
     target="_blank"
     rel="noopener noreferrer"
-    >${content}${icon(mdiOpenInNew)}<span class="visually-hidden">
+    >${content}${icon(phArrowSquareOut)}<span class="visually-hidden">
       (opens in a new tab)</span
     ></a
   >`;
@@ -204,12 +204,12 @@ const states: Record<
   Domain.RunState,
   { readonly path: string; readonly tone: string }
 > = {
-  queued: { path: mdiProgressClock, tone: "neutral" },
-  running: { path: mdiPlayCircleOutline, tone: "info" },
-  succeeded: { path: mdiCheckCircleOutline, tone: "success" },
-  skipped: { path: mdiMinusCircleOutline, tone: "neutral" },
-  failed: { path: mdiCloseCircleOutline, tone: "danger" },
-  cancelled: { path: mdiCancel, tone: "warning" },
+  queued: { path: phHourglass, tone: "neutral" },
+  running: { path: phPlayCircle, tone: "info" },
+  succeeded: { path: phCheckCircle, tone: "success" },
+  skipped: { path: phMinusCircle, tone: "neutral" },
+  failed: { path: phXCircle, tone: "danger" },
+  cancelled: { path: phProhibit, tone: "warning" },
 };
 
 /** Text with its first letter in capitals, for an ID shown as a label. */
@@ -274,7 +274,7 @@ const renderError = (error: Option.Option<ApiError>) => {
           size="small"
           appearance="filled"
           variant="neutral"
-          icon=${mdiLogout}
+          icon=${phSignOut}
           @click=${signOut}
           >Sign out</gw-button
         >
@@ -326,7 +326,7 @@ export const written = (text: string) =>
 /** A badge for a run that left something for a person. */
 export const attentionBadge = html`<gw-badge
   size="small"
-  icon=${mdiAlertCircleOutline}
+  icon=${phWarningCircle}
   tone="warning"
   >needs you</gw-badge
 >`;
@@ -359,13 +359,13 @@ export const agentSession = (
       appearance="plain"
       variant="neutral"
       labels="hide"
-      icon=${mdiContentCopy}
+      icon=${phCopy}
       @click=${(event: Event) => {
         const button = event.currentTarget;
 
         void navigator.clipboard.writeText(resume).then(() => {
           if (button instanceof HTMLElement)
-            button.setAttribute("icon", mdiCheck);
+            button.setAttribute("icon", phCheck);
         });
       }}
       >Copy</gw-button
@@ -376,7 +376,7 @@ export const agentSession = (
           size="xs"
           appearance="outlined"
           variant="neutral"
-          icon=${mdiConsole}
+          icon=${phTerminalWindow}
           @click=${() => registry.set(openSession, { ...open, worker })}
           >Resume in Herdr on ${worker}</gw-button
         >`,
@@ -385,7 +385,7 @@ export const agentSession = (
       size="xs"
       appearance="plain"
       variant="neutral"
-      icon=${mdiOpenInNew}
+      icon=${phArrowSquareOut}
       href=${sessionLink(open)}
       >Open here</gw-button
     >

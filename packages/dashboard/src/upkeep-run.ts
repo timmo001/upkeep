@@ -3,7 +3,12 @@
  * and its log as it grows, with a button to cancel it while it's going, and
  * once it's ended, to run it again or dismiss what it left for a person.
  */
-import { mdiArrowLeft, mdiCancel, mdiCheck, mdiReplay } from "@mdi/js";
+import {
+  phArrowLeft,
+  phProhibit,
+  phCheck,
+  phArrowCounterClockwise,
+} from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import type {
   TableColumn,
@@ -354,7 +359,7 @@ export class UpkeepRun extends LitElement {
             href=${jobHref(current.job)}
             appearance="plain"
             variant="neutral"
-            icon=${mdiArrowLeft}
+            icon=${phArrowLeft}
             labels="hide"
             >Back</gw-button
           >
@@ -365,7 +370,7 @@ export class UpkeepRun extends LitElement {
                   size="small"
                   appearance="outlined"
                   variant="danger"
-                  icon=${mdiCancel}
+                  icon=${phProhibit}
                   @click=${() => registry.set(cancelRun, current.id)}
                   >Cancel</gw-button
                 >`
@@ -376,7 +381,7 @@ export class UpkeepRun extends LitElement {
                           size="small"
                           appearance="outlined"
                           variant="neutral"
-                          icon=${mdiCheck}
+                          icon=${phCheck}
                           @click=${() => registry.set(dismissRun, current.id)}
                           >Dismiss</gw-button
                         >`
@@ -387,7 +392,7 @@ export class UpkeepRun extends LitElement {
                     size="small"
                     appearance="outlined"
                     variant="neutral"
-                    icon=${mdiReplay}
+                    icon=${phArrowCounterClockwise}
                     @click=${() => registry.set(retryRun, current.id)}
                     >${current.heal === null ? "Run again" : "Heal again"}</gw-button
                   >`

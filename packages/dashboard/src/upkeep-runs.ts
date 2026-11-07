@@ -3,7 +3,7 @@
  * by day and kept up to date while it's on screen. A run's whole row opens
  * it, with its log.
  */
-import { mdiHistory } from "@mdi/js";
+import { phClockCounterClockwise } from "./icons.ts";
 import type {
   TableColumn,
   TableRow,
@@ -250,7 +250,7 @@ export class UpkeepRuns extends LitElement {
         this.job === "" ? all.filter((run) => run.state !== "skipped") : all;
 
       return list.length === 0
-        ? empty(mdiHistory, "No runs yet.")
+        ? empty(phClockCounterClockwise, "No runs yet.")
         : this.#table(list);
     });
   }

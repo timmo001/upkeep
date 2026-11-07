@@ -10,30 +10,30 @@
  * notes the visit and queues a collection when the last one is old.
  */
 import {
-  mdiAlertCircleOutline,
-  mdiBellOutline,
-  mdiCheck,
-  mdiCheckCircleOutline,
-  mdiClockOutline,
-  mdiClose,
-  mdiCommentOutline,
-  mdiDeleteOutline,
-  mdiDotsVertical,
-  mdiEmailOpenOutline,
-  mdiEyeOffOutline,
-  mdiEyeOutline,
-  mdiFolderOutline,
-  mdiFolderPlusOutline,
-  mdiFolderRemoveOutline,
-  mdiPencil,
-  mdiPlus,
-  mdiRecordCircleOutline,
-  mdiRefresh,
-  mdiRobotOutline,
-  mdiRocketLaunchOutline,
-  mdiSourcePull,
-  mdiSwapHorizontal,
-} from "@mdi/js";
+  phWarningCircle,
+  phBell,
+  phCheck,
+  phCheckCircle,
+  phClock,
+  phX,
+  phChatCircle,
+  phTrash,
+  phDotsThreeVertical,
+  phEnvelopeOpen,
+  phEyeSlash,
+  phEye,
+  phFolder,
+  phFolderPlus,
+  phFolderMinus,
+  phPencilSimple,
+  phPlus,
+  phRecord,
+  phArrowClockwise,
+  phRobot,
+  phRocketLaunch,
+  phGitPullRequest,
+  phArrowsLeftRight,
+} from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
@@ -198,9 +198,9 @@ const tones: Record<Domain.SignalKind, string> = {
 };
 
 const kindIcons: Record<Domain.AttentionKind, string> = {
-  pull: mdiSourcePull,
-  issue: mdiRecordCircleOutline,
-  notification: mdiBellOutline,
+  pull: phGitPullRequest,
+  issue: phRecord,
+  notification: phBell,
 };
 
 const focuses: ReadonlyArray<{
@@ -773,7 +773,7 @@ export class UpkeepAttention extends LitElement {
     return html`<gw-menu-button
       size="xs"
       appearance="plain"
-      icon=${mdiRocketLaunchOutline}
+      icon=${phRocketLaunch}
       label="Start agent"
       heading=${workers.length > 1 ? `Start in, on ${worker}` : "Start in"}
       ?loading=${busy}
@@ -783,7 +783,7 @@ export class UpkeepAttention extends LitElement {
         .map((each) => ({
           value: `worker:${each}`,
           label: `Use ${each} instead`,
-          icon: mdiSwapHorizontal,
+          icon: phArrowsLeftRight,
         }))}
       @select=${(event: Event) => {
         const value = chosen(event);
@@ -868,14 +868,14 @@ export class UpkeepAttention extends LitElement {
 
     return latest.state === "succeeded"
       ? html`<p class="context">
-          ${icon(mdiCheckCircleOutline)}
+          ${icon(phCheckCircle)}
           <span
             >Agent started${where} on ${on} ${time(latest.finishedAt)}.
             ${link}</span
           >
         </p>`
       : html`<p class="context failed">
-          ${icon(mdiAlertCircleOutline)}
+          ${icon(phWarningCircle)}
           <span
             >Couldn't start the agent${where}: ${latest.error ?? latest.state}.
             ${link}</span
@@ -913,7 +913,7 @@ export class UpkeepAttention extends LitElement {
     return html`<gw-menu-button
       size="xs"
       appearance="plain"
-      icon=${mdiFolderOutline}
+      icon=${phFolder}
       label="Group"
       heading=${current === undefined ? "Group" : `In ${current.name}`}
       empty="No groups yet"
@@ -925,13 +925,13 @@ export class UpkeepAttention extends LitElement {
           checked: group.id === current?.id,
         }))}
       .actions=${[
-        { value: "new", label: "New group", icon: mdiFolderPlusOutline },
+        { value: "new", label: "New group", icon: phFolderPlus },
         ...(byYou === true
           ? [
               {
                 value: "none",
                 label: "Out of this group",
-                icon: mdiFolderRemoveOutline,
+                icon: phFolderMinus,
               },
             ]
           : []),
@@ -995,27 +995,27 @@ export class UpkeepAttention extends LitElement {
         size="xs"
         appearance="plain"
         labels="hide"
-        icon=${mdiDotsVertical}
+        icon=${phDotsThreeVertical}
         label="More"
         .items=${[
           {
             value: "wait",
             label: "Add an outside wait",
-            icon: mdiClockOutline,
+            icon: phClock,
           },
           {
             value: "comment",
             label: "Tell the agent",
-            icon: mdiCommentOutline,
+            icon: phChatCircle,
           },
-          { value: "rename", label: "Rename", icon: mdiPencil },
+          { value: "rename", label: "Rename", icon: phPencilSimple },
           ...(group.source === "github"
             ? []
             : [
                 {
                   value: "remove",
                   label: "Remove group",
-                  icon: mdiDeleteOutline,
+                  icon: phTrash,
                 },
               ]),
         ]}
@@ -1057,7 +1057,7 @@ export class UpkeepAttention extends LitElement {
         group.followUp === null
           ? nothing
           : html`<p class="context">
-              ${icon(mdiRobotOutline)}
+              ${icon(phRobot)}
               <span>${group.followUp.text}</span>
             </p>`
       }
@@ -1069,7 +1069,7 @@ export class UpkeepAttention extends LitElement {
               ${group.waits.map(
                 (wait) =>
                   html`<li>
-                    ${icon(mdiClockOutline)}
+                    ${icon(phClock)}
                     <span
                       >Waiting on
                       ${wait.url === null ? wait.text : externalLink(wait.url, wait.text)}</span
@@ -1079,7 +1079,7 @@ export class UpkeepAttention extends LitElement {
                       appearance="plain"
                       variant="neutral"
                       labels="hide"
-                      icon=${mdiClose}
+                      icon=${phX}
                       label="Remove"
                       @click=${() => registry.set(removeWait, wait.id)}
                     ></gw-button>
@@ -1116,7 +1116,7 @@ export class UpkeepAttention extends LitElement {
     return this.#comments.filter(about).map(
       (comment) =>
         html`<p class="context">
-          ${icon(mdiCommentOutline)}
+          ${icon(phChatCircle)}
           <span
             >You said: ${comment.text}.
             ${
@@ -1145,7 +1145,7 @@ export class UpkeepAttention extends LitElement {
         note === null
           ? nothing
           : html`<p class="context">
-              ${icon(mdiRobotOutline)}
+              ${icon(phRobot)}
               <span
                 >${note.text}${
                   note.recheckAt === null
@@ -1168,12 +1168,12 @@ export class UpkeepAttention extends LitElement {
         suggested === undefined
           ? nothing
           : html`<p class="context">
-              ${icon(mdiFolderOutline)}
+              ${icon(phFolder)}
               <span>The agent suggests ${suggested.name}</span>
               <gw-button
                 size="xs"
                 appearance="plain"
-                icon=${mdiCheck}
+                icon=${phCheck}
                 @click=${() =>
                   registry.set(linkAttention, {
                     url: item.url,
@@ -1185,7 +1185,7 @@ export class UpkeepAttention extends LitElement {
                 size="xs"
                 appearance="plain"
                 variant="neutral"
-                icon=${mdiClose}
+                icon=${phX}
                 @click=${() =>
                   registry.set(linkAttention, { url: item.url, group: null })}
                 >Dismiss</gw-button
@@ -1202,7 +1202,7 @@ export class UpkeepAttention extends LitElement {
       size="xs"
       appearance="plain"
       variant="neutral"
-      icon=${mdiCommentOutline}
+      icon=${phChatCircle}
       @click=${(event: Event) =>
         this.#ask(
           event,
@@ -1236,14 +1236,14 @@ export class UpkeepAttention extends LitElement {
               ${page.rules.map(
                 (rule) =>
                   html`<li>
-                    ${icon(mdiRobotOutline)}
+                    ${icon(phRobot)}
                     <span>${rule.text}</span>
                     <gw-button
                       size="xs"
                       appearance="plain"
                       variant="neutral"
                       labels="hide"
-                      icon=${mdiClose}
+                      icon=${phX}
                       label="Remove"
                       @click=${() => registry.set(removeRule, rule.id)}
                     ></gw-button>
@@ -1256,7 +1256,7 @@ export class UpkeepAttention extends LitElement {
           size="xs"
           appearance="outlined"
           variant="neutral"
-          icon=${mdiPlus}
+          icon=${phPlus}
           @click=${(event: Event) =>
             this.#ask(
               event,
@@ -1330,7 +1330,7 @@ export class UpkeepAttention extends LitElement {
                   size="xs"
                   appearance="plain"
                   variant="neutral"
-                  icon=${mdiEmailOpenOutline}
+                  icon=${phEnvelopeOpen}
                   @click=${() => {
                     if (item.notification !== null) {
                       registry.set(markNotificationRead, item.notification.id);
@@ -1344,7 +1344,7 @@ export class UpkeepAttention extends LitElement {
             size="xs"
             appearance="plain"
             variant="neutral"
-            icon=${item.hidden ? mdiEyeOutline : mdiEyeOffOutline}
+            icon=${item.hidden ? phEye : phEyeSlash}
             @click=${() =>
               registry.set(hideAttention, {
                 url: item.url,
@@ -1609,7 +1609,7 @@ export class UpkeepAttention extends LitElement {
             slot="actions"
             appearance="outlined"
             variant="neutral"
-            icon=${mdiRefresh}
+            icon=${phArrowClockwise}
             ?loading=${collecting}
             ?disabled=${collecting || minutesLeft > 0}
             @click=${() => registry.set(openAttention, undefined)}
@@ -1626,7 +1626,7 @@ export class UpkeepAttention extends LitElement {
         ${
           page.collectedAt === null
             ? empty(
-                mdiRefresh,
+                phArrowClockwise,
                 "The first collection is queued. Items show here once a worker sends them.",
               )
             : html`

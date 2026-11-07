@@ -7,7 +7,7 @@
  * worker's agents, with their roles, models and what they're for; then the
  * latest runs. Each table starts with its groups folded away.
  */
-import { mdiPause, mdiPlay, mdiPlayPause } from "@mdi/js";
+import { phPause, phPlay, phPlayPause } from "./icons.ts";
 import type {
   TableColumn,
   TableRow,
@@ -78,7 +78,7 @@ export const jobActions = (job: Domain.JobStatus) => html`
       : html`<gw-button
           size="small"
           appearance="filled"
-          icon=${mdiPlay}
+          icon=${phPlay}
           @click=${() => registry.set(runJob, job.id)}
           >Run</gw-button
         >`
@@ -90,7 +90,7 @@ export const jobActions = (job: Domain.JobStatus) => html`
           size="small"
           appearance="outlined"
           variant="warning"
-          icon=${mdiPlayPause}
+          icon=${phPlayPause}
           @click=${() => registry.set(unparkJob, job.id)}
           >Unpark</gw-button
         >`
@@ -105,7 +105,7 @@ export const jobActions = (job: Domain.JobStatus) => html`
             size="small"
             appearance="outlined"
             variant="neutral"
-            icon=${mdiPause}
+            icon=${phPause}
             title="Stop queueing it until it's resumed"
             @click=${() => registry.set(pauseJob, job.id)}
             >Pause</gw-button
@@ -114,7 +114,7 @@ export const jobActions = (job: Domain.JobStatus) => html`
           size="small"
           appearance="outlined"
           variant="warning"
-          icon=${mdiPlay}
+          icon=${phPlay}
           @click=${() => registry.set(resumeJob, job.id)}
           >Resume</gw-button
         >`

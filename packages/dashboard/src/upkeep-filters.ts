@@ -6,7 +6,7 @@
  * which repositories. Each filter that's on shows as a chip that takes it
  * off. Fires `filters-change` with the new filters.
  */
-import { mdiClose, mdiFilterVariant } from "@mdi/js";
+import { phX, phFunnelSimple } from "./icons.ts";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
@@ -271,7 +271,7 @@ export class UpkeepFilters extends LitElement {
                 size="xs"
                 appearance="outlined"
                 variant="neutral"
-                icon=${mdiClose}
+                icon=${phX}
                 label=${`Remove ${chip.label}`}
                 @click=${chip.off}
                 >${chip.label}</gw-button
@@ -324,7 +324,7 @@ export class UpkeepFilters extends LitElement {
         <gw-button
           appearance=${on > 0 ? "accent" : "outlined"}
           variant=${on > 0 ? "brand" : "neutral"}
-          icon=${mdiFilterVariant}
+          icon=${phFunnelSimple}
           @click=${() => this.#sheet?.toggle()}
           >${on > 0 ? `Filters (${on})` : "Filters"}</gw-button
         >

@@ -2,7 +2,7 @@
  * `upkeep-job`: one job, what starts it, whether it's parked, the heals of
  * its consumers waiting on the heal limit, and its runs.
  */
-import { mdiArrowLeft } from "@mdi/js";
+import { phArrowLeft } from "./icons.ts";
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { empty, shared, time, view } from "./ui.ts";
@@ -38,7 +38,7 @@ export class UpkeepJob extends LitElement {
     return view(this.#jobs.value, (list) => {
       const job = list.find((candidate) => candidate.id === this.jobId);
 
-      if (job === undefined) return empty(mdiArrowLeft, "There's no such job.");
+      if (job === undefined) return empty(phArrowLeft, "There's no such job.");
 
       return html`
         <gw-page-header heading=${job.name} description=${job.description}>
@@ -47,7 +47,7 @@ export class UpkeepJob extends LitElement {
             href=${jobsHref}
             appearance="plain"
             variant="neutral"
-            icon=${mdiArrowLeft}
+            icon=${phArrowLeft}
             labels="hide"
             >Back</gw-button
           >

@@ -4,7 +4,7 @@
  * request, through the summary job, then shows the latest one, folded away
  * until it's opened, or that it's being written, while the run goes.
  */
-import { mdiTextBoxEditOutline } from "@mdi/js";
+import { phNotePencil } from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -116,7 +116,7 @@ export class UpkeepSummary extends LitElement {
           size="small"
           appearance="outlined"
           variant="neutral"
-          icon=${mdiTextBoxEditOutline}
+          icon=${phNotePencil}
           ?disabled=${busy(run)}
           @click=${() => this.#ask()}
           >Summarise in more detail</gw-button

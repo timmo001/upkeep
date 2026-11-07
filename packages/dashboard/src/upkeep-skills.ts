@@ -5,13 +5,13 @@
  * its last commits, with a way to ask an agent for a change to it.
  */
 import {
-  mdiCheck,
-  mdiCloseCircleOutline,
-  mdiConsole,
-  mdiMagnify,
-  mdiPencilOutline,
-  mdiPuzzleOutline,
-} from "@mdi/js";
+  phCheck,
+  phXCircle,
+  phTerminalWindow,
+  phMagnifyingGlass,
+  phPencilSimple,
+  phPuzzlePiece,
+} from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
@@ -293,7 +293,7 @@ export class UpkeepSkills extends LitElement {
                 change.state === "waiting"
                   ? html`<gw-button
                       size="small"
-                      icon=${mdiCheck}
+                      icon=${phCheck}
                       @click=${() => registry.set(approveSkillChange, change.id)}
                       >Approve</gw-button
                     >`
@@ -305,7 +305,7 @@ export class UpkeepSkills extends LitElement {
                       size="small"
                       appearance="outlined"
                       variant="neutral"
-                      icon=${mdiPencilOutline}
+                      icon=${phPencilSimple}
                       @click=${(event: Event) =>
                         this.#ask(event, { kind: "revise", change })}
                       >Request changes</gw-button
@@ -318,7 +318,7 @@ export class UpkeepSkills extends LitElement {
                       size="small"
                       appearance="outlined"
                       variant="neutral"
-                      icon=${mdiConsole}
+                      icon=${phTerminalWindow}
                       @click=${() => registry.set(openSkillChange, change.id)}
                       >Open in Herdr</gw-button
                     >`
@@ -328,7 +328,7 @@ export class UpkeepSkills extends LitElement {
                 size="small"
                 appearance="outlined"
                 variant="danger"
-                icon=${mdiCloseCircleOutline}
+                icon=${phXCircle}
                 @click=${() => registry.set(dropSkillChange, change.id)}
                 >Drop</gw-button
               >
@@ -482,7 +482,7 @@ export class UpkeepSkills extends LitElement {
         size="small"
         appearance="outlined"
         variant="neutral"
-        icon=${mdiPencilOutline}
+        icon=${phPencilSimple}
         @click=${(event: Event) =>
           this.#ask(event, { kind: "request", repo, skill: skill.name })}
         >Ask for a change</gw-button
@@ -503,7 +503,7 @@ export class UpkeepSkills extends LitElement {
         <gw-section-title>Changes</gw-section-title>
         ${
           held.length === 0
-            ? empty(mdiCheck, "No skill changes are waiting.")
+            ? empty(phCheck, "No skill changes are waiting.")
             : html`<gw-stack gap="s">
                 ${held.map((change) => this.#change(change, page.workers))}
               </gw-stack>`
@@ -528,7 +528,7 @@ export class UpkeepSkills extends LitElement {
           label="Search skills"
           label-hidden
           placeholder="Search skills"
-          icon=${mdiMagnify}
+          icon=${phMagnifyingGlass}
           .value=${this.#search}
           @input=${(event: Event) => {
             const target = event.currentTarget;
@@ -540,7 +540,7 @@ export class UpkeepSkills extends LitElement {
         ${
           page.repos.length === 0
             ? empty(
-                mdiPuzzleOutline,
+                phPuzzlePiece,
                 "No skills yet: they show once skill-updates has run.",
               )
             : page.repos.map((snapshot) => {
@@ -561,7 +561,7 @@ export class UpkeepSkills extends LitElement {
                   >
                   ${
                     shown.length === 0
-                      ? empty(mdiMagnify, "No skill matches.")
+                      ? empty(phMagnifyingGlass, "No skill matches.")
                       : shown.map((skill) => this.#skill(snapshot.repo, skill))
                   }
                 </gw-stack>`;

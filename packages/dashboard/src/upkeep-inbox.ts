@@ -5,12 +5,7 @@
  * a feed windowed so it stays quick however long it gets. Built from
  * groundwork's components.
  */
-import {
-  mdiCheckAll,
-  mdiCheckCircleOutline,
-  mdiClose,
-  mdiPlayPause,
-} from "@mdi/js";
+import { phChecks, phCheckCircle, phX, phPlayPause } from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -105,7 +100,7 @@ export class UpkeepInbox extends LitElement {
               size="small"
               appearance="filled"
               variant="warning"
-              icon=${mdiPlayPause}
+              icon=${phPlayPause}
               @click=${() => registry.set(unparkJob, job)}
               >Unpark ${jobName(job)}</gw-button
             >`
@@ -135,7 +130,7 @@ export class UpkeepInbox extends LitElement {
         size="small"
         appearance="plain"
         variant="neutral"
-        icon=${mdiClose}
+        icon=${phX}
         @click=${() => registry.set(dismissEntry, entry.id)}
         >Dismiss</gw-button
       >
@@ -176,7 +171,7 @@ export class UpkeepInbox extends LitElement {
                   slot="actions"
                   appearance="outlined"
                   variant="neutral"
-                  icon=${mdiCheckAll}
+                  icon=${phChecks}
                   @click=${() => registry.set(markRead, undefined)}
                   >Mark all read</gw-button
                 >`
@@ -228,7 +223,7 @@ export class UpkeepInbox extends LitElement {
           ></upkeep-filters>
           ${
             shown.length === 0
-              ? empty(mdiCheckCircleOutline, "Nothing here with these filters.")
+              ? empty(phCheckCircle, "Nothing here with these filters.")
               : html`<upkeep-feed
                   storage-key="upkeep.inbox.days"
                   .entries=${shown}
