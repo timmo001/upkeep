@@ -571,6 +571,24 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE runs ADD COLUMN scope_repo TEXT`;
   }),
+  // GitHub's webhook deliveries pulled from the events queue, by delivery
+  // ID, so a delivery the queue sends again is dropped
+  "0029_github_events": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE github_events (
+        delivery TEXT PRIMARY KEY,
+        event TEXT NOT NULL,
+        action TEXT,
+        repo TEXT NOT NULL,
+        body TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        received_at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX github_events_received ON github_events (received_at)`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -675,6 +693,10 @@ const toRun = ({
 });
 
 const decodeLog = Schema.decodeUnknownEffect(Schema.Array(Domain.LogLine));
+
+const decodeEvents = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.fromJsonString(Domain.GitHubEvent)),
+);
 
 const decodeTokens = Schema.decodeUnknownEffect(Schema.Array(Api.Token));
 
@@ -1267,6 +1289,17 @@ export class Store extends Context.Service<
     settle(key: string): Effect.Effect<void, StoreError>;
     /** Delete read or dismissed entries last changed before `before`. */
     pruneInbox(before: number): Effect.Effect<number, StoreError>;
+    /**
+     * Record a GitHub webhook delivery. Returns false when it was recorded
+     * before, as a delivery the queue sends again is.
+     */
+    recordEvent(event: Domain.GitHubEvent): Effect.Effect<boolean, StoreError>;
+    /** The GitHub events received since `since`, newest first. */
+    events(
+      since: number,
+    ): Effect.Effect<ReadonlyArray<Domain.GitHubEvent>, StoreError>;
+    /** Delete the GitHub events received before `before`. Returns how many went. */
+    pruneEvents(before: number): Effect.Effect<number, StoreError>;
     /** Every tracked repository, by name. */
     repos(): Effect.Effect<ReadonlyArray<Domain.TrackedRepo>, StoreError>;
     /**
@@ -3365,6 +3398,47 @@ export class Store extends Context.Service<
       return rows.length;
     }, Effect.mapError(storeError));
 
+    const recordEvent = Effect.fn("Store.recordEvent")(function* (
+      event: Domain.GitHubEvent,
+    ) {
+      const rows = yield* sql`
+        INSERT INTO github_events ${sql.insert({
+          delivery: event.delivery,
+          event: event.event,
+          action: event.action,
+          repo: event.repo,
+          body: JSON.stringify(event),
+          at: event.at,
+          receivedAt: yield* Clock.currentTimeMillis,
+        })}
+        ON CONFLICT (delivery) DO NOTHING
+        RETURNING delivery
+      `;
+
+      return rows.length > 0;
+    }, Effect.mapError(storeError));
+
+    const events = Effect.fn("Store.events")(function* (since: number) {
+      const rows = yield* sql<{ body: string }>`
+        SELECT body FROM github_events
+        WHERE received_at >= ${since}
+        ORDER BY received_at DESC
+      `;
+
+      return yield* decodeEvents(rows.map((row) => row.body));
+    }, Effect.mapError(storeError));
+
+    const pruneEvents = Effect.fn("Store.pruneEvents")(function* (
+      before: number,
+    ) {
+      const rows = yield* sql`
+        DELETE FROM github_events WHERE received_at < ${before}
+        RETURNING delivery
+      `;
+
+      return rows.length;
+    }, Effect.mapError(storeError));
+
     /**
      * Fill an empty inbox from the commits runs pushed in the last
      * `backfillHours`, so it starts with what happened lately. The watch
@@ -3593,6 +3667,9 @@ export class Store extends Context.Service<
       needs,
       settle,
       pruneInbox,
+      recordEvent,
+      events,
+      pruneEvents,
       repos,
       track,
       untrack,

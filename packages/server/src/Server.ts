@@ -2,8 +2,8 @@
  * The Upkeep server: the HTTP API workers and the CLI talk to, the dashboard,
  * the scheduler that queues jobs on their cron, the sweep that fails runs
  * whose worker went quiet, the one that unparks jobs once their triage issue
- * is resolved, the one that queues heals held back by the heal limit, and the
- * one that prunes old runs.
+ * is resolved, the one that queues heals held back by the heal limit, the one
+ * that prunes old runs, and the pull of GitHub's events from their queue.
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
@@ -26,6 +26,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
+import { Events } from "./Events";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -1572,6 +1573,64 @@ const retention = Config.all({
   runs: Config.Int("UPKEEP_KEEP_RUNS").pipe(Config.withDefault(20)),
 });
 
+/** How often the server pulls GitHub's events from the queue. */
+const eventsEvery = Duration.seconds(5);
+
+/** Say what a new GitHub event is about, for the server's log. */
+const eventLine = (event: Domain.GitHubEvent) =>
+  [
+    `${event.event}${event.action === null ? "" : ` ${event.action}`} on ${event.repo}`,
+    event.ref,
+    event.release?.tag,
+    event.workflow === null
+      ? undefined
+      : `${event.workflow.name} ${event.workflow.conclusion ?? "running"}`,
+  ]
+    .filter((part) => part !== null && part !== undefined)
+    .join(" ");
+
+/**
+ * Pull GitHub's events from the queue every few seconds, record each delivery
+ * by its ID so a repeat is dropped, then ack the batch. A batch that can't be
+ * recorded isn't acked, so it comes back after its visibility timeout. A
+ * message that doesn't decode is acked and logged, since it never will.
+ */
+export const pullEvents = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const events = yield* Events;
+    const store = yield* Store;
+
+    if (!events.enabled) return;
+
+    yield* Effect.gen(function* () {
+      const pulled = yield* events.pull();
+
+      for (const message of pulled) {
+        if (Option.isNone(message.event)) {
+          yield* Effect.logWarning("Dropped an event that didn't decode");
+          continue;
+        }
+
+        if (yield* store.recordEvent(message.event.value)) {
+          yield* Effect.logInfo(
+            `GitHub event: ${eventLine(message.event.value)}`,
+          ).pipe(
+            Effect.annotateLogs({ delivery: message.event.value.delivery }),
+          );
+        }
+      }
+
+      yield* events.ack(pulled.map((message) => message.lease));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Couldn't pull GitHub events", cause),
+      ),
+      Effect.repeat(Schedule.spaced(eventsEvery)),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 /** How long a read or dismissed inbox entry is kept after its last change. */
 const entryDays = 30;
 
@@ -1602,6 +1661,13 @@ export const pruneRuns = Layer.effectDiscard(
       if (entries > 0) {
         yield* Effect.logInfo(`Pruned ${entries} old inbox entries`);
       }
+
+      const events = yield* store.pruneEvents(
+        now - Duration.toMillis(Duration.days(keep.days)),
+      );
+
+      if (events > 0)
+        yield* Effect.logInfo(`Pruned ${events} old GitHub events`);
     }).pipe(
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.hours(1))),
@@ -1656,7 +1722,8 @@ export const layer = (options: ServeOptions) =>
     unparkResolved,
     healWaiting,
     pruneRuns,
+    pullEvents,
   ).pipe(
-    Layer.provide([Tokens.layer, Triage.layer]),
+    Layer.provide([Tokens.layer, Triage.layer, Events.layer]),
     Layer.provideMerge(Store.layer),
   );

@@ -35,3 +35,6 @@ schema:
   triage_url: url?
   triage_host_token: password?
   triage_admin_token: password?
+  events_account_id: str?
+  events_queue_id: str?
+  events_token: password?

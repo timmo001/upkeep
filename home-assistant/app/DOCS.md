@@ -36,5 +36,6 @@ These match the server's settings of the same name, without the `UPKEEP_` prefix
 - **keep_days**: how many days finished runs and their logs are kept.
 - **keep_runs**: how many of each job's latest finished runs are kept however old.
 - **triage_host_token** and **triage_admin_token**: tokens for a triage server to remember failures in. Heals work without it. Add them with `triage hosts add upkeep` and `triage admins add upkeep`, rather than using triage's server admin token. With the triage app from the same repository installed and running, Upkeep finds it on the Supervisor's network. Set **triage_url** for a triage server anywhere else.
+- **events_account_id**, **events_queue_id** and **events_token**: the Cloudflare Queue GitHub's events arrive in, and an API token with Queues edit to pull them. Without them, jobs run on their schedules alone. Setting up the GitHub App, Worker and queue is in [GitHub events](https://upkeep.timmo.dev/events).
 
 The database is kept in the app's data, and the app stops briefly during backups so it's copied consistently.

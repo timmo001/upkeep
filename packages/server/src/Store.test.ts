@@ -423,6 +423,36 @@ test("a waiting run of the same job and release isn't queued twice", () =>
     }),
   ));
 
+test("a GitHub delivery is recorded once, and pruned once old", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const event = {
+        delivery: "d-1",
+        event: "push",
+        action: null,
+        repo: "timmo001/a",
+        defaultBranch: "main",
+        sender: "timmo001",
+        ref: "refs/heads/main",
+        paths: ["mise.toml"],
+        truncated: false,
+        release: null,
+        workflow: null,
+        at: 1,
+      } as const;
+
+      expect(yield* store.recordEvent(event)).toBe(true);
+      expect(yield* store.recordEvent(event)).toBe(false);
+      expect((yield* store.events(0)).map((found) => found.paths)).toEqual([
+        ["mise.toml"],
+      ]);
+      expect(yield* store.pruneEvents(Number.MAX_SAFE_INTEGER)).toBe(1);
+      expect(yield* store.events(0)).toEqual([]);
+    }),
+  ));
+
 test("a run for one repository reuses a waiting run for it or for every repository", () =>
   run(
     Effect.gen(function* () {

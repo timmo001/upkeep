@@ -10,7 +10,7 @@ export default defineConfig(
     site: "upkeep.timmo.dev",
     github: { owner: "timmo001", repo: "upkeep" },
     navigation: {
-      sidebar: ["/", "/running", "/agents"],
+      sidebar: ["/", "/running", "/events", "/agents"],
     },
   }),
 );
