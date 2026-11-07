@@ -2,9 +2,10 @@
 
 Keeps my repositories and their consumers up to date, and shows what needs
 doing: a worker that runs jobs, and a web dashboard built on groundwork. The
-plan is tracked in #1, with the working document attached to it; check it
-before adding a new part. Open decisions are the issues labelled Needs
-Decision, and work that depends on one waits for it.
+first build was tracked in timmo001/upkeep#1, now closed, with its working
+document attached; read it for why things are the way they are. New work gets
+its own issue. Open decisions are the issues labelled Needs Decision, and work
+that depends on one waits for it.
 
 ## Stack
 
