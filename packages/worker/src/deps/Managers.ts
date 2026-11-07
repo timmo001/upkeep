@@ -36,7 +36,7 @@ export interface Extraction {
 }
 
 /** Whether a policy's ignorePaths leave a file out, as globs or substrings. */
-const ignored = (policy: Policy, file: string) =>
+export const ignored = (policy: Policy, file: string) =>
   policy.ignorePaths.some(
     (pattern) => file.includes(pattern) || matchesPattern(file, pattern),
   );

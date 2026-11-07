@@ -57,6 +57,51 @@ test("enabled: false turns Renovate off but keeps its rules, and Upkeep owns aut
   expect(only?.owner).toBe("upkeep");
 });
 
+test("lock file maintenance is off by default, weekly once on, and its schedule sets how often", () => {
+  const maintenance = (config: Schema.JsonObject) =>
+    toPolicy(config, "renovate.json", []).maintenance;
+
+  expect(maintenance({})).toBeUndefined();
+  expect(maintenance({ lockFileMaintenance: { enabled: true } })).toEqual({
+    automerge: false,
+    everyDays: 7,
+  });
+
+  const every = (schedule: Schema.Json) =>
+    maintenance({ lockFileMaintenance: { enabled: true, schedule } })
+      ?.everyDays;
+
+  expect(every(["before 4am on the first day of the month"])).toBe(30);
+  expect(every(["* 0-3 1 * *"])).toBe(30);
+  expect(every(["* 0-3 * * 1"])).toBe(7);
+  expect(every("before 4am on monday")).toBe(7);
+  expect(every(["before 4am"])).toBe(1);
+  expect(every(["at any time"])).toBe(1);
+  expect(every(["every weekday", "on the first day of the month"])).toBe(1);
+});
+
+test("a rule on the lockFileMaintenance update type alone turns it on or automerges it", () => {
+  const policy = toPolicy(
+    {
+      automerge: false,
+      lockFileMaintenance: { enabled: true },
+      packageRules: [
+        { matchUpdateTypes: ["lockFileMaintenance"], automerge: true },
+        {
+          matchUpdateTypes: ["lockFileMaintenance"],
+          matchManagers: ["npm"],
+          enabled: false,
+        },
+      ],
+    },
+    "renovate.json",
+    [],
+  );
+
+  expect(policy.maintenance).toEqual({ automerge: true, everyDays: 7 });
+  expect(policy.notes.join("\n")).not.toContain("lockFileMaintenance");
+});
+
 test("submodules stay off until the config turns them on, as in Renovate", () => {
   const submodule = {
     manager: "git-submodules",

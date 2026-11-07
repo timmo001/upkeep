@@ -12,6 +12,7 @@ import {
   type CustomDatasource,
   type CustomManager,
   DepsError,
+  type Maintenance,
   Patterns,
   type Policy,
   type Rule,
@@ -668,6 +669,66 @@ const translateDatasources = (value: Json | undefined) => {
   return { datasources, notes };
 };
 
+/** How many days apart one Renovate schedule entry, cron or text, comes round. */
+const scheduleDays = (entry: string) => {
+  const fields = entry.trim().split(/\s+/);
+
+  if (
+    fields.length === 5 &&
+    fields.every((field) => /^[\d*,\-/]+$/.test(field))
+  ) {
+    if (fields[2] !== "*") return 30;
+
+    return fields[4] === "*" ? 1 : 7;
+  }
+
+  const text = entry.toLowerCase();
+
+  if (text.includes("month")) return 30;
+
+  if (/weekday|any ?time|every ?day|daily/.test(text)) return 1;
+
+  return /week|(?:mon|tues|wednes|thurs|fri|satur|sun)day/.test(text) ? 7 : 1;
+};
+
+/**
+ * Lock file maintenance as the config sets it: its own object, then rules
+ * that match only its update type, such as one that automerges it. Renovate
+ * leaves it off, and runs it before 4am on Mondays.
+ */
+const translateMaintenance = (
+  config: Config,
+  rules: ReadonlyArray<Rule>,
+  automerge: boolean | undefined,
+): Maintenance | undefined => {
+  const own = isConfig(config.lockFileMaintenance)
+    ? config.lockFileMaintenance
+    : {};
+
+  const set: Settings = rules
+    .filter(
+      (rule) =>
+        rule.unsupported === undefined &&
+        rule.match.updateTypes?.includes("lockFileMaintenance") === true &&
+        Object.entries(rule.match).every(
+          ([key, value]) => key === "updateTypes" || value === undefined,
+        ),
+    )
+    .reduce<Settings>((settings, rule) => ({ ...settings, ...rule.set }), {
+      ...translateSettings(own).set,
+    });
+
+  if (set.enabled !== true) return undefined;
+
+  const schedule = strings(own.schedule);
+
+  return {
+    automerge: set.automerge ?? automerge ?? false,
+    everyDays:
+      schedule.length === 0 ? 7 : Math.min(...schedule.map(scheduleDays)),
+  };
+};
+
 /** Translate a resolved Renovate config into Upkeep's Policy. */
 export const toPolicy = (
   config: Config,
@@ -755,6 +816,7 @@ export const toPolicy = (
     "enabledManagers",
     "customManagers",
     "customDatasources",
+    "lockFileMaintenance",
   ]);
 
   for (const key of Object.keys(config))
@@ -791,6 +853,7 @@ export const toPolicy = (
     rules,
     customManagers,
     customDatasources: datasources.datasources,
+    maintenance: translateMaintenance(config, rules, settings.automerge),
     notes,
   };
 };

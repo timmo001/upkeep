@@ -610,6 +610,15 @@ top of its Renovate config. Renovate then stops, and Upkeep keeps reading the
 rest of the config and owns every group, including the ones Renovate would
 have automerged.
 
+When the config turns on Renovate's `lockFileMaintenance`, Upkeep owns that
+too unless Renovate runs and automerges it. After the groups, it deletes each
+lockfile (`bun.lock`, `pnpm-lock.yaml`, `package-lock.json` or `yarn.lock`)
+and installs again, so everything the manifests allow moves to its latest,
+then checks and pushes them as one "Lock file maintenance" commit and closes
+Renovate's pull request for it. It's due when no lock file maintenance commit,
+Renovate's or Upkeep's, has landed within its `schedule`'s period: a day, a
+week (Renovate's default, before 4am on Mondays) or a month.
+
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:
 

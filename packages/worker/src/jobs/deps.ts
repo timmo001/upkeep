@@ -4,7 +4,8 @@
  * the groups of updates the updater would open, with who owns each: the
  * updater when it automerges the group, otherwise Upkeep. In the repositories
  * set to apply, Upkeep's groups are applied, checked and pushed one at a time,
- * as a dry run unless that's turned off (#5).
+ * then its lock file maintenance when it's due, as a dry run unless that's
+ * turned off (#5).
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
@@ -91,6 +92,16 @@ const repositories = Effect.fnUntraced(function* () {
 /** A dependency's identity in the log, such as `effect` or `aqua:jdx/hk`. */
 const describe = (update: Planner.Update) =>
   `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""})`;
+
+/** Renovate's branch topic and commit message for lock file maintenance. */
+const maintenanceBranch = "lock-file-maintenance";
+const maintenanceSubject = "Lock file maintenance";
+
+/** Lock file maintenance's owner, as for a group: the updater when it automerges. */
+const maintenanceOwner = (policy: Policy) =>
+  policy.updaterRuns && policy.maintenance?.automerge === true
+    ? policy.updater
+    : "upkeep";
 
 /**
  * Plan one repository and log its groups, reading its files from a clean
@@ -218,6 +229,11 @@ const planRepository = Effect.fnUntraced(function* (
     );
   }
 
+  if (policy.maintenance !== undefined)
+    yield* RunLog.info(
+      `${repo}: renovate/${maintenanceBranch} "${maintenanceSubject}", every ${policy.maintenance.everyDays} ${policy.maintenance.everyDays === 1 ? "day" : "days"}, owner ${maintenanceOwner(policy)}`,
+    );
+
   for (const note of notes) yield* RunLog.info(`${repo}: note: ${note}`);
 
   for (const [why, names] of unread)
@@ -225,7 +241,7 @@ const planRepository = Effect.fnUntraced(function* (
       `${repo}: left out, ${why}: ${[...names].toSorted().join(", ")}`,
     );
 
-  return Option.some(groups);
+  return Option.some({ groups, policy });
 });
 
 /** The commit subject for a group, as Renovate titles its pull request. */
@@ -360,9 +376,34 @@ const applyGroup = Effect.fnUntraced(function* (
     .split("\n")
     .filter((file) => file !== "");
 
+  return yield* land(repo, branch, group.branch, subject(group), changed, {
+    ...context,
+    mise,
+  });
+});
+
+/**
+ * Check what a checkout changed, then push it as one commit, watch its CI and
+ * close the updater's pull request on `renovate/<topic>`. Returns true, as
+ * something was applied, or would be in a dry run.
+ */
+const land = Effect.fnUntraced(function* (
+  repo: string,
+  branch: string,
+  topic: string,
+  message: string,
+  changed: ReadonlyArray<string>,
+  context: ApplyContext & { readonly mise: boolean },
+) {
+  const path = yield* Path.Path;
+  const options = { cwd: path.join(context.root, repo), trusted: context.root };
+
   // Workflows alone are checked by CI once they're pushed
   if (changed.some((file) => !file.startsWith(".github/"))) {
-    const ran = yield* Bump.check(context.checks, { ...options, mise });
+    const ran = yield* Bump.check(context.checks, {
+      ...options,
+      mise: context.mise,
+    });
 
     yield* ran.length === 0
       ? RunLog.warn(
@@ -370,8 +411,6 @@ const applyGroup = Effect.fnUntraced(function* (
         )
       : RunLog.info(`${repo}: ${ran.join(", ")} passed`);
   }
-
-  const message = subject(group);
 
   if (context.dryRun) {
     yield* RunLog.info(
@@ -399,17 +438,101 @@ const applyGroup = Effect.fnUntraced(function* (
       : `${repo}: CI passed`,
   );
 
-  yield* closeRenovate(repo, group, sha);
+  yield* closeRenovate(repo, topic, sha);
 
   return true;
 });
 
+const day = 24 * 60 * 60 * 1000;
+
+/**
+ * Lock file maintenance: when no maintenance commit, Renovate's or Upkeep's,
+ * landed within its schedule's period, write each lockfile afresh, then check
+ * and push them as one commit. Returns whether anything was applied.
+ */
+const maintainLockfiles = Effect.fnUntraced(function* (
+  repo: string,
+  branch: string,
+  policy: Policy,
+  everyDays: number,
+  context: ApplyContext,
+) {
+  const path = yield* Path.Path;
+  const directory = path.join(context.root, repo);
+  const options = { cwd: directory, trusted: context.root };
+
+  yield* Bump.checkout(repo, branch, directory, context.root);
+
+  const last = (yield* Bump.run(
+    "git",
+    ["log", "-1", "--format=%ct", "-i", `--grep=${maintenanceSubject}`],
+    options,
+  )).trim();
+
+  // A run every few hours shouldn't push it off by one
+  const at = last === "" ? undefined : Number(last) * 1000;
+
+  if (at !== undefined && Date.now() - at < everyDays * day - day / 4) {
+    yield* RunLog.info(
+      `${repo}: renovate/${maintenanceBranch} isn't due, last done ${new Date(at).toISOString().slice(0, 10)}`,
+    );
+
+    return false;
+  }
+
+  const lockfiles = (yield* Bump.run("git", ["ls-files", "-z"], options))
+    .split("\0")
+    .filter(
+      (file) =>
+        file !== "" &&
+        Bump.regenerates(file) &&
+        !Managers.ignored(policy, file),
+    );
+
+  if (lockfiles.length === 0) {
+    yield* RunLog.info(
+      `${repo}: renovate/${maintenanceBranch} has no lockfile to refresh`,
+    );
+
+    return false;
+  }
+
+  const mise = yield* Bump.usesMise(directory);
+
+  for (const lockfile of lockfiles)
+    yield* Bump.regenerate(directory, lockfile, {
+      trusted: context.root,
+      mise,
+    });
+
+  const changed = (yield* Bump.run("git", ["diff", "--name-only"], options))
+    .split("\n")
+    .filter((file) => file !== "");
+
+  if (changed.length === 0) {
+    yield* RunLog.info(
+      `${repo}: renovate/${maintenanceBranch}: ${listed(lockfiles)} already current`,
+    );
+
+    return false;
+  }
+
+  return yield* land(
+    repo,
+    branch,
+    maintenanceBranch,
+    maintenanceSubject,
+    changed,
+    { ...context, mise },
+  );
+});
+
 const PullRequests = Schema.Array(Schema.Struct({ number: Schema.Number }));
 
-/** Close the updater's open pull request for a group Upkeep landed. */
+/** Close the updater's open pull request on a branch Upkeep landed. */
 const closeRenovate = Effect.fnUntraced(function* (
   repo: string,
-  group: Planner.Group,
+  topic: string,
   sha: string,
 ) {
   const owner = repo.slice(0, repo.indexOf("/"));
@@ -418,7 +541,7 @@ const closeRenovate = Effect.fnUntraced(function* (
     {
       endpoint: `repos/${repo}/pulls`,
       method: "GET",
-      query: { state: "open", head: `${owner}:renovate/${group.branch}` },
+      query: { state: "open", head: `${owner}:renovate/${topic}` },
     },
     PullRequests,
   );
@@ -445,27 +568,31 @@ const closeRenovate = Effect.fnUntraced(function* (
 });
 
 /**
- * Apply each group Upkeep owns, in order. A group that fails is logged and
- * left, and the rest still go. Returns how many applied and which failed.
+ * Apply each group Upkeep owns, in order, then lock file maintenance when
+ * it's due, so it starts from the updated manifests. A group that fails is
+ * logged and left, and the rest still go. Returns how many applied and which
+ * failed.
  */
 const applyRepository = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   groups: ReadonlyArray<Planner.Group>,
+  policy: Policy,
   context: ApplyContext,
 ) {
   let applied = 0;
   const failed: Array<string> = [];
 
+  const count = (done: boolean) =>
+    Effect.sync(() => {
+      if (done) applied += 1;
+    });
+
   for (const group of groups) {
     if (group.owner !== "upkeep") continue;
 
     yield* applyGroup(repo, branch, group, context).pipe(
-      Effect.tap((done) =>
-        Effect.sync(() => {
-          if (done) applied += 1;
-        }),
-      ),
+      Effect.tap(count),
       Effect.catchCause((cause) =>
         RunLog.warn(`${repo}: renovate/${group.branch}: ${reason(cause)}`).pipe(
           Effect.andThen(Effect.sync(() => failed.push(group.branch))),
@@ -473,6 +600,24 @@ const applyRepository = Effect.fnUntraced(function* (
       ),
     );
   }
+
+  if (policy.maintenance !== undefined && maintenanceOwner(policy) === "upkeep")
+    yield* maintainLockfiles(
+      repo,
+      branch,
+      policy,
+      policy.maintenance.everyDays,
+      context,
+    ).pipe(
+      Effect.tap(count),
+      Effect.catchCause((cause) =>
+        RunLog.warn(
+          `${repo}: renovate/${maintenanceBranch}: ${reason(cause)}`,
+        ).pipe(
+          Effect.andThen(Effect.sync(() => failed.push(maintenanceBranch))),
+        ),
+      ),
+    );
 
   // A tool bump and its tooling.yml review go out together
   if (applied > 0 && !context.dryRun) {
@@ -544,14 +689,15 @@ export const deps = Effect.fnUntraced(function* () {
         if (Option.isNone(result)) return;
 
         planned += 1;
-        groups += result.value.length;
+        groups += result.value.groups.length;
 
         if (!applying.has(repo.full_name.toLowerCase())) return;
 
         const outcome = yield* applyRepository(
           repo.full_name,
           repo.default_branch,
-          result.value,
+          result.value.groups,
+          result.value.policy,
           {
             root,
             checks: settings.bump?.repos?.[repo.full_name]?.checks,

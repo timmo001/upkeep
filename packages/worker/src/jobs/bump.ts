@@ -550,6 +550,38 @@ export const install = Effect.fnUntraced(function* (
   return [...done];
 });
 
+/**
+ * Whether `regenerate` can write a lockfile afresh. bun.lockb isn't one, as
+ * Bun now writes a text bun.lock in its place.
+ */
+export const regenerates = (lockfile: string) =>
+  lockfiles.some(
+    ([name]) => name !== "bun.lockb" && lockfile.split("/").at(-1) === name,
+  );
+
+/**
+ * Delete a lockfile and install again, as Renovate's lock file maintenance
+ * does, so everything the manifests allow moves to its latest.
+ */
+export const regenerate = Effect.fnUntraced(function* (
+  directory: string,
+  lockfile: string,
+  options: { readonly trusted: string; readonly mise: boolean },
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entry = lockfiles.find(([name]) => name === path.basename(lockfile));
+
+  if (entry === undefined || !regenerates(lockfile)) return;
+
+  yield* fs.remove(path.join(directory, lockfile));
+
+  yield* tool(options.mise, entry[1], entry[2], {
+    cwd: path.join(directory, path.dirname(lockfile)),
+    trusted: options.trusted,
+  });
+});
+
 /** The repository's own mise tasks, leaving out global ones. */
 export const miseTasks = (options: {
   readonly cwd: string;

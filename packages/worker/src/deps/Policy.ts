@@ -133,6 +133,14 @@ export interface CustomDatasource {
   readonly transformTemplates: ReadonlyArray<string>;
 }
 
+/** Renovate's lock file maintenance: every lockfile written afresh, on a schedule. */
+export interface Maintenance {
+  /** Whether the updater merges it itself, which makes it the owner. */
+  readonly automerge: boolean;
+  /** How often it's due, in days. */
+  readonly everyDays: number;
+}
+
 export interface Policy {
   /** The updater whose config this came from, which owns automerged groups. */
   readonly updater: string;
@@ -154,6 +162,8 @@ export interface Policy {
   readonly customManagers: ReadonlyArray<CustomManager>;
   /** Datasources the config defines, by name without the `custom.` prefix. */
   readonly customDatasources: Readonly<Record<string, CustomDatasource>>;
+  /** Lock file maintenance, when the config turns it on. */
+  readonly maintenance?: Maintenance | undefined;
   /** What the adapter read but couldn't model, for the run's log. */
   readonly notes: ReadonlyArray<string>;
 }
