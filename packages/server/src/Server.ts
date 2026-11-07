@@ -153,7 +153,11 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
 
     if (why !== null) {
       // A release would otherwise be lost, so it waits for the job
-      if (run.trigger === "release" && run.release !== null && !run.heal) {
+      if (
+        (run.trigger === "release" || run.trigger === "event") &&
+        run.release !== null &&
+        !run.heal
+      ) {
         yield* store.hold(run.job, run.release);
         yield* Effect.logInfo(
           `Held ${run.job} for ${run.release.repo}@${run.release.tag}: ${why}`,
@@ -180,6 +184,42 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
   );
 
   return Option.some(queued);
+});
+
+/**
+ * Record the latest releases of the repositories tracked for the releases
+ * job, and queue every job that runs on releases for each new one. A release
+ * seen before, from the releases job or an event, queues nothing, so the two
+ * never queue the same release twice. Returns the runs queued.
+ */
+const queueReleases = Effect.fn("queueReleases")(function* (
+  releases: ReadonlyArray<Domain.Release>,
+  trigger: Domain.Trigger,
+) {
+  const store = yield* Store;
+
+  // Only the releases of repositories tracked for it count, whatever a worker
+  // or event sends.
+  const tracked = new Set(
+    (yield* store.repos())
+      .filter((repo) => repo.jobs.includes(Catalogue.releases.id))
+      .map((repo) => repo.repo.toLowerCase()),
+  );
+
+  const changed = yield* store.recordReleases(
+    releases.filter((release) => tracked.has(release.repo.toLowerCase())),
+  );
+
+  const onRelease = Catalogue.jobs.filter((job) => job.onRelease);
+
+  const queued = yield* Effect.forEach(
+    changed.flatMap((release) =>
+      onRelease.map((job) => ({ job: job.id, trigger, release })),
+    ),
+    queue,
+  );
+
+  return queued.flatMap(Option.toArray);
 });
 
 /** The workers that asked for work in the last half hour, which machine jobs run on. */
@@ -954,38 +994,12 @@ const WorkHandlers = HttpApiBuilder.group(
 
         return { added };
       }),
-      releases: Effect.fn(function* ({ payload }) {
-        // Only the releases of repositories tracked for it count, whatever a
-        // worker sends.
-        const tracked = new Set(
-          (yield* store.repos().pipe(Effect.orDie))
-            .filter((repo) => repo.jobs.includes(Catalogue.releases.id))
-            .map((repo) => repo.repo.toLowerCase()),
-        );
-
-        const changed = yield* store
-          .recordReleases(
-            payload.releases.filter((release) =>
-              tracked.has(release.repo.toLowerCase()),
-            ),
-          )
-          .pipe(Effect.orDie);
-
-        const onRelease = Catalogue.jobs.filter((job) => job.onRelease);
-
-        const queued = yield* Effect.forEach(
-          changed.flatMap((release) =>
-            onRelease.map((job) => ({
-              job: job.id,
-              trigger: "release" as const,
-              release,
-            })),
-          ),
-          queue,
-        ).pipe(Effect.provideService(Store, store), Effect.orDie);
-
-        return { queued: queued.flatMap(Option.toArray) };
-      }),
+      releases: ({ payload }) =>
+        queueReleases(payload.releases, "release").pipe(
+          Effect.map((queued) => ({ queued })),
+          Effect.provideService(Store, store),
+          Effect.orDie,
+        ),
       attention: ({ payload }) =>
         store.recordAttention(payload).pipe(Effect.orDie),
       attentionPage: () => store.attention().pipe(Effect.orDie),
@@ -1590,10 +1604,36 @@ const eventLine = (event: Domain.GitHubEvent) =>
     .join(" ");
 
 /**
+ * Act on a new GitHub event. A release being published, or a pre-release
+ * promoted (`released`), goes through the same path as the releases job's
+ * report, so the scheduled run seeing it later queues nothing. Returns the
+ * runs queued.
+ */
+const handleEvent = Effect.fn("handleEvent")(function* (
+  event: Domain.GitHubEvent,
+) {
+  if (
+    event.event === "release" &&
+    event.action === "released" &&
+    event.release !== null &&
+    event.release.tag !== ""
+  ) {
+    return yield* queueReleases(
+      [{ repo: event.repo, tag: event.release.tag, url: event.release.url }],
+      "event",
+    );
+  }
+
+  return [];
+});
+
+/**
  * Pull GitHub's events from the queue every few seconds, record each delivery
- * by its ID so a repeat is dropped, then ack the batch. A batch that can't be
- * recorded isn't acked, so it comes back after its visibility timeout. A
- * message that doesn't decode is acked and logged, since it never will.
+ * by its ID so a repeat is dropped, act on it, then ack the batch. A batch
+ * that can't be recorded or acted on isn't acked, so it comes back after its
+ * visibility timeout, and a delivery that failed is forgotten so it's acted
+ * on then. A message that doesn't decode is acked and logged, since it never
+ * will.
  */
 export const pullEvents = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -1611,13 +1651,20 @@ export const pullEvents = Layer.effectDiscard(
           continue;
         }
 
-        if (yield* store.recordEvent(message.event.value)) {
-          yield* Effect.logInfo(
-            `GitHub event: ${eventLine(message.event.value)}`,
-          ).pipe(
-            Effect.annotateLogs({ delivery: message.event.value.delivery }),
-          );
-        }
+        const event = message.event.value;
+
+        if (!(yield* store.recordEvent(event))) continue;
+
+        const queued = yield* handleEvent(event).pipe(
+          Effect.provideService(Store, store),
+          Effect.onError(() =>
+            store.forgetEvent(event.delivery).pipe(Effect.ignore),
+          ),
+        );
+
+        yield* Effect.logInfo(
+          `GitHub event: ${eventLine(event)}${queued.length === 0 ? "" : `, queued ${queued.map((run) => run.job).join(", ")}`}`,
+        ).pipe(Effect.annotateLogs({ delivery: event.delivery }));
       }
 
       yield* events.ack(pulled.map((message) => message.lease));

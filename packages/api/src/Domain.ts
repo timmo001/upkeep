@@ -120,12 +120,16 @@ export const GitHubEvent = Schema.Struct({
 
 export interface GitHubEvent extends Schema.Schema.Type<typeof GitHubEvent> {}
 
-/** What started a run. A heal is queued by the server for a failed run. */
+/**
+ * What started a run. A heal is queued by the server for a failed run, and
+ * an `event` run by a GitHub event, such as a release being published.
+ */
 export const Trigger = Schema.Literals([
   "schedule",
   "release",
   "manual",
   "heal",
+  "event",
 ]);
 
 export type Trigger = typeof Trigger.Type;

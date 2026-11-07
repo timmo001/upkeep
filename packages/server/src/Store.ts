@@ -1294,6 +1294,8 @@ export class Store extends Context.Service<
      * before, as a delivery the queue sends again is.
      */
     recordEvent(event: Domain.GitHubEvent): Effect.Effect<boolean, StoreError>;
+    /** Forget a delivery whose handling failed, so it's handled when it comes back. */
+    forgetEvent(delivery: string): Effect.Effect<void, StoreError>;
     /** The GitHub events received since `since`, newest first. */
     events(
       since: number,
@@ -3418,6 +3420,12 @@ export class Store extends Context.Service<
       return rows.length > 0;
     }, Effect.mapError(storeError));
 
+    const forgetEvent = Effect.fn("Store.forgetEvent")(function* (
+      delivery: string,
+    ) {
+      yield* sql`DELETE FROM github_events WHERE delivery = ${delivery}`;
+    }, Effect.mapError(storeError));
+
     const events = Effect.fn("Store.events")(function* (since: number) {
       const rows = yield* sql<{ body: string }>`
         SELECT body FROM github_events
@@ -3668,6 +3676,7 @@ export class Store extends Context.Service<
       settle,
       pruneInbox,
       recordEvent,
+      forgetEvent,
       events,
       pruneEvents,
       repos,

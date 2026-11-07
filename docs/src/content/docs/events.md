@@ -31,8 +31,18 @@ misses.
    is dropped, then acknowledges the batch. A batch it can't record isn't
    acknowledged, so it comes back after a minute.
 
-The server's log shows each new event, and events are kept for as long as
-runs are (`keep_days`).
+The server's log shows each new event and the runs it queued, and events are
+kept for as long as runs are (`keep_days`).
+
+## What each event starts
+
+| Event                                                            | What it does                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `release` published, or promoted from a pre-release (`released`) | Records the release and queues `bump` if it's new, as the `releases` job does. The scheduled `releases` run then finds it recorded and queues nothing. A paused or parked `bump` holds it until it's let go. |
+
+Runs an event started show `event` as their trigger. `bump` already waits up
+to 20 minutes for a release's npm packages to be published, which matters now
+that it starts seconds after the release rather than up to 30 minutes later.
 
 ## Setting it up
 
