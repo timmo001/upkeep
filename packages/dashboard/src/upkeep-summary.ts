@@ -4,11 +4,11 @@
  * request, through the summary job, then shows the latest one, folded away
  * until it's opened, or that it's being written, while the run goes.
  */
-import { phNotePencil } from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { AtomController, registry } from "./AtomController.ts";
+import { phNotePencil } from "./icons.ts";
 import { drawn, shared, time, written } from "./ui.ts";
 import { runHref, runJob, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";

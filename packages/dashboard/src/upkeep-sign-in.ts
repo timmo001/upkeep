@@ -4,6 +4,7 @@
  */
 import { css, html, LitElement } from "lit";
 import { registry } from "./AtomController.ts";
+import { phSignIn } from "./icons.ts";
 import { token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/gw-input.ts";
@@ -45,7 +46,7 @@ export class UpkeepSignIn extends LitElement {
           required
         ></gw-input>
         <p>Make one with <code>upkeep admins add &lt;name&gt;</code>.</p>
-        <gw-button type="submit">Sign in</gw-button>
+        <gw-button type="submit" icon=${phSignIn}>Sign in</gw-button>
       </form>
     `;
   }

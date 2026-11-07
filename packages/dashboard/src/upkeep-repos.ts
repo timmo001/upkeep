@@ -3,12 +3,12 @@
  * how much is unread in it, when it last changed and the jobs it's opted
  * into. Each card opens the repository's own page.
  */
-import { phMagnifyingGlass } from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { plural, titlesOf } from "./entries.ts";
+import { phMagnifyingGlass } from "./icons.ts";
 import { empty, shared, time, view } from "./ui.ts";
 import { inbox, repoHref, repos } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-card.ts";

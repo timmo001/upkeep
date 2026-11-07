@@ -7,7 +7,6 @@
  * worker's agents, with their roles, models and what they're for; then the
  * latest runs. Each table starts with its groups folded away.
  */
-import { phPause, phPlay, phPlayPause } from "./icons.ts";
 import type {
   TableColumn,
   TableRow,
@@ -17,6 +16,7 @@ import cronstrue from "cronstrue";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
+import { phPause, phPlay, phPlayPause } from "./icons.ts";
 import {
   agentLabel,
   formatTime,

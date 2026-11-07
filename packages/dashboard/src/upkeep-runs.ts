@@ -3,7 +3,6 @@
  * by day and kept up to date while it's on screen. A run's whole row opens
  * it, with its log.
  */
-import { phClockCounterClockwise } from "./icons.ts";
 import type {
   TableColumn,
   TableRow,
@@ -12,6 +11,7 @@ import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
+import { phClockCounterClockwise } from "./icons.ts";
 import {
   attentionBadge,
   capitalise,

@@ -2,13 +2,13 @@
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
  * the nav, the theme picker and sign out, and the page the route picks.
  */
-import { phSignOut } from "./icons.ts";
 import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
+import { phSignOut } from "./icons.ts";
 import { bindTheme } from "./theme.ts";
 import { shared } from "./ui.ts";
 import {

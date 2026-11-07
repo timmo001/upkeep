@@ -3,7 +3,6 @@
  * it, its GitHub link, the jobs it's opted into, and what changed in it from
  * the inbox, with the same kind tabs, filters and windowed feed as the inbox.
  */
-import { phCheckCircle, phGithubLogo, phPencilSimple } from "./icons.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { Catalogue, type Domain } from "@upkeep/api";
@@ -11,6 +10,13 @@ import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { titleOf, titlesOf } from "./entries.ts";
+import {
+  phArrowCounterClockwise,
+  phCheck,
+  phCheckCircle,
+  phGithubLogo,
+  phPencilSimple,
+} from "./icons.ts";
 import { empty, shared, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import { inbox, jobHref, renameRepo, repos } from "./upkeep.ts";
@@ -128,11 +134,17 @@ export class UpkeepRepo extends LitElement {
               appearance="plain"
               variant="neutral"
               value="reset"
+              icon=${phArrowCounterClockwise}
               >Reset</gw-button
             >`
           : nothing
       }
-      <gw-button slot="actions" size="small" value="save" data-needs-changes
+      <gw-button
+        slot="actions"
+        size="small"
+        value="save"
+        icon=${phCheck}
+        data-needs-changes
         >Save</gw-button
       >
     </gw-popover>`;

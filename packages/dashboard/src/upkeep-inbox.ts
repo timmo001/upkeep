@@ -5,12 +5,19 @@
  * a feed windowed so it stays quick however long it gets. Built from
  * groundwork's components.
  */
-import { phChecks, phCheckCircle, phX, phPlayPause } from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural, summarise, titlesOf, type Titles } from "./entries.ts";
+import {
+  phArrowRight,
+  phCheckCircle,
+  phChecks,
+  phClockCounterClockwise,
+  phPlayPause,
+  phX,
+} from "./icons.ts";
 import { empty, jobName, shared, time, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import {
@@ -115,6 +122,7 @@ export class UpkeepInbox extends LitElement {
                 size="small"
                 appearance="outlined"
                 variant="neutral"
+                icon=${phClockCounterClockwise}
                 ><a href=${jobHref(job)}>Runs</a></gw-button
               >`
           : html`<gw-button
@@ -122,6 +130,7 @@ export class UpkeepInbox extends LitElement {
               size="small"
               appearance="outlined"
               variant="neutral"
+              icon=${phArrowRight}
               ><a href=${runHref(entry.run)}>Open the run</a></gw-button
             >`
       }

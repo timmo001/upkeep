@@ -2,25 +2,25 @@
  * Pieces every dashboard element shares: icons, times, run state badges, and
  * how a request's result shows while it loads or when it fails.
  */
-import {
-  phWarningCircle,
-  phProhibit,
-  phCheck,
-  phCheckCircle,
-  phXCircle,
-  phTerminalWindow,
-  phCopy,
-  phSignOut,
-  phMinusCircle,
-  phArrowSquareOut,
-  phPlayCircle,
-  phHourglass,
-} from "./icons.ts";
 import { type Api, Catalogue, type Domain } from "@upkeep/api";
 import { type Cause, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, render, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
+import {
+  phArrowSquareOut,
+  phCheck,
+  phCheckCircle,
+  phCopy,
+  phHourglass,
+  phMinusCircle,
+  phPlayCircle,
+  phProhibit,
+  phSignOut,
+  phTerminalWindow,
+  phWarningCircle,
+  phXCircle,
+} from "./icons.ts";
 import { openSession, token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-alert.ts";
 import "@timmo001/groundwork-ui/gw-badge.ts";

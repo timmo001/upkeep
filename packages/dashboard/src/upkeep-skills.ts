@@ -4,14 +4,6 @@
  * from, how it stands against its upstream and tools, who keeps a copy and
  * its last commits, with a way to ask an agent for a change to it.
  */
-import {
-  phCheck,
-  phXCircle,
-  phTerminalWindow,
-  phMagnifyingGlass,
-  phPencilSimple,
-  phPuzzlePiece,
-} from "./icons.ts";
 import type { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
@@ -23,6 +15,17 @@ import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
+import {
+  phArrowCounterClockwise,
+  phCheck,
+  phMagnifyingGlass,
+  phPaperPlaneRight,
+  phPencilSimple,
+  phPlay,
+  phPuzzlePiece,
+  phTerminalWindow,
+  phXCircle,
+} from "./icons.ts";
 import {
   agentSession,
   capitalise,
@@ -210,11 +213,20 @@ export class UpkeepSkills extends LitElement {
                 appearance="outlined"
                 variant="neutral"
                 value="restart"
+                icon=${phArrowCounterClockwise}
                 >Start again</gw-button
-              ><gw-button slot="actions" size="small" value="resume"
+              ><gw-button
+                slot="actions"
+                size="small"
+                value="resume"
+                icon=${phPlay}
                 >Resume</gw-button
               >`
-          : html`<gw-button slot="actions" size="small" value="ask"
+          : html`<gw-button
+              slot="actions"
+              size="small"
+              value="ask"
+              icon=${phPaperPlaneRight}
               >Ask</gw-button
             >`
       }

@@ -3,12 +3,6 @@
  * and its log as it grows, with a button to cancel it while it's going, and
  * once it's ended, to run it again or dismiss what it left for a person.
  */
-import {
-  phArrowLeft,
-  phProhibit,
-  phCheck,
-  phArrowCounterClockwise,
-} from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import type {
   TableColumn,
@@ -17,6 +11,12 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, render, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
+import {
+  phArrowCounterClockwise,
+  phArrowLeft,
+  phCheck,
+  phProhibit,
+} from "./icons.ts";
 import {
   agentLabel,
   agentSession,

@@ -6,7 +6,6 @@
  * which repositories. Each filter that's on shows as a chip that takes it
  * off. Fires `filters-change` with the new filters.
  */
-import { phX, phFunnelSimple } from "./icons.ts";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
@@ -14,6 +13,19 @@ import type { Domain } from "@upkeep/api";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { plural, titleOf, type Titles } from "./entries.ts";
+import {
+  phArrowCircleUp,
+  phBookBookmark,
+  phEnvelopeOpen,
+  phFirstAidKit,
+  phFunnelSimple,
+  phGitCommit,
+  phPackage,
+  phStar,
+  phTag,
+  phWrench,
+  phX,
+} from "./icons.ts";
 import { shared } from "./ui.ts";
 import "@timmo001/groundwork-ui/gw-button.ts";
 import "@timmo001/groundwork-ui/layout.ts";
@@ -43,46 +55,54 @@ export const kindTabs: ReadonlyArray<{
   readonly value: KindFilter;
   readonly label: string;
   readonly description: string;
+  readonly icon: string;
 }> = [
   {
     value: "worth",
     label: "Worth reading",
+    icon: phStar,
     description:
       "Everything that changed something real: releases, commits, updates and drift moves that needed a code or config change, and Upkeep's fixes. Version bumps are left out.",
   },
   {
     value: "release",
     label: "Releases",
+    icon: phTag,
     description:
       "A release of one of your repositories, with every repository Upkeep updated to it and any fix that needed.",
   },
   {
     value: "commit",
     label: "Commits",
+    icon: phGitCommit,
     description:
       "Commits pushed to a repository by you or anyone else outside Upkeep, one entry per repository per day.",
   },
   {
     value: "update",
     label: "Updates",
+    icon: phPackage,
     description:
       "Dependency updates from Renovate, Dependabot or Upkeep that needed a code or config change to land.",
   },
   {
     value: "drift",
     label: "Drift",
+    icon: phWrench,
     description:
       "A tool pinned in a repository's tooling.yml that Upkeep moved to its latest release.",
   },
   {
     value: "fix",
     label: "Fixes",
+    icon: phFirstAidKit,
     description:
       "A fix Upkeep's heal agent pushed to get a failing job or repository working again.",
   },
   {
     value: "routine",
     label: "Version bumps",
+    icon: phArrowCircleUp,
     description:
       "Updates that only moved version numbers, lockfiles, CI pins, submodules or tool versions, with no code changed. Kept out of the way, but here if you want them.",
   },
@@ -307,6 +327,7 @@ export class UpkeepFilters extends LitElement {
 
               return {
                 value: tab.value,
+                icon: tab.icon,
                 label: `${tab.label} ${unread}/${ofKind.length}`,
                 hint: `${unread} of ${ofKind.length} unread. ${tab.description}`,
               };
@@ -341,6 +362,7 @@ export class UpkeepFilters extends LitElement {
       >
         <gw-filter
           label="Read"
+          icon=${phEnvelopeOpen}
           .options=${this.#readOptions()}
           .value=${this.filters.read}
           @change=${(event: Event) =>
@@ -348,6 +370,7 @@ export class UpkeepFilters extends LitElement {
         ></gw-filter>
         <gw-filter
           label="Repositories"
+          icon=${phBookBookmark}
           search-label="Search repositories"
           .options=${this.#repoOptions()}
           .value=${this.filters.repos}

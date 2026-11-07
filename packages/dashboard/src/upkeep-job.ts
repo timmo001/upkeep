@@ -2,9 +2,9 @@
  * `upkeep-job`: one job, what starts it, whether it's parked, the heals of
  * its consumers waiting on the heal limit, and its runs.
  */
-import { phArrowLeft } from "./icons.ts";
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
+import { phArrowLeft } from "./icons.ts";
 import { empty, shared, time, view } from "./ui.ts";
 import { jobs, jobsHref, runHref } from "./upkeep.ts";
 import { jobActions } from "./upkeep-overview.ts";

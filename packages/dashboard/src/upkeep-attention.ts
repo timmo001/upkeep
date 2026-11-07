@@ -9,31 +9,6 @@
  * work from personal, defaulting by whether it's work time. Opening the page
  * notes the visit and queues a collection when the last one is old.
  */
-import {
-  phWarningCircle,
-  phBell,
-  phCheck,
-  phCheckCircle,
-  phClock,
-  phX,
-  phChatCircle,
-  phTrash,
-  phDotsThreeVertical,
-  phEnvelopeOpen,
-  phEyeSlash,
-  phEye,
-  phFolder,
-  phFolderPlus,
-  phFolderMinus,
-  phPencilSimple,
-  phPlus,
-  phRecord,
-  phArrowClockwise,
-  phRobot,
-  phRocketLaunch,
-  phGitPullRequest,
-  phArrowsLeftRight,
-} from "./icons.ts";
 import { Domain } from "@upkeep/api";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
@@ -49,6 +24,39 @@ import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
+import {
+  phArchive,
+  phArrowClockwise,
+  phArrowsLeftRight,
+  phBell,
+  phBookBookmark,
+  phBriefcase,
+  phCaretDown,
+  phCaretUp,
+  phChatCircle,
+  phCheck,
+  phCheckCircle,
+  phClock,
+  phDotsThreeVertical,
+  phEnvelopeOpen,
+  phEye,
+  phEyeSlash,
+  phFolder,
+  phFolderMinus,
+  phFolderPlus,
+  phGitPullRequest,
+  phPencilSimple,
+  phPlus,
+  phPushPin,
+  phRecord,
+  phRobot,
+  phRocketLaunch,
+  phSquaresFour,
+  phTrash,
+  phUser,
+  phWarningCircle,
+  phX,
+} from "./icons.ts";
 import { drawn, empty, externalLink, icon, shared, time, view } from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
@@ -85,12 +93,15 @@ import "@timmo001/groundwork-ui/layout.ts";
 
 type Scope = "work" | "personal" | "all";
 
-const scopes: ReadonlyArray<{ readonly value: Scope; readonly label: string }> =
-  [
-    { value: "work", label: "Work" },
-    { value: "personal", label: "Personal" },
-    { value: "all", label: "All" },
-  ];
+const scopes: ReadonlyArray<{
+  readonly value: Scope;
+  readonly label: string;
+  readonly icon: string;
+}> = [
+  { value: "work", label: "Work", icon: phBriefcase },
+  { value: "personal", label: "Personal", icon: phUser },
+  { value: "all", label: "All", icon: phSquaresFour },
+];
 
 /** Where groups were kept folded before each panel kept its own state. */
 const collapsedKey = "upkeep.attention.collapsed";
@@ -207,14 +218,26 @@ const focuses: ReadonlyArray<{
   readonly value: Domain.AttentionFocus;
   readonly label: string;
   readonly description: string;
+  readonly icon: string;
 }> = [
-  { value: "today", label: "Today", description: "Pinned at the top" },
+  {
+    value: "today",
+    label: "Today",
+    description: "Pinned at the top",
+    icon: phPushPin,
+  },
   {
     value: "watching",
     label: "Watching",
     description: "In the section of its most urgent item",
+    icon: phEye,
   },
-  { value: "parked", label: "Parked", description: "Folded away at the end" },
+  {
+    value: "parked",
+    label: "Parked",
+    description: "Folded away at the end",
+    icon: phArchive,
+  },
 ];
 
 const isFocus = (value: string): value is Domain.AttentionFocus =>
@@ -704,6 +727,7 @@ export class UpkeepAttention extends LitElement {
       value: repo,
       label: nameOf(repo),
       description: description ?? (nameOf(repo) === repo ? undefined : repo),
+      icon: phBookBookmark,
       group,
     });
 
@@ -896,7 +920,9 @@ export class UpkeepAttention extends LitElement {
           this.#promptInput = element instanceof GwInput ? element : undefined;
         })}
       ></gw-input>
-      <gw-button slot="actions" size="small" value="save">Save</gw-button>
+      <gw-button slot="actions" size="small" value="save" icon=${phCheck}
+        >Save</gw-button
+      >
     </gw-popover>`;
   }
 
@@ -922,6 +948,7 @@ export class UpkeepAttention extends LitElement {
         .map((group) => ({
           value: group.id,
           label: group.name,
+          icon: phFolder,
           checked: group.id === current?.id,
         }))}
       .actions=${[
@@ -975,11 +1002,13 @@ export class UpkeepAttention extends LitElement {
         size="xs"
         appearance="plain"
         heading="Focus"
+        icon=${focus?.icon ?? phEye}
         label=${focus?.label ?? ""}
         .items=${focuses.map((each) => ({
           value: each.value,
           label: each.label,
           description: each.description,
+          icon: each.icon,
           checked: each.value === group.focus,
         }))}
         @select=${(event: Event) => {
@@ -1490,6 +1519,7 @@ export class UpkeepAttention extends LitElement {
                 size="xs"
                 appearance="plain"
                 variant="neutral"
+                icon=${open ? phCaretUp : phCaretDown}
                 aria-expanded=${open ? "true" : "false"}
                 @click=${() => {
                   this.#sinceOpen = !this.#sinceOpen;
@@ -1588,6 +1618,7 @@ export class UpkeepAttention extends LitElement {
             value=${scope}
             .options=${scopes.map((option) => ({
               value: option.value,
+              icon: option.icon,
               label: `${option.label} ${
                 visible.filter((item) => inScope(item.work, option.value))
                   .length
