@@ -1,11 +1,12 @@
 /**
- * A heal's fix: check out the target, create an OpenCode session with the
- * chosen model and variant through OpenCode's API, checking both, and run it
- * headless with `opencode run` on the failed run, so nothing opens on the
- * desktop. Several consumers are checked out side by side and fixed in the
- * one session, each checked and pushed on its own. The agent has the session
- * limit, per repository up to four, to finish; whatever it pushed is
- * recorded as the heal's commits and what it said last as its summary.
+ * Agents over checkouts. A heal's fix: check out the target, create an
+ * OpenCode session with the chosen model and variant through OpenCode's API,
+ * checking both, and run it headless with `opencode run` on the failed run,
+ * so nothing opens on the desktop. Several repositories, a heal's consumers
+ * or a change you asked for, are checked out side by side and worked on in
+ * the one session, each checked and pushed on its own. The agent has the
+ * session limit, per repository up to four, to finish; whatever it pushed is
+ * recorded as the run's commits and what it said last as its summary.
  */
 import { Api } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
@@ -25,11 +26,18 @@ const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
 );
 
 /** A repository the agent works in, and where it's checked out. */
-interface Checkout {
+export interface Checkout {
   readonly repo: string;
   readonly directory: string;
   readonly branch: string;
 }
+
+/** What the session records as it goes: a heal's, or nothing. */
+type Recorder = (update: {
+  readonly session?: string;
+  readonly directory?: string;
+  readonly commit?: string;
+}) => Effect.Effect<void, unknown>;
 
 /** What the agent is told: the failure, how it went before, and how far it may go. */
 const prompt = (
@@ -128,27 +136,22 @@ const tip = (
   );
 
 /**
- * Hand a fix to an agent. Returns what happened, for the heal's record, and
- * records the session and any commit as it goes.
+ * Check out each repository side by side, or Upkeep's own for none, and run
+ * one agent session over them all with the prompt `ask` writes for them.
+ * Returns what happened, and records the session and any commit as it goes.
  */
-export const fix = Effect.fnUntraced(function* (
-  heal: Domain.Heal,
-  failed: Domain.Run,
-  log: ReadonlyArray<Domain.LogLine>,
-  precedents: ReadonlyArray<Domain.Precedent>,
+export const across = Effect.fnUntraced(function* (
+  repos: ReadonlyArray<string>,
   agent: Settings.Agent,
-  record: (update: {
-    readonly session?: string;
-    readonly directory?: string;
-    readonly commit?: string;
-  }) => Effect.Effect<void, unknown>,
+  title: string,
+  ask: (checkouts: ReadonlyArray<Checkout>, minutes: number) => string,
+  record: Recorder,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const settings = (yield* Settings.load()).heal ?? {};
   const opencode = settings.opencode ?? "opencode2";
   const root = yield* cacheRoot;
 
-  const repos = Domain.targetRepos(heal.target);
   const several = repos.length > 1;
 
   const minutes =
@@ -211,8 +214,8 @@ export const fix = Effect.fnUntraced(function* (
       "--session",
       session,
       "--title",
-      `${failed.job} ${name}`,
-      prompt(heal, failed, log, precedents, checkouts, minutes),
+      `${title} ${name}`,
+      ask(checkouts, minutes),
     ],
     options,
   ).pipe(
@@ -247,12 +250,13 @@ export const fix = Effect.fnUntraced(function* (
     Effect.orElseSucceed(() => null),
   );
 
-  const verdict = /Outcome:\s*(fixed|nothing to fix|needs you)\s*$/i
-    .exec(said ?? "")?.[1]
-    ?.toLowerCase();
+  const verdict =
+    /Outcome:\s*(fixed|done|nothing to fix|nothing to do|needs you)\s*$/i
+      .exec(said ?? "")?.[1]
+      ?.toLowerCase();
 
-  // A finished agent that pushed a fix, or found nothing to fix, is done
-  // with; one that stopped, ran out of time or asked for a person isn't.
+  // A finished agent that pushed, or found nothing to do, is done with; one
+  // that stopped, ran out of time or asked for a person isn't.
   const attention =
     outcome !== "done" ||
     verdict === "needs you" ||
@@ -285,3 +289,21 @@ export const fix = Effect.fnUntraced(function* (
       };
   }
 });
+
+/** Hand a heal's fix to an agent, over the heal's target. */
+export const fix = (
+  heal: Domain.Heal,
+  failed: Domain.Run,
+  log: ReadonlyArray<Domain.LogLine>,
+  precedents: ReadonlyArray<Domain.Precedent>,
+  agent: Settings.Agent,
+  record: Recorder,
+) =>
+  across(
+    Domain.targetRepos(heal.target),
+    agent,
+    failed.job,
+    (checkouts, minutes) =>
+      prompt(heal, failed, log, precedents, checkouts, minutes),
+    record,
+  );

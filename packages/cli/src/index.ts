@@ -323,6 +323,46 @@ const run = Command.make(
   }),
 ).pipe(Command.withDescription("Queue a run of a job, or run it here"));
 
+const change = Command.make(
+  "change",
+  {
+    repos: Argument.String("repo").pipe(
+      Argument.withDescription(
+        "A repository to make it in, as owner/name; give several to make it in each in one session",
+      ),
+      Argument.withSchema(Domain.RepoName),
+      Argument.atLeast(1),
+    ),
+    prompt: Flag.String("prompt").pipe(
+      Flag.withDescription("The change to make, for the agent"),
+    ),
+    server,
+    json,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const queued = yield* client.attention.command({
+        payload: { kind: "change", repos: input.repos, prompt: input.prompt },
+      });
+
+      if (input.json) {
+        return yield* Console.log(JSON.stringify(queued, null, 2));
+      }
+
+      yield* Console.log(
+        `Queued a change to ${input.repos.join(", ")} as ${queued.id}. Follow it with upkeep log ${queued.id} --follow.`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Have one agent make a change across several repositories in one session, checking and pushing each",
+  ),
+);
+
 const runs = Command.make(
   "runs",
   {
@@ -871,6 +911,7 @@ const upkeep = Command.make("upkeep").pipe(
     status,
     jobs,
     run,
+    change,
     runs,
     log,
     cancel,

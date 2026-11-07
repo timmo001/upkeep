@@ -2,6 +2,7 @@
 import { attention } from "./jobs/attention";
 import { attentionContext } from "./jobs/attention-context";
 import { bump } from "./jobs/bump";
+import { change } from "./jobs/change";
 import { ci } from "./jobs/ci";
 import { command as runCommand } from "./jobs/command";
 import { deps } from "./jobs/deps";
@@ -36,6 +37,7 @@ export const handlers: Handlers = {
   "skill-consumers": () => skillConsumers(),
   "skill-updates": () => skillUpdates(),
   "skill-change": (_release, command) => skillChange(command),
+  change: (_release, command) => change(command),
   summary: () => summary(),
   "attention-context": () => attentionContext(),
   command: (_release, command) => runCommand(command),

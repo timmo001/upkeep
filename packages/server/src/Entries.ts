@@ -138,6 +138,26 @@ export const placement = (
         routine: true,
       };
 
+    // A change you asked for reads as one entry over every repository it
+    // pushed to, named for what you asked
+    case Catalogue.change.id: {
+      const asked =
+        run.command?.kind === "change"
+          ? (run.command.prompt.split("\n")[0]?.trim() ?? "")
+          : "";
+
+      return {
+        ...commit,
+        key: `change:${run.id}`,
+        title:
+          asked === ""
+            ? change.subject
+            : asked.length > 80
+              ? `${asked.slice(0, 79)}…`
+              : asked,
+      };
+    }
+
     default:
       return commit;
   }

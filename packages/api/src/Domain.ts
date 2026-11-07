@@ -14,8 +14,9 @@ export type JobId = typeof JobId.Type;
 
 /**
  * Which of a worker's lanes runs a job. Each lane runs one run at a time, so
- * a job only waits behind the jobs in its own lane: `heal` for heals, which
- * can run a fix agent for a long while, `quick` for jobs that only call APIs,
+ * a job only waits behind the jobs in its own lane: `heal` for heals and
+ * changes, which can run an agent for a long while, `quick` for jobs that
+ * only call APIs,
  * `repos` for jobs that clone and push to repositories, which take turns, and
  * `command` for what the dashboard asks for, which a worker checks for often
  * so a click is answered in seconds, and `machine` for jobs that update the
@@ -614,8 +615,9 @@ export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
  * `command` job: `mark-read` marks a GitHub notification thread read,
  * `start-agent` opens an agent on one worker, which only that one claims, and
  * `open-session` opens an agent's OpenCode session on the worker named.
- * The `skill-*` commands run as the `skill-change` job instead, and
- * `machine` names the worker a machine job's run is for.
+ * The `skill-*` commands run as the `skill-change` job instead, `change` as
+ * the `change` job, and `machine` names the worker a machine job's run is
+ * for.
  */
 export const Command = Schema.Union([
   Schema.Struct({
@@ -689,6 +691,19 @@ export const Command = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("machine"),
     worker: Schema.String,
+  }),
+  /**
+   * Have one agent make the change asked for across the repositories given,
+   * in one session over checkouts side by side, checking and pushing each on
+   * its own, on any worker.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("change"),
+    repos: Schema.Array(RepoName).check(Schema.isMinLength(1)),
+    prompt: Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(4000),
+    ),
   }),
 ]);
 

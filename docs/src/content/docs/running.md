@@ -451,6 +451,28 @@ In the Home Assistant app, only the two tokens are needed when the triage
 app from the same repository is installed and running: the server asks the
 Supervisor for its address on startup and logs the one it uses.
 
+## Changes
+
+```bash
+upkeep change timmo001/a timmo001/b --prompt "Move every workflow to the shared Bun CLI workflow"
+```
+
+`upkeep change` asks for one change across the repositories given, as a run
+of the `change` job: a change that applies to several repositories is made
+once rather than again in each. The worker checks them out side by side, as a
+heal of several repositories does, and runs the last of its `heal.agents`, the
+one for hard work, headless over them all with your prompt, with
+`sessionMinutes` for each repository, up to four. The agent runs each
+repository's checks and pushes each to its default branch on its own, never
+opening a pull request. Its commits show in the inbox as one entry, named for
+the first line of the prompt, and what it said last is the run's summary, with
+its session to open with `upkeep open`. One that stopped, ran out of time or
+asked for you is marked as needing you. A failed change is never healed.
+
+The same change can be asked for through the API, as the `change` command:
+`POST /api/attention/commands` with `{ "kind": "change", "repos": [...],
+"prompt": "..." }`.
+
 ## Jobs
 
 | Job                 | Runs             | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -470,6 +492,7 @@ Supervisor for its address on startup and logs the one it uses.
 | `skill-consumers`   | Hourly           | Syncs the shared skills into the repositories listed in the skills repository's `consumers.yml`, through its own `skill-maintenance`. See [Skills](#skills).                                                                                                                                                                                                                                                                                                               |
 | `skill-updates`     | Hourly           | Pushes the shared skills' updates that need no review, and starts a `skill-change` for each that needs an agent. See [Skills](#skills).                                                                                                                                                                                                                                                                                                                                    |
 | `skill-change`      | On request       | Has an agent change a skill and holds its commit as a patch for your approval, or lands, revises or starts again on a held change, or opens an agent on one. See [Skills](#skills).                                                                                                                                                                                                                                                                                        |
+| `change`            | On request       | Has one agent make a change you asked for across several repositories in one session, checking and pushing each on its own. Never healed. See [Changes](#changes).                                                                                                                                                                                                                                                                                                         |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |

@@ -310,10 +310,12 @@ const heal = Effect.fn("heal")(function* (
   consumers: ReadonlyArray<string>,
 ) {
   // A command or machine job that failed shows on its run, with nothing for
-  // an agent to fix in a repository
+  // an agent to fix in a repository, and a change you asked for is yours to
+  // follow up
   if (
     run.job === Catalogue.heal.id ||
     run.job === Catalogue.command.id ||
+    run.job === Catalogue.change.id ||
     run.command?.kind === "machine" ||
     run.state !== "failed"
   )
@@ -1272,7 +1274,10 @@ const AttentionHandlers = HttpApiBuilder.group(
           ? queueSkillCommand(store, payload)
           : store
               .queueRun({
-                job: Catalogue.command.id,
+                job:
+                  payload.kind === "change"
+                    ? Catalogue.change.id
+                    : Catalogue.command.id,
                 trigger: "manual",
                 release: null,
                 command: payload,

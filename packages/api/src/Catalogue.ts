@@ -170,6 +170,17 @@ export const skillChange: Job = {
   tracked: false,
 };
 
+export const change: Job = {
+  id: "change",
+  name: "Change",
+  description:
+    "On request, have one agent make the same change across several repositories in one session, checking and pushing each",
+  schedule: null,
+  onRelease: false,
+  lane: "heal",
+  tracked: false,
+};
+
 export const summary: Job = {
   id: "summary",
   name: "Summary",
@@ -311,6 +322,7 @@ export const jobs: ReadonlyArray<Job> = [
   skillConsumers,
   skillUpdates,
   skillChange,
+  change,
   summary,
   attentionContext,
   command,
