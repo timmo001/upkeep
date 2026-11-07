@@ -1,54 +1,59 @@
 /**
- * The dashboard's light and dark mode: groundwork's page theme, kept to
- * Glazing, with the app bar's mode picker in step with it. Only the mode can
- * change, from the same four choices and icons as groundwork's theme picker
- * (auto, light, dark and darker); the theme stays Glazing. The boot script
- * shares `themeOptions`, so the stored mode applies before the first paint.
+ * The dashboard's theme and mode: groundwork's page theme, starting on
+ * Glazing, with the app bar's theme picker in step with it. It offers
+ * Glazing, then the other core themes, then the optional families, and
+ * nothing to import: the only theme past those is the desktop's Omarchy
+ * one, which the server passes on. The boot script shares `themeOptions`,
+ * so the stored pick applies before the first paint.
  */
 import {
-  mdiMoonWaningCrescent,
-  mdiThemeLightDark,
-  mdiWeatherNight,
-  mdiWhiteBalanceSunny,
-} from "@mdi/js";
-import {
   coreThemeChoices,
+  optionalThemeChoices,
   pageTheme,
+  type ThemeChoice,
   type ThemeMode,
+  themeOptions as pickerOptions,
 } from "@timmo001/groundwork-tokens/page";
 import { on } from "@timmo001/groundwork-ui";
-import type { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import type { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { themeOptions } from "./theme-options.ts";
 
-/** The modes, as groundwork's theme picker offers them. */
-export const modeOptions = [
-  { value: "auto", label: "Auto", icon: mdiThemeLightDark },
-  { value: "light", label: "Light", icon: mdiWhiteBalanceSunny },
-  { value: "dark", label: "Dark", icon: mdiMoonWaningCrescent },
-  { value: "darker", label: "Darker", icon: mdiWeatherNight },
-] as const;
+/** Glazing first, then the other core themes, then the optional ones by family. */
+const themes: ReadonlyArray<ThemeChoice> = [
+  ...coreThemeChoices.filter(({ id }) => id === themeOptions.defaultTheme),
+  ...coreThemeChoices.filter(({ id }) => id !== themeOptions.defaultTheme),
+  ...optionalThemeChoices,
+];
 
 const modes: ReadonlyArray<ThemeMode> = ["auto", "light", "dark", "darker"];
 
-/** Keep a mode picker in step with the page's mode, both ways. */
-export const bindModes = (picker: GwSegmented) => {
-  const page = pageTheme({
-    ...themeOptions,
-    themes: coreThemeChoices.filter(
-      (choice) => choice.id === themeOptions.defaultTheme,
-    ),
-  });
+/** The page's theme, set up once for the whole dashboard. */
+export const page = pageTheme({ ...themeOptions, themes });
 
+/** Keep a theme picker in step with the page's theme and mode, both ways. */
+export const bindTheme = (picker: GwThemePicker) => {
   const render = () => {
-    picker.value = page.state().mode;
+    const { mode, theme, only, omarchy } = page.state();
+
+    picker.mode = mode;
+    picker.theme = theme;
+    picker.scheme = only ?? "";
+    picker.themes = [
+      ...pickerOptions(themes),
+      ...(omarchy === null ? [] : pickerOptions([omarchy], "Desktop")),
+    ];
   };
 
   page.subscribe(render);
   render();
 
-  on(picker, "change", () => {
-    const mode = modes.find((entry) => entry === picker.value);
+  on(picker, "mode", (event) => {
+    const mode = modes.find((entry) => entry === event.detail.mode);
 
     if (mode !== undefined) page.setMode(mode);
   });
+
+  on(picker, "theme", (event) => page.setTheme(event.detail.id));
+
+  on(picker, "reset", () => page.reset());
 };

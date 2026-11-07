@@ -1,9 +1,15 @@
-/* The page's theme and type: groundwork's tokens with Glazing, and Glazing's
-   fonts. The boot script applies the stored light or dark mode before the
-   first paint. */
-@import "@fontsource-variable/inter";
+/* The page's theme and type: groundwork's tokens with every theme it offers,
+   set in Mona Sans and Geist Mono whichever theme is picked. The boot script
+   applies the stored theme and mode before the first paint. */
+@import "@fontsource-variable/mona-sans";
 @import "@fontsource-variable/geist-mono";
 @import "@timmo001/groundwork-tokens/themes.css";
+
+/* Above each theme's own fonts, and the Omarchy theme's added at runtime */
+:root[data-gw-theme] {
+  --gw-font-sans: "Mona Sans Variable", "Mona Sans", system-ui, sans-serif;
+  --gw-font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+}
 
 :root {
   font-family: var(--gw-font-sans);

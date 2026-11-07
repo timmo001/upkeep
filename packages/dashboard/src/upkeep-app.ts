@@ -1,16 +1,15 @@
 /**
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
- * the nav, the light and dark mode picker and sign out, and the page the
- * route picks.
+ * the nav, the theme picker and sign out, and the page the route picks.
  */
 import { mdiLogout } from "@mdi/js";
-import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
-import { bindModes, modeOptions } from "./theme.ts";
+import { bindTheme } from "./theme.ts";
 import { shared } from "./ui.ts";
 import {
   attentionHref,
@@ -166,14 +165,11 @@ export class UpkeepApp extends LitElement {
         ${this.#link(skillsHref, "Skills", onSkills, this.#waiting())}
         ${this.#link(reposHref, "Repositories", onRepos)}
         ${this.#link(jobsHref, "Jobs", onJobs)}
-        <gw-segmented
+        <gw-theme-picker
           slot="actions"
-          size="small"
-          labels="hide"
-          label="Mode"
-          .options=${modeOptions}
-          ${ref(this.#bindModes)}
-        ></gw-segmented>
+          no-import
+          ${ref(this.#bindTheme)}
+        ></gw-theme-picker>
         ${
           this.#token.value === ""
             ? nothing
@@ -207,12 +203,12 @@ export class UpkeepApp extends LitElement {
 
   #bound = false;
 
-  /** Ties the mode picker to the page's mode once, when it's first rendered. */
-  readonly #bindModes = (element: Element | undefined) => {
-    if (this.#bound || !(element instanceof GwSegmented)) return;
+  /** Ties the theme picker to the page's theme once, when it's first rendered. */
+  readonly #bindTheme = (element: Element | undefined) => {
+    if (this.#bound || !(element instanceof GwThemePicker)) return;
 
     this.#bound = true;
-    bindModes(element);
+    bindTheme(element);
   };
 
   readonly #signOut = () => registry.set(token, "");

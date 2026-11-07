@@ -1,6 +1,6 @@
 /**
  * Puts groundwork's theme boot script inline in the built page's `<head>`, so
- * the stored light or dark mode applies before the first paint and nothing
+ * the stored theme and mode apply before the first paint and nothing
  * flashes. Bun would otherwise bundle it into the module script, which only
  * runs once the page has painted.
  */
