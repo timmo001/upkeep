@@ -10,8 +10,11 @@
  * notes the visit and queues a collection when the last one is old.
  */
 import { Domain } from "@upkeep/api";
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
+import "@timmo001/groundwork-ui/define/gw-segmented.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { getStorage } from "@timmo001/groundwork-ui/storage.ts";
 import type {
@@ -89,16 +92,16 @@ import {
   startAgent,
   updateGroup,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-spinner.ts";
-import "@timmo001/groundwork-ui/gw-card.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/gw-expansion.ts";
-import "@timmo001/groundwork-ui/gw-menu-button.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/gw-section-title.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-spinner.ts";
+import "@timmo001/groundwork-ui/define/gw-card.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-expansion.ts";
+import "@timmo001/groundwork-ui/define/gw-menu-button.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 
 type Scope = "work" | "personal" | "all";
 

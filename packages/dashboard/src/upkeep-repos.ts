@@ -11,11 +11,12 @@ import { plural, titlesOf } from "./entries.ts";
 import { phMagnifyingGlass } from "./icons.ts";
 import { empty, shared, time, view } from "./ui.ts";
 import { inbox, repoHref, repos } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-card.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-card.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 
 /** What the inbox holds for one repository. */
 interface Activity {

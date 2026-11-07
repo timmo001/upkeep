@@ -3,7 +3,9 @@
  * it, its GitHub link, the jobs it's opted into, and what changed in it from
  * the inbox, with the same kind tabs, filters and windowed feed as the inbox.
  */
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { Catalogue, type Domain } from "@upkeep/api";
 import { css, html, LitElement, nothing } from "lit";
@@ -20,12 +22,12 @@ import {
 import { empty, shared, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import { inbox, jobHref, renameRepo, repos } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-card.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/gw-section-title.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-card.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 import "./upkeep-feed.ts";
 import "./upkeep-filters.ts";
 

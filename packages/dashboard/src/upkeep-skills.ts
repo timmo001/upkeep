@@ -5,7 +5,9 @@
  * its last commits, with a way to ask an agent for a change to it.
  */
 import type { Domain } from "@upkeep/api";
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import type {
   TableColumn,
@@ -46,14 +48,14 @@ import {
   reviseSkillChange,
   skillsPage,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/gw-code.ts";
-import "@timmo001/groundwork-ui/gw-expansion.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/gw-section-title.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-code.ts";
+import "@timmo001/groundwork-ui/define/gw-expansion.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
 

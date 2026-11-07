@@ -2,7 +2,9 @@
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
  * the nav, the theme picker and sign out, and the page the route picks.
  */
+import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
+import "@timmo001/groundwork-ui/define/gw-theme-picker.ts";
 import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -27,10 +29,10 @@ import {
   skillsPage,
   token,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-app-bar.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-app-bar.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 import "./upkeep-attention.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";

@@ -6,8 +6,8 @@ import { css, html, LitElement } from "lit";
 import { registry } from "./AtomController.ts";
 import { phSignIn } from "./icons.ts";
 import { token } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-input.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 
 export class UpkeepSignIn extends LitElement {
   static override styles = css`

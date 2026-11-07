@@ -8,9 +8,9 @@ import { phArrowLeft } from "./icons.ts";
 import { empty, shared, time, view } from "./ui.ts";
 import { jobs, jobsHref, runHref } from "./upkeep.ts";
 import { jobActions } from "./upkeep-overview.ts";
-import "@timmo001/groundwork-ui/gw-alert.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-alert.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "./upkeep-runs.ts";
 
 export class UpkeepJob extends LitElement {

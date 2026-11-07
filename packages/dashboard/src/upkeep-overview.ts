@@ -36,10 +36,10 @@ import {
   runJob,
   unparkJob,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/gw-section-title.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "./upkeep-runs.ts";
 
 /** Each lane's heading: a lane runs one run at a time, so a job waits only behind its own lane. */

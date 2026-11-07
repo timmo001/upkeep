@@ -6,6 +6,7 @@
  * drawn once it's opened, which also marks it read.
  */
 import { Catalogue, type Domain } from "@upkeep/api";
+import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
 import type {
   TableColumn,
@@ -38,12 +39,12 @@ import {
   runHref,
   setInboxRules,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-chip.ts";
-import "@timmo001/groundwork-ui/gw-dot.ts";
-import "@timmo001/groundwork-ui/gw-list.ts";
-import "@timmo001/groundwork-ui/gw-menu-button.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-chip.ts";
+import "@timmo001/groundwork-ui/define/gw-dot.ts";
+import "@timmo001/groundwork-ui/define/gw-list.ts";
+import "@timmo001/groundwork-ui/define/gw-menu-button.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 
 const keyOf = (entry: Domain.Entry) => entry.id;
 

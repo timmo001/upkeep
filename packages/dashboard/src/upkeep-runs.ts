@@ -26,7 +26,7 @@ import {
 } from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
 
 /** The release a run is for, or the one repository it was narrowed to. */
 const release = (run: Domain.Run) =>

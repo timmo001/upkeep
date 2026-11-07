@@ -6,8 +6,11 @@
  * which repositories. Each filter that's on shows as a chip that takes it
  * off. Fires `filters-change` with the new filters.
  */
+import "@timmo001/groundwork-ui/define/gw-filter.ts";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
+import "@timmo001/groundwork-ui/define/gw-segmented.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
 import type { Domain } from "@upkeep/api";
 import { css, html, LitElement, nothing } from "lit";
@@ -27,8 +30,8 @@ import {
   phX,
 } from "./icons.ts";
 import { shared } from "./ui.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/layout.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/layout.ts";
 
 /** What the feed shows by kind: everything worth reading, one kind, or the routine updates. */
 export type KindFilter = "worth" | Domain.EntryKind | "routine";

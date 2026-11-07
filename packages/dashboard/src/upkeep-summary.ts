@@ -11,9 +11,9 @@ import { AtomController, registry } from "./AtomController.ts";
 import { phNotePencil } from "./icons.ts";
 import { drawn, shared, time, written } from "./ui.ts";
 import { runHref, runJob, runs } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-expansion.ts";
-import "@timmo001/groundwork-ui/gw-spinner.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-expansion.ts";
+import "@timmo001/groundwork-ui/define/gw-spinner.ts";
 
 const busy = (run: Domain.Run | undefined) =>
   run?.state === "queued" || run?.state === "running";

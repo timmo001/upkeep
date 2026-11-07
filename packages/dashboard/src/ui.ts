@@ -22,12 +22,12 @@ import {
   phXCircle,
 } from "./icons.ts";
 import { openSession, token } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-alert.ts";
-import "@timmo001/groundwork-ui/gw-badge.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-empty-state.ts";
-import "@timmo001/groundwork-ui/gw-card.ts";
-import "@timmo001/groundwork-ui/gw-markdown.ts";
+import "@timmo001/groundwork-ui/define/gw-alert.ts";
+import "@timmo001/groundwork-ui/define/gw-badge.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-empty-state.ts";
+import "@timmo001/groundwork-ui/define/gw-card.ts";
+import "@timmo001/groundwork-ui/define/gw-markdown.ts";
 import "./upkeep-sign-in.ts";
 
 /** Styles every element shares. */

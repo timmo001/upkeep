@@ -45,12 +45,12 @@ import {
   runLog,
   runs,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/gw-alert.ts";
-import "@timmo001/groundwork-ui/gw-button.ts";
-import "@timmo001/groundwork-ui/gw-page-header.ts";
-import "@timmo001/groundwork-ui/gw-section-title.ts";
-import "@timmo001/groundwork-ui/gw-list.ts";
-import "@timmo001/groundwork-ui/gw-table.ts";
+import "@timmo001/groundwork-ui/define/gw-alert.ts";
+import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-list.ts";
+import "@timmo001/groundwork-ui/define/gw-table.ts";
 
 const going = (state: Domain.RunState) =>
   state === "queued" || state === "running";
