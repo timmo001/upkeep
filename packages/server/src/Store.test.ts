@@ -869,6 +869,63 @@ test("dismissing a heal's entry or run clears what it needs", () =>
     }),
   ));
 
+test("settling a job's heals clears its entry once none still needs a person", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const needing = Effect.fnUntraced(function* (repo: string) {
+        yield* store.queueRun({
+          job: "heal",
+          trigger: "heal",
+          release: null,
+          heal: {
+            of: `failed-${repo}`,
+            job: "sync",
+            target: { kind: "consumer", repo },
+          },
+        });
+
+        const id = Option.getOrThrow(
+          yield* store.claim(["heal"], "desktop"),
+        ).id;
+
+        yield* store.updateHeal(id, "desktop", { decision: "fix" });
+        yield* store.report(id, "desktop", { attention: true });
+        yield* store.finish(id, "desktop", "succeeded", null);
+
+        return id;
+      });
+
+      const first = yield* needing("timmo001/a");
+      const second = yield* needing("timmo001/b");
+
+      const needs = () =>
+        store
+          .inbox(0)
+          .pipe(
+            Effect.map(({ entries }) =>
+              entries.filter((entry) => entry.kind === "needs"),
+            ),
+          );
+
+      expect((yield* store.healsNeeding("sync")).map(({ id }) => id)).toEqual([
+        first,
+        second,
+      ]);
+
+      yield* store.settleHeals("sync", [first]);
+
+      expect((yield* store.run(first)).attention).toBe(false);
+      expect((yield* needs()).length).toBe(1);
+
+      yield* store.settleHeals("sync", [second]);
+
+      expect(yield* store.healsNeeding("sync")).toEqual([]);
+      expect(yield* needs()).toEqual([]);
+    }),
+  ));
+
 test("a newer waiting heal replaces the older one for the same consumer", () =>
   run(
     Effect.gen(function* () {

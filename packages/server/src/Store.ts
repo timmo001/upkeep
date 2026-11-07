@@ -1360,6 +1360,19 @@ export class Store extends Context.Service<
     dismissRun(
       id: string,
     ): Effect.Effect<Domain.Run, Api.RunNotFound | StoreError>;
+    /** The heals of `job` still waiting on a person, besides ones that parked it. */
+    healsNeeding(
+      job: string,
+    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /**
+     * Settle heals of `job` a later run showed aren't needed any more: they
+     * stop needing attention, and each of the job's heal entries with no heal
+     * left needing a person is dismissed.
+     */
+    settleHeals(
+      job: string,
+      ids: ReadonlyArray<string>,
+    ): Effect.Effect<void, StoreError>;
     /** Which of these commits are already in the inbox. */
     known(
       commits: ReadonlyArray<Api.CommitRef>,
@@ -3608,6 +3621,44 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
+    const healsNeeding = Effect.fn("Store.healsNeeding")(function* (
+      job: string,
+    ) {
+      return yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE heal_job = ${job} AND attention = 1
+          AND coalesce(heal_decision, 'ask') != 'park'
+        ORDER BY queued_at, id
+      `);
+    }, Effect.mapError(storeError));
+
+    const settleHeals = Effect.fn("Store.settleHeals")(
+      function* (job: string, ids: ReadonlyArray<string>) {
+        if (ids.length === 0) return;
+
+        yield* sql`
+          UPDATE runs SET attention = 0
+          WHERE heal_job = ${job} AND ${sql.in("id", ids)}
+        `;
+
+        // An entry is shared by the job's heals that chose the same, so it
+        // goes once none of them still needs a person.
+        yield* sql`
+          UPDATE entries
+          SET dismissed_at = ${yield* Clock.currentTimeMillis}
+          WHERE kind = 'needs' AND dismissed_at IS NULL
+            AND key LIKE ${`needs:heal:${job}:%`}
+            AND NOT EXISTS (
+              SELECT 1 FROM runs
+              WHERE heal_job = ${job} AND attention = 1
+                AND 'needs:heal:' || heal_job || ':' || coalesce(heal_decision, 'ask') = entries.key
+            )
+        `;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
     const known = Effect.fn("Store.known")(function* (
       commits: ReadonlyArray<Api.CommitRef>,
     ) {
@@ -4000,6 +4051,12 @@ export class Store extends Context.Service<
       rules,
       rule: announce(touches("inbox"), rule),
       dismissRun: announce(touchesRun("runs", "inbox"), dismissRun),
+      healsNeeding,
+      settleHeals: announce(
+        ({ args: [, ids] }) =>
+          ids.length === 0 ? [] : [{ topic: "runs" }, { topic: "inbox" }],
+        settleHeals,
+      ),
       known,
       seen: announce(touches("inbox"), seen),
       needs: announce(touches("inbox"), needs),

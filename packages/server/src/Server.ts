@@ -496,6 +496,54 @@ const settleWaiting = Effect.fn("settleWaiting")(function* (
 });
 
 /**
+ * Settle the heals a finished run shows are no longer needed: ones of the
+ * same job, for the same released repository, raised before it was queued,
+ * whose consumers it reached without failing. A heal of Upkeep itself is
+ * settled by a run that succeeded. Fixes made outside Upkeep then stop
+ * asking for a person.
+ */
+const settleHeals = Effect.fn("settleHeals")(function* (
+  run: Domain.Run,
+  consumers: ReadonlyArray<string>,
+) {
+  if (run.job === Catalogue.heal.id) return;
+
+  if (
+    run.state !== "succeeded" &&
+    !(run.state === "failed" && consumers.length > 0)
+  )
+    return;
+
+  const store = yield* Store;
+  const failed = new Set(consumers.map((repo) => repo.toLowerCase()));
+  const scope = run.repo?.toLowerCase() ?? null;
+
+  const reached = (repo: string) =>
+    !failed.has(repo.toLowerCase()) &&
+    (scope === null || scope === repo.toLowerCase());
+
+  const settled = (yield* store.healsNeeding(run.job)).filter(
+    ({ heal, release, queuedAt }) =>
+      heal !== null &&
+      queuedAt < run.queuedAt &&
+      release?.repo === run.release?.repo &&
+      (heal.target.kind === "upkeep"
+        ? run.state === "succeeded"
+        : Domain.targetRepos(heal.target).every(reached)),
+  );
+
+  if (settled.length === 0) return;
+
+  yield* store.settleHeals(
+    run.job,
+    settled.map(({ id }) => id),
+  );
+  yield* Effect.logInfo(
+    `Settled ${settled.length} heal${settled.length === 1 ? "" : "s"} of ${run.job}: a later run got through`,
+  ).pipe(Effect.annotateLogs({ run: run.id }));
+});
+
+/**
  * Queue each waiting heal once its consumer's heals in the last 24 hours drop
  * under the limit, once a minute. One whose failed run has been pruned is
  * dropped.
@@ -1040,6 +1088,11 @@ const WorkHandlers = HttpApiBuilder.group(
         );
 
         yield* settleWaiting(ended, payload.consumers ?? []).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchCause(Effect.logError),
+        );
+
+        yield* settleHeals(ended, payload.consumers ?? []).pipe(
           Effect.provideService(Store, store),
           Effect.catchCause(Effect.logError),
         );
