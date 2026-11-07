@@ -2,9 +2,10 @@
  * `upkeep-overview`: the Jobs page. Every job, grouped by the lane it runs
  * in, with its latest run, a button to run it (unless it runs on releases,
  * which need one given) and, for a parked job, why and
- * a button to unpark it, and a switch to pause or resume it; then each
+ * a button to unpark it, and a switch to pause or resume one that starts by
+ * itself; then each
  * worker's agents, with their roles, models and what they're for; then the
- * latest runs.
+ * latest runs. Each table starts with its groups folded away.
  */
 import { mdiPause, mdiPlay, mdiPlayPause } from "@mdi/js";
 import type {
@@ -50,18 +51,24 @@ const laneLabels = new Map<string, string>([
   ["machine", "Machine lane: keeping each worker's own machine current"],
 ]);
 
+/** Whether only a person starts a job: it has no schedule and no release. */
+const onRequest = (job: Domain.JobStatus) =>
+  job.schedule === null && !job.onRelease;
+
 /** What starts a job besides its run button, with a schedule in words. */
 const starts = (job: Domain.JobStatus) =>
-  [
-    job.schedule === null
-      ? null
-      : html`<span title=${job.schedule}
-          >${cronstrue.toString(job.schedule, {
-            use24HourTimeFormat: true,
-          })}</span
-        >`,
-    job.onRelease ? "On release" : null,
-  ].filter((start) => start !== null);
+  onRequest(job)
+    ? ["On request"]
+    : [
+        job.schedule === null
+          ? null
+          : html`<span title=${job.schedule}
+              >${cronstrue.toString(job.schedule, {
+                use24HourTimeFormat: true,
+              })}</span
+            >`,
+        job.onRelease ? "On release" : null,
+      ].filter((start) => start !== null);
 
 export const jobActions = (job: Domain.JobStatus) => html`
   ${
@@ -89,16 +96,20 @@ export const jobActions = (job: Domain.JobStatus) => html`
         >`
   }
   ${
+    // Pausing only stops what queues it by itself, which a job run on
+    // request doesn't have, but one paused before can still be resumed
     job.paused === null
-      ? html`<gw-button
-          size="small"
-          appearance="outlined"
-          variant="neutral"
-          icon=${mdiPause}
-          title="Stop queueing it until it's resumed"
-          @click=${() => registry.set(pauseJob, job.id)}
-          >Pause</gw-button
-        >`
+      ? onRequest(job)
+        ? null
+        : html`<gw-button
+            size="small"
+            appearance="outlined"
+            variant="neutral"
+            icon=${mdiPause}
+            title="Stop queueing it until it's resumed"
+            @click=${() => registry.set(pauseJob, job.id)}
+            >Pause</gw-button
+          >`
       : html`<gw-button
           size="small"
           appearance="outlined"
@@ -232,8 +243,11 @@ export class UpkeepOverview extends LitElement {
     ];
 
     return html`<gw-table
+      storage-key="upkeep.jobs.table"
       label="Jobs"
       group="lane"
+      groups-collapsed
+      contained
       row-key="id"
       search="never"
       .columns=${columns}
@@ -242,7 +256,7 @@ export class UpkeepOverview extends LitElement {
         name: job.name,
         description: job.description,
         lane: job.lane,
-        starts: job.schedule ?? "",
+        starts: onRequest(job) ? "On request" : (job.schedule ?? ""),
         last: job.lastRun?.queuedAt ?? 0,
       }))}
     ></gw-table>`;
@@ -289,8 +303,11 @@ export class UpkeepOverview extends LitElement {
     ];
 
     return html`<gw-table
+      storage-key="upkeep.agents.table"
       label="Agents"
       group="worker"
+      groups-collapsed
+      contained
       row-key="id"
       search="never"
       .columns=${columns}
@@ -311,7 +328,7 @@ export class UpkeepOverview extends LitElement {
           : html`<gw-section-title class="runs">Agents</gw-section-title>
               ${view(this.#workers.value, (list) => this.#agents(list))}
               <gw-section-title class="runs">Latest runs</gw-section-title>
-              <upkeep-runs></upkeep-runs>`
+              <upkeep-runs groups-collapsed></upkeep-runs>`
       }
     `;
   }
