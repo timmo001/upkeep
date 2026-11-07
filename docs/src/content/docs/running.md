@@ -231,6 +231,7 @@ name set by hand always stays; clear it and the worker's name shows again.
 ```bash
 upkeep run releases
 upkeep run releases --local
+upkeep run drift --repo timmo001/upkeep
 upkeep runs --job releases --state failed
 upkeep log <run> --follow
 upkeep cancel <run>
@@ -247,6 +248,13 @@ that's still waiting is reused instead. With `--local` it runs here instead,
 printing its log and reporting nothing to the server. It still reads the
 repositories tracked for the job from the server, so it needs `--server` and
 an admin token.
+
+`--repo owner/name` narrows a run to one repository: a job that works on
+repositories only touches that one. It has to be tracked for the job, or
+tracked at all for `watch`; a job that doesn't work on repositories refuses
+it. A waiting run for the same repository, or for every repository, is reused,
+so a burst of requests queues one run. Retrying a narrowed run keeps it
+narrowed. The `run` tool in MCP and Code Mode takes the same `repo`.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
 `cancelled`, and its worker stops it at its next heartbeat.

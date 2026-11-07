@@ -116,8 +116,11 @@ export class Reporter extends Context.Service<
     ) => Effect.Effect<void, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
-  /** Send findings to the server, for the run `runId`. */
-  static readonly remote = (runId: string) =>
+  /**
+   * Send findings to the server, for the run `runId`. With `repo`, the run
+   * only works on that repository.
+   */
+  static readonly remote = (runId: string, repo: string | null = null) =>
     Layer.effect(
       Reporter,
       Effect.gen(function* () {
@@ -156,8 +159,9 @@ export class Reporter extends Context.Service<
                 Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
               ),
           heals: (since) => client.work.heals({ query: { since } }),
-          repos: (job) =>
+          repos: narrowTo(repo, (job) =>
             client.work.repos({ query: job === undefined ? {} : { job } }),
+          ),
           inbox: () => client.work.inbox(),
           known: Effect.fnUntraced(function* (commits) {
             const known: Array<Api.CommitRef> = [];
@@ -290,6 +294,25 @@ export class Reporter extends Context.Service<
       }),
     );
 }
+
+/**
+ * The tracked repositories `repos` reads, narrowed to `repo` when a run was
+ * scoped to one, ignoring case as GitHub does. Every job that works on
+ * repositories reads them through this, so the scope reaches each one.
+ */
+export const narrowTo =
+  <E>(
+    repo: string | null,
+    repos: (job?: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, E>,
+  ) =>
+  (job?: Domain.JobId) =>
+    repo === null
+      ? repos(job)
+      : repos(job).pipe(
+          Effect.map((all) =>
+            all.filter((name) => name.toLowerCase() === repo.toLowerCase()),
+          ),
+        );
 
 /** Repositories by name for a summary, or `none`. */
 export const listed = (repos: ReadonlyArray<string>) =>

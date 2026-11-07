@@ -25,7 +25,7 @@ import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
 import * as RateLimits from "./RateLimits";
-import { Reporter } from "./Reporter";
+import { narrowTo, Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 import * as Settings from "./settings";
 import * as Status from "./Status";
@@ -201,9 +201,17 @@ const execute = Effect.fnUntraced(function* (
       ),
     );
 
-  return yield* attempt(0).pipe(
+  const scope = run.repo ?? null;
+
+  return yield* (
+    scope === null
+      ? attempt(0)
+      : RunLog.use((log) => log.write("info", `Only working on ${scope}`)).pipe(
+          Effect.andThen(attempt(0)),
+        )
+  ).pipe(
     Effect.raceFirst(heartbeats),
-    Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id)]),
+    Effect.provide([RunLog.remote(run.id), Reporter.remote(run.id, scope)]),
     Effect.onExit((exit) =>
       client.work.finish({ params, payload: outcome(exit) }).pipe(
         Effect.andThen(
@@ -352,13 +360,14 @@ export const work = Effect.fn("Worker.work")(function* (
 
 /**
  * Run a job on this machine, printing its log, without a worker. `repos`
- * reads the repositories tracked for a job.
+ * reads the repositories tracked for a job, narrowed to `repo` when given.
  */
 export const runLocal = (
   handler: Handler,
   release: Domain.Release | null,
   repos: (job?: Domain.JobId) => Effect.Effect<ReadonlyArray<string>, unknown>,
+  repo: string | null = null,
 ) =>
   handler(release, null).pipe(
-    Effect.provide([Reporter.local(repos), RunLog.console]),
+    Effect.provide([Reporter.local(narrowTo(repo, repos)), RunLog.console]),
   );

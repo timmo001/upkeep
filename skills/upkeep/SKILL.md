@@ -10,7 +10,7 @@ Prefer the `upkeep` Code Mode namespace, then the MCP server (`upkeep mcp`); fal
 - `upkeep status --json` lists the jobs Upkeep runs.
 - `upkeep runs --json` lists runs, newest first; filter with `--job` and `--state failed`.
 - `upkeep log <run> --json` prints a run's log as JSON lines. A failed run's `error` holds why it failed.
-- `upkeep run <job>` queues a run (write). `upkeep run <job> --local` runs it on this machine and reports nothing, which is the safe way to try a job.
+- `upkeep run <job>` queues a run (write). `upkeep run <job> --local` runs it on this machine and reports nothing, which is the safe way to try a job. Add `--repo owner/name` to work on only that tracked repository.
 - `upkeep cancel <run>` drops a queued run or stops a running one (write).
 - `upkeep retry <run>` runs a finished run again, a heal as the same heal, and dismisses the old one (write). `upkeep dismiss <run>` clears what a run left for a person and its inbox entry (write).
 - `upkeep runs --job heal` lists heals: what each one heals, what was decided and what was done (read).

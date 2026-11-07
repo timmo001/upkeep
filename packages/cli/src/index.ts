@@ -133,6 +133,7 @@ const runLine = (run: Domain.Run) =>
     time(run.queuedAt),
     run.worker ?? "-",
     run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,
+    run.repo == null ? "" : `for ${run.repo}`,
     run.heal === null
       ? ""
       : `heals ${run.heal.job} ${run.heal.of} (${run.heal.target.kind === "upkeep" ? "upkeep" : run.heal.target.repo})${run.heal.decision === null ? "" : `: ${run.heal.decision}`}`,
@@ -173,6 +174,15 @@ const release = Flag.String("release").pipe(
   Flag.optional,
 );
 
+/** A repository given as `owner/name`. */
+const repo = Flag.String("repo").pipe(
+  Flag.withDescription(
+    "Only work on this tracked repository, as owner/name, instead of every one the job tracks",
+  ),
+  Flag.withSchema(Domain.RepoName),
+  Flag.optional,
+);
+
 const run = Command.make(
   "run",
   {
@@ -180,6 +190,7 @@ const run = Command.make(
       Argument.withDescription("The job's ID, such as releases"),
     ),
     release,
+    repo,
     local: Flag.Boolean("local").pipe(
       Flag.withDescription(
         "Run it here and print its log, instead of queueing it on the server",
@@ -224,6 +235,7 @@ const run = Command.make(
                   .map((tracked) => tracked.repo);
               }).pipe(Effect.provide(adminClient(url))),
           }),
+        Option.getOrNull(input.repo),
       );
     }
 
@@ -238,17 +250,23 @@ const run = Command.make(
 
       return yield* client.jobs.run({
         params: { id: input.job },
-        payload: Option.match(input.release, {
-          onNone: () => ({}),
-          onSome: (value) => ({ release: value }),
-        }),
+        payload: {
+          ...Option.match(input.release, {
+            onNone: () => ({}),
+            onSome: (value) => ({ release: value }),
+          }),
+          ...Option.match(input.repo, {
+            onNone: () => ({}),
+            onSome: (value) => ({ repo: value }),
+          }),
+        },
       });
     }).pipe(Effect.provide(adminClient(input.server.value)));
 
     if (input.json) return yield* Console.log(JSON.stringify(queued, null, 2));
 
     yield* Console.log(
-      `Queued ${queued.job} as ${queued.id}. Follow it with upkeep log ${queued.id} --follow.`,
+      `Queued ${queued.job}${queued.repo == null ? "" : ` for ${queued.repo}`} as ${queued.id}. Follow it with upkeep log ${queued.id} --follow.`,
     );
   }),
 ).pipe(Command.withDescription("Queue a run of a job, or run it here"));

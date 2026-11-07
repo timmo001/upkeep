@@ -54,10 +54,11 @@ const Log = Tool.make("log", {
 
 const Run = Tool.make("run", {
   description:
-    "Queue a run of a job on the server. A run of the same job and release that's still waiting is returned instead of a second one.",
+    "Queue a run of a job on the server. A run of the same job and release that's still waiting is returned instead of a second one. Give repo to work on only that tracked repository; a waiting run for it or for every repository is returned instead.",
   parameters: Schema.Struct({
     job: Domain.JobId,
     release: Schema.optionalKey(Domain.Release),
+    repo: Schema.optionalKey(Domain.RepoName),
   }),
   success: Domain.Run,
   failure: UpkeepError,
@@ -275,13 +276,16 @@ export const toolsLayer = Tools.toLayer(
       run: (input: {
         readonly job: string;
         readonly release?: Domain.Release | undefined;
+        readonly repo?: string | undefined;
       }) =>
         onServer(
           Client.use((client) =>
             client.jobs.run({
               params: { id: input.job },
-              payload:
-                input.release === undefined ? {} : { release: input.release },
+              payload: {
+                ...(input.release !== undefined && { release: input.release }),
+                ...(input.repo !== undefined && { repo: input.repo }),
+              },
             }),
           ),
         ),

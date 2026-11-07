@@ -28,10 +28,13 @@ import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-table.ts";
 
+/** The release a run is for, or the one repository it was narrowed to. */
 const release = (run: Domain.Run) =>
-  run.release === null
-    ? ""
-    : externalLink(run.release.url, `${run.release.repo}@${run.release.tag}`);
+  run.release !== null
+    ? externalLink(run.release.url, `${run.release.repo}@${run.release.tag}`)
+    : run.repo == null
+      ? ""
+      : externalLink(`https://github.com/${run.repo}`, run.repo);
 
 /** The local day a time falls on, as `YYYY-MM-DD`, which groups runs. */
 const dayOf = (millis: number) => {
@@ -167,7 +170,7 @@ export class UpkeepRuns extends LitElement {
       },
       {
         id: "release",
-        header: "Release",
+        header: "For",
         cell: draw((run) => release(run), { width: "6.5rem" }),
       },
       {
@@ -219,7 +222,9 @@ export class UpkeepRuns extends LitElement {
             : `${run.trigger} ${jobName(run.heal.job)}`,
         summary: run.summary?.split("\n")[0] ?? "",
         release:
-          run.release === null ? "" : `${run.release.repo}@${run.release.tag}`,
+          run.release === null
+            ? (run.repo ?? "")
+            : `${run.release.repo}@${run.release.tag}`,
         worker: run.worker ?? "",
         day: dayOf(run.queuedAt),
         queued: run.queuedAt,
