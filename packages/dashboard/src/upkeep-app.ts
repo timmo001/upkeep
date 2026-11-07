@@ -184,6 +184,7 @@ export class UpkeepApp extends LitElement {
         <gw-theme-picker
           slot="actions"
           no-import
+          no-reset
           ${ref(this.#bindTheme)}
         ></gw-theme-picker>
         ${
