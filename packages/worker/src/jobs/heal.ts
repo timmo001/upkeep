@@ -17,7 +17,7 @@ import {
   isRateLimited,
   isTransient,
 } from "@timmo001/effect-gh";
-import { Domain } from "@upkeep/api";
+import { Catalogue, Domain } from "@upkeep/api";
 import { tmpdir } from "node:os";
 import {
   Cause,
@@ -171,6 +171,27 @@ export const fallback = (
         agent: Option.none(),
         decided: false,
       };
+
+/**
+ * A drift review fails on purpose to hand its list to an agent, so there's
+ * nothing for a decision model to choose: it goes to the last agent, the one
+ * for hard fixes, or is left for you without one.
+ */
+const reviewing = (agents: ReadonlyArray<Settings.Agent>): Chosen =>
+  Option.match(Option.fromNullishOr(agents.at(-1)), {
+    onNone: () => ({
+      decision: "ask",
+      reason: "A drift review is for an agent, and there's none set up",
+      agent: Option.none(),
+      decided: false,
+    }),
+    onSome: (agent) => ({
+      decision: "fix",
+      reason: "A drift review always goes to an agent",
+      agent: Option.some(agent),
+      decided: false,
+    }),
+  });
 
 /** How a heal's reason names the model that chose it, to count its use. */
 const by = (model: Settings.DecisionModel) =>
@@ -517,64 +538,68 @@ export const heal = Effect.fnUntraced(function* () {
 
   yield* RunLog.info(`Healing ${run.job} run ${run.id}: ${run.error ?? ""}`);
 
-  const chosen: Chosen = yield* Option.match(
-    Option.fromNullishOr(settings.decisions),
-    {
-      onNone: () => Effect.succeed(fallback(run)),
-      onSome: Effect.fnUntraced(function* (model) {
-        const limit =
-          settings.decisionsPerDay ??
-          (model.provider === "opencode" ? 300 : Infinity);
+  const chosen: Chosen =
+    run.job === Catalogue.driftReview.id
+      ? reviewing(settings.agents ?? [])
+      : yield* Option.match(Option.fromNullishOr(settings.decisions), {
+          onNone: () => Effect.succeed(fallback(run)),
+          onSome: Effect.fnUntraced(function* (model) {
+            const limit =
+              settings.decisionsPerDay ??
+              (model.provider === "opencode" ? 300 : Infinity);
 
-        const now = yield* Clock.currentTimeMillis;
+            const now = yield* Clock.currentTimeMillis;
 
-        const used = (yield* reporter.heals(
-          now - Duration.toMillis("1 day"),
-        )).filter(({ heal }) => heal?.reason?.includes(by(model))).length;
+            const used = (yield* reporter.heals(
+              now - Duration.toMillis("1 day"),
+            )).filter(({ heal }) => heal?.reason?.includes(by(model))).length;
 
-        if (used >= limit) {
-          yield* RunLog.info(
-            `Not asking the decision model: it's chosen ${used} heals today, the limit`,
-          );
+            if (used >= limit) {
+              yield* RunLog.info(
+                `Not asking the decision model: it's chosen ${used} heals today, the limit`,
+              );
 
-          return fallback(
-            run,
-            `the decision model reached its ${limit} heals today`,
-          );
-        }
+              return fallback(
+                run,
+                `the decision model reached its ${limit} heals today`,
+              );
+            }
 
-        const failure = describe(record, run, log, precedents);
-        const agents = settings.agents ?? [];
+            const failure = describe(record, run, log, precedents);
+            const agents = settings.agents ?? [];
 
-        const orFallback = <R>(choosing: Effect.Effect<Chosen, unknown, R>) =>
-          choosing.pipe(
-            Effect.catchCause((cause) =>
-              RunLog.warn(
-                `The decision model couldn't choose: ${failureReason(cause)}`,
-              ).pipe(
-                Effect.as(fallback(run, "the decision model couldn't choose")),
+            const orFallback = <R>(
+              choosing: Effect.Effect<Chosen, unknown, R>,
+            ) =>
+              choosing.pipe(
+                Effect.catchCause((cause) =>
+                  RunLog.warn(
+                    `The decision model couldn't choose: ${failureReason(cause)}`,
+                  ).pipe(
+                    Effect.as(
+                      fallback(run, "the decision model couldn't choose"),
+                    ),
+                  ),
+                ),
+              );
+
+            if (model.provider === "opencode")
+              return yield* orFallback(
+                decideByAgent(
+                  failure,
+                  agents,
+                  model,
+                  settings.opencode ?? "opencode2",
+                ),
+              );
+
+            return yield* orFallback(
+              decide(failure, agents, model).pipe(
+                Effect.provide(decisionLayer(model)),
               ),
-            ),
-          );
-
-        if (model.provider === "opencode")
-          return yield* orFallback(
-            decideByAgent(
-              failure,
-              agents,
-              model,
-              settings.opencode ?? "opencode2",
-            ),
-          );
-
-        return yield* orFallback(
-          decide(failure, agents, model).pipe(
-            Effect.provide(decisionLayer(model)),
-          ),
-        );
-      }),
-    },
-  );
+            );
+          }),
+        });
 
   yield* RunLog.info(`Chose to ${chosen.decision}: ${chosen.reason}`);
 
