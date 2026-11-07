@@ -25,6 +25,60 @@ const release = (tag: string): Domain.GitHubEvent => ({
   at: 1,
 });
 
+test("a burst of pushes queues one run of each job the repository is tracked for", () => {
+  const push = (delivery: string): Domain.GitHubEvent => ({
+    delivery,
+    event: "push",
+    action: null,
+    repo: "timmo001/a",
+    defaultBranch: "main",
+    sender: "timmo001",
+    ref: "refs/heads/main",
+    paths: ["renovate.json"],
+    truncated: false,
+    release: null,
+    workflow: null,
+    at: 1,
+  });
+
+  const events = Layer.succeed(
+    Events,
+    Events.of({
+      enabled: true,
+      pull: () =>
+        Effect.succeed(
+          ["p1", "p2"].map((delivery) => ({
+            lease: delivery,
+            event: Option.some(push(delivery)),
+          })),
+        ),
+      ack: () => Effect.void,
+    }),
+  );
+
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      // Tracked for deps but not sync, so only deps and watch run for it
+      yield* store.track("timmo001/a", ["deps"]);
+
+      yield* Layer.build(pullEvents.pipe(Layer.provide(events)));
+      yield* Effect.sleep("200 millis");
+
+      const queued = yield* store.runs({ limit: 10 });
+
+      expect(
+        queued.map((run) => `${run.job}:${run.repo}:${run.trigger}`).toSorted(),
+      ).toEqual(["deps:timmo001/a:event", "watch:timmo001/a:event"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  );
+});
+
 test("a release event queues its bump once and the batch is acked", () => {
   const acked: Array<string> = [];
 

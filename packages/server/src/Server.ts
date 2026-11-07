@@ -6,7 +6,7 @@
  * that prunes old runs, and the pull of GitHub's events from their queue.
  */
 import { BunHttpServer } from "@effect/platform-bun";
-import { Api, Catalogue, Domain } from "@upkeep/api";
+import { Api, Catalogue, Domain, EventJobs } from "@upkeep/api";
 import { bundleDashboard } from "@upkeep/dashboard/bundle" with { type: "macro" };
 import {
   Clock,
@@ -1606,25 +1606,63 @@ const eventLine = (event: Domain.GitHubEvent) =>
 /**
  * Act on a new GitHub event. A release being published, or a pre-release
  * promoted (`released`), goes through the same path as the releases job's
- * report, so the scheduled run seeing it later queues nothing. Returns the
- * runs queued.
+ * report, so the scheduled run seeing it later queues nothing. A push or a
+ * finished workflow run queues the runs `EventJobs.runsFor` asks for, on a
+ * tracked repository only: one narrowed to the repository needs it tracked
+ * for the job (or at all, for watch). A waiting run is reused, so a burst of
+ * pushes queues one. Returns the runs queued.
  */
 const handleEvent = Effect.fn("handleEvent")(function* (
   event: Domain.GitHubEvent,
 ) {
-  if (
-    event.event === "release" &&
-    event.action === "released" &&
-    event.release !== null &&
-    event.release.tag !== ""
-  ) {
+  if (event.event === "release") {
+    if (
+      event.action !== "released" ||
+      event.release === null ||
+      event.release.tag === ""
+    )
+      return [];
+
     return yield* queueReleases(
       [{ repo: event.repo, tag: event.release.tag, url: event.release.url }],
       "event",
     );
   }
 
-  return [];
+  const store = yield* Store;
+
+  const tracked = (yield* store.repos()).find(
+    (repo) => repo.repo.toLowerCase() === event.repo.toLowerCase(),
+  );
+
+  const queued: Array<Domain.Run> = [];
+
+  for (const { job: id, repo } of EventJobs.runsFor(event)) {
+    const job = Option.getOrNull(findJob(id));
+
+    if (job === null) continue;
+
+    // A narrowed run only goes to a job the repository is tracked for; a run
+    // of the whole job, such as sync on a groundwork push, needs neither
+    if (
+      repo !== null &&
+      (tracked === undefined ||
+        !Catalogue.scopable(job) ||
+        (job.tracked && !tracked.jobs.includes(job.id)))
+    )
+      continue;
+
+    const run = yield* queue({
+      job: job.id,
+      trigger: "event",
+      release: null,
+      repo: repo === null ? null : (tracked?.repo ?? null),
+    });
+
+    if (Option.isSome(run)) queued.push(run.value);
+  }
+
+  return queued;
 });
 
 /**

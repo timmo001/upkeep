@@ -5,6 +5,7 @@
  * from GitHub and built-in ones read from renovate-presets.json, a snapshot
  * of Renovate's own presets.
  */
+import { EventJobs } from "@upkeep/api";
 import { Effect, Option, Predicate, Result, Schema } from "effect";
 import builtIn from "./renovate-presets.json" with { type: "json" };
 import {
@@ -30,18 +31,11 @@ export type ReadFile = (
   ref?: string,
 ) => Effect.Effect<Option.Option<string>, DepsError>;
 
-/** Where Renovate looks for a repository's config, in its order. */
-export const configFiles = [
-  "renovate.json",
-  "renovate.json5",
-  ".github/renovate.json",
-  ".github/renovate.json5",
-  ".gitlab/renovate.json",
-  ".gitlab/renovate.json5",
-  ".renovaterc",
-  ".renovaterc.json",
-  ".renovaterc.json5",
-];
+/**
+ * Where Renovate looks for a repository's config, in its order. Shared with
+ * the server, which starts `deps` when a push changes one.
+ */
+export const configFiles = EventJobs.renovateConfigFiles;
 
 /** Renovate's options that merge with a parent's rather than replace it. */
 const mergeableArrays = new Set([

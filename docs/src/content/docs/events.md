@@ -39,6 +39,15 @@ kept for as long as runs are (`keep_days`).
 | Event                                                            | What it does                                                                                                                                                                                                 |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `release` published, or promoted from a pre-release (`released`) | Records the release and queues `bump` if it's new, as the `releases` job does. The scheduled `releases` run then finds it recorded and queues nothing. A paused or parked `bump` holds it until it's let go. |
+| `push` to the default branch                                     | Queues `watch` for the repository, and `sync` for it when it's tracked for sync. A push to groundwork queues `sync` for every app, and one to the skills repository queues `skill-consumers`.                |
+| `push` that changes the Renovate config or `tooling.yml`         | Also queues `deps` or `drift` for the repository. A push with more changed paths than the event carries (300) queues both.                                                                                   |
+| `workflow_run` completed on the default branch                   | Queues `ci` for the repository.                                                                                                                                                                              |
+
+A run for one repository is only queued when the repository is tracked for
+the job, or tracked at all for `watch`, and a waiting run for it or for every
+repository is reused, so a burst of pushes queues one. Upkeep's own pushes
+come back as events too: `watch` already knows their commits, and a `drift`
+run that finds nothing to move ends as skipped.
 
 Runs an event started show `event` as their trigger. `bump` already waits up
 to 20 minutes for a release's npm packages to be published, which matters now

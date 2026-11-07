@@ -12,17 +12,20 @@
  * heal hands to an agent.
  */
 import { Api, Search } from "@timmo001/effect-gh";
-import { Catalogue } from "@upkeep/api";
+import { Catalogue, EventJobs } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { Yaml } from "effect/encoding";
 import { reason } from "../Failure";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
-import { ConsumersFailed } from "../Worker";
+import { ConsumersFailed, skipped } from "../Worker";
 import { checkout, run, watch } from "./bump";
 
-/** The file at a repository root that records its reviewed tool releases. */
-export const toolingFile = "tooling.yml";
+/**
+ * The file at a repository root that records its reviewed tool releases.
+ * Shared with the server, which starts `drift` when a push changes it.
+ */
+export const toolingFile = EventJobs.toolingFile;
 
 /** One tool the repository depends on, with the release last reviewed. */
 const Tool = Schema.Struct({
@@ -522,4 +525,7 @@ export const drift = Effect.fnUntraced(function* () {
       action: "drift",
       repos: failed.toSorted(),
     });
+
+  // Nothing moved, as after drift's own push comes back as an event
+  if (updated.length === 0) return skipped;
 });
