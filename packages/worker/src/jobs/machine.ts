@@ -2,9 +2,9 @@
  * The machine jobs: run one `dot up` stage headless on this worker's own
  * machine, so it keeps itself current without anyone running `dot up`. The
  * stage prints what it did as JSON; its log goes to the run's log as it goes.
- * A dotfiles pull is applied by the stow stage after it. When a stage changed
- * skills or agent plugins, the agents stage follows to reload running agents.
- * A worker without `dot` has nothing to do.
+ * A dotfiles pull is applied by the stow and Herdr stages after it. When a
+ * stage changed skills or agent plugins, the agents stage follows to reload
+ * running agents. A worker without `dot` has nothing to do.
  */
 import { Effect, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -112,16 +112,19 @@ export const machine = Effect.fnUntraced(function* (name: string) {
 
   const changes = described(result);
 
-  // A dotfiles pull only lands once stow applies it, with the rebuilt dot
+  // A dotfiles pull only lands once stow applies it, with the rebuilt dot,
+  // and the Herdr stage syncs the machine lists it may have brought
   const applied =
-    name === "dotfiles" && result.changed ? yield* stage("stow") : null;
+    name === "dotfiles" && result.changed
+      ? [yield* stage("stow"), yield* stage("herdr")]
+      : [];
 
-  if (applied !== null) changes.push(...described(applied));
+  for (const next of applied) changes.push(...described(next));
 
   if (
     result.skillsChanged ||
     result.pluginsChanged ||
-    applied?.skillsChanged === true
+    applied.some((next) => next.skillsChanged)
   ) {
     const agents = yield* stage("agents");
 

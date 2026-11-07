@@ -265,7 +265,7 @@ export const upTools = machine(
 export const upPlugins = machine(
   "plugins",
   "Agent plugins",
-  "Update the Pi, Plannotator and Herdr plugins, reloading agents when they changed",
+  "Update the Pi, Plannotator and OpenCode plugins, reloading agents when they changed",
   "20 5 * * *",
 );
 

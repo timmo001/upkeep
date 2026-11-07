@@ -490,9 +490,9 @@ for each worker whose latest run of the job is older than the job's last
 scheduled time. It checks once a minute, so a worker that was off catches up
 when it comes back, and running a job by hand queues it on every live worker.
 
-A dotfiles pull is applied by `dot up stow` straight after it. When a stage
-changed skills or agent plugins, the job runs `dot up agents` after it, which
-reloads running agents. A worker without `dot` skips them. A
+A dotfiles pull is applied by `dot up stow` and `dot up herdr` straight after
+it. When a stage changed skills or agent plugins, the job runs `dot up agents`
+after it, which reloads running agents. A worker without `dot` skips them. A
 failed stage fails its run, which shows on the dashboard and is never healed.
 The Jobs table shows each worker's latest run of each one.
 
