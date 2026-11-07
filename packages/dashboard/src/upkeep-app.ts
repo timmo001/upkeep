@@ -2,6 +2,7 @@
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
  * the nav, the theme picker and sign out, and the page the route picks.
  */
+import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
@@ -76,6 +77,12 @@ export class UpkeepApp extends LitElement {
         gap: var(--gw-space-2);
         color: inherit;
         text-decoration: none;
+      }
+
+      /* The picker takes the room it would need for every control, so keep
+         what it shows at its end, beside Sign out */
+      gw-app-bar gw-theme-picker {
+        justify-content: flex-end;
       }
 
       main {
@@ -186,13 +193,46 @@ export class UpkeepApp extends LitElement {
                 slot="actions"
                 appearance="plain"
                 variant="neutral"
-                labels="auto"
+                labels="hide"
+                label="Sign out"
                 icon=${phSignOut}
-                @click=${this.#signOut}
+                @click=${(event: Event) =>
+                  this.#signOutPopover?.show(
+                    event.currentTarget instanceof Element
+                      ? event.currentTarget
+                      : undefined,
+                  )}
                 >Sign out</gw-button
               >`
         }
       </gw-app-bar>
+      <gw-popover
+        heading="Sign out?"
+        confirm
+        ${ref((element) => {
+          this.#signOutPopover =
+            element instanceof GwPopover ? element : undefined;
+        })}
+        @close=${this.#signOut}
+      >
+        <p>You'll need the admin token to sign back in.</p>
+        <gw-button
+          slot="actions"
+          size="small"
+          appearance="plain"
+          variant="neutral"
+          value="cancel"
+          >Cancel</gw-button
+        >
+        <gw-button
+          slot="actions"
+          size="small"
+          variant="danger"
+          value="sign-out"
+          icon=${phSignOut}
+          >Sign out</gw-button
+        >
+      </gw-popover>
       <main>
         <gw-page>
           ${Route.$match(current, {
@@ -220,7 +260,13 @@ export class UpkeepApp extends LitElement {
     bindTheme(element);
   };
 
-  readonly #signOut = () => registry.set(token, "");
+  #signOutPopover: GwPopover | undefined;
+
+  /** Signs out once the confirmation's Sign out closed it. */
+  readonly #signOut = () => {
+    if (this.#signOutPopover?.returnValue === "sign-out")
+      registry.set(token, "");
+  };
 }
 
 customElements.define("upkeep-app", UpkeepApp);
