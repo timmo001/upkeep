@@ -890,6 +890,13 @@ const InboxHandlers = HttpApiBuilder.group(
         store
           .dismiss(params.id)
           .pipe(Effect.catchTag("StoreError", Effect.die)),
+      place: ({ params, payload }) =>
+        store
+          .place(params.id, payload.routine)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      rules: () => store.rules().pipe(Effect.orDie),
+      rule: ({ payload }) =>
+        store.rule(payload.repo, payload.routine).pipe(Effect.orDie),
     });
   }),
 );

@@ -16,21 +16,23 @@ Upkeep gives agents the same operations people get, from one list, following Gro
 access, in the shape `dot agent tools --json` prints. `upkeep agent call <tool>`
 runs one with its input as JSON on stdin and prints its result as JSON.
 
-| Operation | Access | Does                                                    |
-| --------- | ------ | ------------------------------------------------------- |
-| `status`  | Read   | Says what needs you, the parked jobs and live workers   |
-| `jobs`    | Read   | Lists the jobs Upkeep runs                              |
-| `runs`    | Read   | Lists runs on the server, newest first                  |
-| `log`     | Read   | Prints a run's log                                      |
-| `run`     | Write  | Queues a run, reusing one of the same job still waiting |
-| `cancel`  | Write  | Drops a queued run, or stops a running one              |
-| `retry`   | Write  | Runs a finished run again, a heal as the same heal      |
-| `dismiss` | Write  | Clears what a run left for a person                     |
-| `unpark`  | Write  | Lets a parked job be queued again                       |
-| `pause`   | Write  | Turns a job off until it's resumed                      |
-| `resume`  | Write  | Turns a paused job back on                              |
+| Operation     | Access | Does                                                    |
+| ------------- | ------ | ------------------------------------------------------- |
+| `status`      | Read   | Says what needs you, the parked jobs and live workers   |
+| `jobs`        | Read   | Lists the jobs Upkeep runs                              |
+| `runs`        | Read   | Lists runs on the server, newest first                  |
+| `log`         | Read   | Prints a run's log                                      |
+| `run`         | Write  | Queues a run, reusing one of the same job still waiting |
+| `cancel`      | Write  | Drops a queued run, or stops a running one              |
+| `retry`       | Write  | Runs a finished run again, a heal as the same heal      |
+| `dismiss`     | Write  | Clears what a run left for a person                     |
+| `unpark`      | Write  | Lets a parked job be queued again                       |
+| `pause`       | Write  | Turns a job off until it's resumed                      |
+| `resume`      | Write  | Turns a paused job back on                              |
+| `inbox_rules` | Read   | Lists the inbox's repository rules                      |
+| `inbox_rule`  | Write  | Sets which inbox tab a repository's entries go to       |
 
-`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause` and `resume` talk to the server in `UPKEEP_SERVER` as the admin in
+`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause`, `resume`, `inbox_rules` and `inbox_rule` talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
 Managing tokens stays a CLI command for people, since it
 hands out secrets.

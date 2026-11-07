@@ -141,6 +141,44 @@ export const dismissEntry = UpkeepApi.runtime.fn((id: string) =>
 );
 
 /**
+ * Move an entry to the version bumps or to what's worth reading, or hand it
+ * back to Upkeep's call with null.
+ */
+export const placeEntry = UpkeepApi.runtime.fn(
+  ({
+    id,
+    routine,
+  }: {
+    readonly id: string;
+    readonly routine: boolean | null;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.inbox.place({ params: { id }, payload: { routine } }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(inboxKey))),
+);
+
+/**
+ * Put every entry from these repositories in the version bumps or what's
+ * worth reading, or drop their rules with null.
+ */
+export const setInboxRules = UpkeepApi.runtime.fn(
+  ({
+    repos,
+    routine,
+  }: {
+    readonly repos: ReadonlyArray<string>;
+    readonly routine: boolean | null;
+  }) =>
+    UpkeepApi.use((client) =>
+      Effect.forEach(
+        repos,
+        (repo) => client.inbox.rule({ payload: { repo, routine } }),
+        { discard: true },
+      ),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(inboxKey))),
+);
+
+/**
  * Name a tracked repository by hand, or clear its name with null so a
  * worker's name or its README title shows again.
  */

@@ -1047,6 +1047,64 @@ test("every version of the same update shares one inbox entry", () =>
     }),
   ));
 
+test("a move holds for later versions, and wins over a repository rule", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const update = (repo: string, sha: string, subject: string) => ({
+        repo,
+        sha,
+        subject,
+        url: "",
+        at: 1,
+        group: `update:${subject}`,
+        title: subject,
+        kind: "update" as const,
+        routine: true,
+      });
+
+      const placing = Effect.gen(function* () {
+        const { entries } = yield* store.inbox(0);
+
+        return entries
+          .map((entry) => [entry.title, entry.routine, entry.placedBy])
+          .toSorted(([a], [b]) => String(a).localeCompare(String(b)));
+      });
+
+      yield* store.seen([
+        update("timmo001/a", "a1", "Update effect to 4.1.1"),
+        update("timmo001/b", "b1", "Update lit to 3.3.0"),
+      ]);
+
+      const effect = (yield* store.inbox(0)).entries.find(
+        (entry) => entry.title === "Update effect",
+      );
+
+      yield* store.place(effect?.id ?? "", false);
+      yield* store.seen([update("timmo001/a", "a2", "Update effect to 4.1.2")]);
+      yield* store.rule("Timmo001/A", true);
+      yield* store.rule("timmo001/b", false);
+
+      expect(yield* placing).toEqual([
+        ["Update effect", false, "you"],
+        ["Update lit", false, "repository"],
+      ]);
+      expect((yield* store.rules()).map((rule) => rule.repo)).toEqual([
+        "timmo001/a",
+        "timmo001/b",
+      ]);
+
+      yield* store.place(effect?.id ?? "", null);
+      yield* store.rule("timmo001/b", null);
+
+      expect(yield* placing).toEqual([
+        ["Update effect", true, "repository"],
+        ["Update lit", true, "upkeep"],
+      ]);
+    }),
+  ));
+
 test("a run's commit replaces the same commit the watch job found", () =>
   run(
     Effect.gen(function* () {

@@ -2,8 +2,8 @@
  * `upkeep-feed`: inbox entries under days that fold, as a groundwork
  * `gw-list`, so only the entries on screen are drawn however long it gets.
  * Each entry is an expansion panel saying what it did; its changes, as a
- * table, and links to the job and run behind it are only drawn once it's
- * opened, which also marks it read.
+ * table, links to the job and run behind it, and its Move menu are only
+ * drawn once it's opened, which also marks it read.
  */
 import { Catalogue, type Domain } from "@upkeep/api";
 import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
@@ -23,16 +23,36 @@ import {
   titleOf,
   type Titles,
 } from "./entries.ts";
-import { externalLink, shared, time } from "./ui.ts";
+import {
+  phArrowCircleUp,
+  phArrowCounterClockwise,
+  phArrowsLeftRight,
+  phStar,
+} from "./icons.ts";
+import { chosen, externalLink, shared, time } from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
-import { jobHref, markRead, runHref } from "./upkeep.ts";
+import {
+  jobHref,
+  markRead,
+  placeEntry,
+  runHref,
+  setInboxRules,
+} from "./upkeep.ts";
 import "@timmo001/groundwork-ui/gw-chip.ts";
 import "@timmo001/groundwork-ui/gw-dot.ts";
 import "@timmo001/groundwork-ui/gw-list.ts";
+import "@timmo001/groundwork-ui/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/gw-table.ts";
 import "@timmo001/groundwork-ui/layout.ts";
 
 const keyOf = (entry: Domain.Entry) => entry.id;
+
+/** The heading of an entry's Move menu, saying who put it where it is. */
+const placedHeadings: Record<Domain.EntryPlacer, string> = {
+  upkeep: "Show in, by Upkeep's call",
+  repository: "Show in, by its repository's rule",
+  you: "Show in, where you moved it",
+};
 
 /** The day an entry belongs to, as the start of that day, so it sorts and keeps. */
 const dayKey = (entry: Domain.Entry) =>
@@ -188,6 +208,96 @@ export class UpkeepFeed extends LitElement {
     ></gw-table>`;
   }
 
+  /**
+   * Where an entry shows, and the choices to move it: to the version bumps
+   * or what's worth reading, back to Upkeep's call, or a rule for its one
+   * repository. An entry placed by rules can drop them here too.
+   */
+  #placing(entry: Domain.Entry) {
+    const repos = [
+      ...new Set(entry.items.map((item) => item.repo.toLowerCase())),
+    ];
+
+    const [first] = entry.items;
+    const name = first === undefined ? "" : titleOf(first.repo, this.titles);
+
+    const ruleActions =
+      entry.placedBy === "repository"
+        ? [
+            {
+              value: "rule:none",
+              label:
+                repos.length === 1
+                  ? `Drop the rule for ${name}`
+                  : "Drop the rules for these repositories",
+              icon: phArrowCounterClockwise,
+            },
+          ]
+        : repos.length === 1
+          ? [
+              {
+                value: "rule:bumps",
+                label: `Always fold ${name} into version bumps`,
+                icon: phArrowCircleUp,
+              },
+              {
+                value: "rule:worth",
+                label: `Always show ${name} as worth reading`,
+                icon: phStar,
+              },
+            ]
+          : [];
+
+    return html`<gw-menu-button
+      size="xs"
+      appearance="plain"
+      icon=${phArrowsLeftRight}
+      label="Move"
+      heading=${placedHeadings[entry.placedBy]}
+      .items=${[
+        {
+          value: "worth",
+          label: "Worth reading",
+          icon: phStar,
+          checked: !entry.routine,
+        },
+        {
+          value: "bumps",
+          label: "Version bumps",
+          icon: phArrowCircleUp,
+          checked: entry.routine,
+        },
+      ]}
+      .actions=${[
+        ...(entry.placedBy === "you"
+          ? [
+              {
+                value: "upkeep",
+                label: "Back to Upkeep's call",
+                icon: phArrowCounterClockwise,
+              },
+            ]
+          : []),
+        ...ruleActions,
+      ]}
+      @select=${(event: Event) => {
+        const value = chosen(event);
+
+        if (value === "worth" || value === "bumps" || value === "upkeep") {
+          registry.set(placeEntry, {
+            id: entry.id,
+            routine: value === "upkeep" ? null : value === "bumps",
+          });
+        } else if (value.startsWith("rule:")) {
+          registry.set(setInboxRules, {
+            repos,
+            routine: value === "rule:none" ? null : value === "rule:bumps",
+          });
+        }
+      }}
+    ></gw-menu-button>`;
+  }
+
   /** What an entry shows open: what it was, when, where from, and its changes. */
   #body(entry: Domain.Entry) {
     const kind = kinds[entry.kind];
@@ -212,7 +322,7 @@ export class UpkeepFeed extends LitElement {
         }
         <span class="when">${time(entry.lastAt)}</span>
         ${entry.url === null ? nothing : externalLink(entry.url, "The release")}
-        ${this.#source(entry)}
+        ${this.#source(entry)} ${this.#placing(entry)}
       </gw-row>
       ${this.#changes(entry)}
     </gw-stack>`;

@@ -3,7 +3,7 @@
  * how a request's result shows while it loads or when it fails.
  */
 import { type Api, Catalogue, type Domain } from "@upkeep/api";
-import { type Cause, Option, Predicate } from "effect";
+import { type Cause, Option, Predicate, Schema } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, render, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
@@ -210,6 +210,20 @@ const states: Record<
   skipped: { path: phMinusCircle, tone: "neutral" },
   failed: { path: phXCircle, tone: "danger" },
   cancelled: { path: phProhibit, tone: "warning" },
+};
+
+const decodeChoice = Schema.decodeUnknownOption(
+  Schema.Struct({ value: Schema.String }),
+);
+
+/** The value a menu item chosen carries. */
+export const chosen = (event: Event) => {
+  const detail: unknown = event instanceof CustomEvent ? event.detail : null;
+
+  return Option.match(decodeChoice(detail), {
+    onNone: () => "",
+    onSome: ({ value }) => value,
+  });
 };
 
 /** Text with its first letter in capitals, for an ID shown as a label. */

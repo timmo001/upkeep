@@ -789,6 +789,27 @@ export const EntryItem = Schema.Struct({
 export interface EntryItem extends Schema.Schema.Type<typeof EntryItem> {}
 
 /**
+ * Who put an entry where it is: Upkeep's own call, a rule for its
+ * repositories, or you moving it.
+ */
+export const EntryPlacer = Schema.Literals(["upkeep", "repository", "you"]);
+
+export type EntryPlacer = typeof EntryPlacer.Type;
+
+/**
+ * A rule for every inbox entry from a repository: always a version bump, or
+ * always worth reading. It holds for an entry when all its repositories
+ * have the same rule.
+ */
+export const InboxRule = Schema.Struct({
+  repo: RepoName,
+  routine: Schema.Boolean,
+  at: Schema.Finite,
+});
+
+export interface InboxRule extends Schema.Schema.Type<typeof InboxRule> {}
+
+/**
  * One thing in the inbox: the same change across every repository it
  * reached, or something that needs a person. It's unread until it's read,
  * and comes back unread when something is added to it.
@@ -806,8 +827,10 @@ export const Entry = Schema.Struct({
   run: Schema.NullOr(Schema.String),
   /** The job of that run, while the run is kept. */
   runJob: Schema.NullOr(JobId),
-  /** Only routine changes, so it's folded away. */
+  /** Only routine changes, or moved there, so it's folded away. */
   routine: Schema.Boolean,
+  /** Who decided `routine`. */
+  placedBy: EntryPlacer,
   /** Pushed by the person Upkeep works for. */
   you: Schema.Boolean,
   /** How many times it happened, such as how often a job was parked. */

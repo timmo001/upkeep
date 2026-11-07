@@ -62,7 +62,7 @@ export const kindTabs: ReadonlyArray<{
     label: "Worth reading",
     icon: phStar,
     description:
-      "Everything that changed something real: releases, commits, updates and drift moves that needed a code or config change, and Upkeep's fixes. Version bumps are left out.",
+      "Everything that changed something real: releases, commits, updates and drift moves that needed a code or config change, and Upkeep's fixes. Version bumps are left out, and anything moved here from its Move menu or by a repository rule is in.",
   },
   {
     value: "release",
@@ -104,7 +104,7 @@ export const kindTabs: ReadonlyArray<{
     label: "Version bumps",
     icon: phArrowCircleUp,
     description:
-      "Updates that only moved version numbers, lockfiles, CI pins, submodules or tool versions, with no code changed. Kept out of the way, but here if you want them.",
+      "Updates that only moved version numbers, lockfiles, CI pins, submodules or tool versions, with no code changed, and anything moved here from its Move menu or by a repository rule. Kept out of the way, but here if you want them.",
   },
 ];
 

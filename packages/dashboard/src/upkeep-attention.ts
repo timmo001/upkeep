@@ -57,7 +57,16 @@ import {
   phWarningCircle,
   phX,
 } from "./icons.ts";
-import { drawn, empty, externalLink, icon, shared, time, view } from "./ui.ts";
+import {
+  chosen,
+  drawn,
+  empty,
+  externalLink,
+  icon,
+  shared,
+  time,
+  view,
+} from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
   addRule,
@@ -252,20 +261,6 @@ const urgency: ReadonlyArray<Domain.AttentionSection> = [
   "backlog",
   "watching",
 ];
-
-const decodeChoice = Schema.decodeUnknownOption(
-  Schema.Struct({ value: Schema.String }),
-);
-
-/** The value a menu item chosen carries. */
-const chosen = (event: Event) => {
-  const detail: unknown = event instanceof CustomEvent ? event.detail : null;
-
-  return Option.match(decodeChoice(detail), {
-    onNone: () => "",
-    onSome: ({ value }) => value,
-  });
-};
 
 /** A table column's cell, drawn from the row's own record by its ID. */
 const drawFrom =

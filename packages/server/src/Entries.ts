@@ -1,7 +1,9 @@
 /**
  * Where a commit goes in the inbox: which entry it joins, what kind of entry
  * that is and whether it's routine. A run's own commits are placed by what
- * the run was doing; the watch job's come with their place already set.
+ * the run was doing; the watch job's come with their place already set. Once
+ * it's in, a move of yours or a rule for its repositories can put it
+ * elsewhere.
  */
 import { Catalogue, Domain } from "@upkeep/api";
 
@@ -49,6 +51,37 @@ export const updateKey = (subject: string) => `update:${updateName(subject)}`;
 
 const jobName = (id: string) =>
   Catalogue.jobs.find((job) => job.id === id)?.name ?? id;
+
+/**
+ * Where an entry shows: where you moved it, else where its repositories'
+ * rules put it when they all agree, else Upkeep's own call. Something that
+ * needs a person is never moved.
+ */
+export const placed = (
+  entry: {
+    readonly kind: Domain.EntryKind;
+    readonly routine: boolean;
+    readonly repos: ReadonlyArray<string>;
+  },
+  moved: boolean | undefined,
+  rules: ReadonlyMap<string, boolean>,
+): Pick<Domain.Entry, "routine" | "placedBy"> => {
+  if (entry.kind === "needs") {
+    return { routine: entry.routine, placedBy: "upkeep" };
+  }
+
+  if (moved !== undefined) return { routine: moved, placedBy: "you" };
+
+  const ruled = new Set(
+    entry.repos.map((repo) => rules.get(repo.toLowerCase())),
+  );
+
+  const [rule] = ruled;
+
+  return ruled.size === 1 && rule !== undefined
+    ? { routine: rule, placedBy: "repository" }
+    : { routine: entry.routine, placedBy: "upkeep" };
+};
 
 /**
  * Place a commit. A heal's fix joins the release it was fixing, when it was

@@ -34,6 +34,7 @@ import {
   Heal,
   HealDecision,
   Inbox,
+  InboxRule,
   JobId,
   JobStatus,
   LogEntry,
@@ -666,6 +667,32 @@ export class InboxGroup extends HttpApiGroup.make("inbox")
       params: { id: Schema.String },
       success: Entry,
       error: EntryNotFound,
+    }),
+    /**
+     * Move an entry to the version bumps (`true`) or to what's worth reading
+     * (`false`), or hand it back to Upkeep's own call with `null`. The move
+     * holds for its key, so every later version of an update stays there.
+     */
+    HttpApiEndpoint.put("place", "/:id/routine", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({ routine: Schema.NullOr(Schema.Boolean) }),
+      success: Entry,
+      error: EntryNotFound,
+    }),
+    /** Every repository rule. */
+    HttpApiEndpoint.get("rules", "/rules", {
+      success: Schema.Array(InboxRule),
+    }),
+    /**
+     * Make every entry from a repository a version bump (`true`) or worth
+     * reading (`false`), or drop its rule with `null`.
+     */
+    HttpApiEndpoint.put("rule", "/rules", {
+      payload: Schema.Struct({
+        repo: RepoName,
+        routine: Schema.NullOr(Schema.Boolean),
+      }),
+      success: HttpApiSchema.NoContent,
     }),
   )
   .middleware(AdminAuthorization)

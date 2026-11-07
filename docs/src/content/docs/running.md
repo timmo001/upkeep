@@ -117,6 +117,17 @@ Below that:
 - **Routine** folds every update that only moved versions, lockfiles, pins
   or tool versions into one line, which opens to the list.
 
+When Upkeep gets one wrong, an opened entry's **Move** menu puts it in the
+version bumps or back in what's worth reading. The move holds for the
+entry's key, so every later version of the same update or drift goes the
+same way; a release or a day's commits is a one-off. **Back to Upkeep's
+call** undoes it. The same menu sets a rule for the entry's repository, so
+every entry from it goes one way, and `upkeep inbox rule <repo>
+bumps|worth|upkeep` does it from the CLI. Your own move wins over a rule,
+and a rule only applies when every repository an entry touched has the same
+one. A moved entry counts where it was moved everywhere: the tabs, the
+unread count, the summary and notifications.
+
 An opened entry links to the job behind it and, while it's kept, the run.
 An entry is unread until you open it or mark everything read, and comes back
 unread when something new joins it. Your own commits start read, and stay

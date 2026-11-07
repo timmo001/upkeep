@@ -606,6 +606,26 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // Where you moved an inbox entry, kept by its key so later versions of the
+  // same update follow, and rules for every entry from a repository
+  "0031_inbox_moves": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE entry_moves (
+        key TEXT PRIMARY KEY,
+        routine INTEGER NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`
+      CREATE TABLE inbox_rules (
+        repo TEXT PRIMARY KEY,
+        routine INTEGER NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -780,12 +800,23 @@ const decodeWaiting = Schema.decodeUnknownEffect(Schema.Array(WaitingRow));
 
 const EntryRow = Schema.Struct({
   ...Domain.Entry.fields,
+  key: Schema.String,
   routine: Schema.Number,
+  placedBy: Schema.optionalKey(Schema.Unknown),
   you: Schema.Number,
   items: Schema.optionalKey(Schema.Unknown),
 });
 
 const decodeEntries = Schema.decodeUnknownEffect(Schema.Array(EntryRow));
+
+/** A move or a repository rule as it's kept, with `routine` as a number. */
+const PlaceRow = Schema.Struct({
+  place: Schema.String,
+  routine: Schema.Number,
+  at: Schema.Finite,
+});
+
+const decodePlaces = Schema.decodeUnknownEffect(Schema.Array(PlaceRow));
 
 const ItemRow = Schema.Struct({
   entryId: Schema.String,
@@ -1306,6 +1337,22 @@ export class Store extends Context.Service<
     dismiss(
       id: string,
     ): Effect.Effect<Domain.Entry, Api.EntryNotFound | StoreError>;
+    /**
+     * Move an entry to the version bumps or to what's worth reading, by its
+     * key, or hand it back to Upkeep's call with `null`. Something that needs
+     * a person stays where it is.
+     */
+    place(
+      id: string,
+      routine: boolean | null,
+    ): Effect.Effect<Domain.Entry, Api.EntryNotFound | StoreError>;
+    /** Every repository rule for the inbox. */
+    rules(): Effect.Effect<ReadonlyArray<Domain.InboxRule>, StoreError>;
+    /** Set a repository's inbox rule, or drop it with `null`. */
+    rule(
+      repo: string,
+      routine: boolean | null,
+    ): Effect.Effect<void, StoreError>;
     /**
      * Clear what a run left for a person: its attention, and the entry that
      * raised it, while it's still about this run.
@@ -3313,6 +3360,17 @@ export class Store extends Context.Service<
       `;
     }, Effect.mapError(storeError));
 
+    const ruleRows = sql`
+      SELECT repo AS place, routine, at FROM inbox_rules ORDER BY repo
+    `.pipe(Effect.flatMap(decodePlaces));
+
+    const ruleMap = ruleRows.pipe(
+      Effect.map(
+        (rules) =>
+          new Map(rules.map((rule) => [rule.place, rule.routine !== 0])),
+      ),
+    );
+
     const selectEntries = Effect.fnUntraced(function* (
       statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
     ) {
@@ -3331,29 +3389,62 @@ export class Store extends Context.Service<
 
       const byEntry = Arr.groupBy(items, (item) => item.entryId);
 
+      const moves = yield* sql`
+        SELECT key AS place, routine, at FROM entry_moves
+        WHERE ${sql.in(
+          "key",
+          rows.map((row) => row.key),
+        )}
+      `.pipe(Effect.flatMap(decodePlaces));
+
+      const moved = new Map(
+        moves.map((move) => [move.place, move.routine !== 0]),
+      );
+
+      const rules = yield* ruleMap;
+
       return rows.map(
-        ({ routine, you, items: _items, ...row }): Domain.Entry => ({
-          ...row,
-          routine: routine !== 0,
-          you: you !== 0,
-          items: (byEntry[row.id] ?? []).map(
+        ({
+          key,
+          routine,
+          placedBy: _placedBy,
+          you,
+          items: _items,
+          ...row
+        }): Domain.Entry => {
+          const entryItems = (byEntry[row.id] ?? []).map(
             ({ entryId: _entryId, ...item }) => item,
-          ),
-        }),
+          );
+
+          return {
+            ...row,
+            ...Entries.placed(
+              {
+                kind: row.kind,
+                routine: routine !== 0,
+                repos: entryItems.map((item) => item.repo),
+              },
+              moved.get(key),
+              rules,
+            ),
+            you: you !== 0,
+            items: entryItems,
+          };
+        },
       );
     });
 
     // A RETURNING clause only reads the table it changes, so the job of an
     // entry's run is read separately, for the inbox
     const entryColumns = sql`
-      id, kind, title, detail, url, job, run, routine, you, count, first_at,
-      last_at, read_at, NULL AS run_job
+      id, key, kind, title, detail, url, job, run, routine, you, count,
+      first_at, last_at, read_at, NULL AS run_job
     `;
 
     const inbox = Effect.fn("Store.inbox")(function* (since: number) {
       const entries = yield* selectEntries(sql`
         SELECT
-          id, kind, title, detail, url, job, run, routine, you, count,
+          id, key, kind, title, detail, url, job, run, routine, you, count,
           first_at, last_at, read_at,
           (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
         FROM entries
@@ -3423,6 +3514,74 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
+
+    const place = Effect.fn("Store.place")(
+      function* (id: string, routine: boolean | null) {
+        const [row] = yield* sql<{ key: string; kind: string }>`
+          SELECT key, kind FROM entries WHERE id = ${id}
+        `;
+
+        if (row === undefined) return yield* new Api.EntryNotFound({ id });
+
+        if (row.kind !== "needs") {
+          yield* routine === null
+            ? sql`DELETE FROM entry_moves WHERE key = ${row.key}`
+            : sql`
+                INSERT INTO entry_moves ${sql.insert({
+                  key: row.key,
+                  routine: routine ? 1 : 0,
+                  at: yield* Clock.currentTimeMillis,
+                })}
+                ON CONFLICT (key) DO UPDATE
+                SET routine = excluded.routine, at = excluded.at
+              `;
+        }
+
+        const [entry] = yield* selectEntries(sql`
+          SELECT
+            id, key, kind, title, detail, url, job, run, routine, you, count,
+            first_at, last_at, read_at,
+            (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
+          FROM entries
+          WHERE id = ${id}
+        `).pipe(Effect.mapError(storeError));
+
+        if (entry === undefined) return yield* new Api.EntryNotFound({ id });
+
+        return entry;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const rules = Effect.fn("Store.rules")(function* () {
+      const rows = yield* ruleRows;
+
+      return rows.map((rule): Domain.InboxRule => ({
+        repo: rule.place,
+        routine: rule.routine !== 0,
+        at: rule.at,
+      }));
+    }, Effect.mapError(storeError));
+
+    const rule = Effect.fn("Store.rule")(function* (
+      repo: string,
+      routine: boolean | null,
+    ) {
+      const key = repo.toLowerCase();
+
+      yield* routine === null
+        ? sql`DELETE FROM inbox_rules WHERE repo = ${key}`
+        : sql`
+            INSERT INTO inbox_rules ${sql.insert({
+              repo: key,
+              routine: routine ? 1 : 0,
+              at: yield* Clock.currentTimeMillis,
+            })}
+            ON CONFLICT (repo) DO UPDATE
+            SET routine = excluded.routine, at = excluded.at
+          `;
+    }, Effect.mapError(storeError));
 
     const dismissRun = Effect.fn("Store.dismissRun")(
       function* (id: string) {
@@ -3837,6 +3996,9 @@ export class Store extends Context.Service<
       inbox,
       markRead: announce(touches("inbox"), markRead),
       dismiss: announce(touches("inbox"), dismiss),
+      place: announce(touches("inbox"), place),
+      rules,
+      rule: announce(touches("inbox"), rule),
       dismissRun: announce(touchesRun("runs", "inbox"), dismissRun),
       known,
       seen: announce(touches("inbox"), seen),

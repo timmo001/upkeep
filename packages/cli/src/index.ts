@@ -843,6 +843,78 @@ const repos = Command.make("repos").pipe(
   Command.withSubcommands([reposAdd, reposList, reposRename, reposRemove]),
 );
 
+/** What a repository's inbox rule says, as the CLI names it. */
+const placings = ["bumps", "worth", "upkeep"] as const;
+
+const ruleRoutine = (placing: (typeof placings)[number]) =>
+  placing === "upkeep" ? null : placing === "bumps";
+
+const inboxRules = Command.make(
+  "rules",
+  { json, server },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const rules = yield* client.inbox.rules();
+
+      if (input.json) return yield* Console.log(JSON.stringify(rules, null, 2));
+
+      if (rules.length === 0) {
+        return yield* Console.log(
+          "No repository rules. Upkeep decides what's a version bump for every entry.",
+        );
+      }
+
+      for (const rule of rules) {
+        yield* Console.log(
+          `${rule.repo}  ${rule.routine ? "version bumps" : "worth reading"}`,
+        );
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("List the inbox's repository rules"));
+
+const inboxRule = Command.make(
+  "rule",
+  {
+    repo: repoName,
+    placing: Argument.Literals("placing", placings).pipe(
+      Argument.withDescription(
+        "bumps to fold every entry from it into the version bumps, worth to always show them, or upkeep to let Upkeep decide again",
+      ),
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.inbox.rule({
+        payload: { repo: input.repo, routine: ruleRoutine(input.placing) },
+      });
+
+      yield* Console.log(
+        input.placing === "upkeep"
+          ? `Upkeep decides for ${input.repo} again`
+          : `Entries from ${input.repo} go to ${input.placing === "bumps" ? "the version bumps" : "what's worth reading"}`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Put every inbox entry from a repository in the version bumps or what's worth reading. A move made in the dashboard still wins.",
+  ),
+);
+
+const inbox = Command.make("inbox").pipe(
+  Command.withDescription(
+    "Manage where the inbox puts each repository's entries",
+  ),
+  Command.withSubcommands([inboxRules, inboxRule]),
+);
+
 /** A session from `upkeep://open/<session>?directory=…&title=…`, or its bare ID. */
 const sessionOf = (target: string) => {
   if (!target.startsWith("upkeep:")) return { session: target, directory: "" };
@@ -921,6 +993,7 @@ const upkeep = Command.make("upkeep").pipe(
     pause,
     resume,
     repos,
+    inbox,
     open,
     serve,
     worker,

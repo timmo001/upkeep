@@ -205,6 +205,32 @@ const Activity = Tool.make("activity", {
   failureMode: "return",
 }).annotate(Tool.Readonly, true);
 
+const InboxRules = Tool.make("inbox_rules", {
+  description:
+    "List the inbox's repository rules: every entry from the repository goes to the version bumps (routine) or to what's worth reading",
+  success: Schema.Struct({ rules: Schema.Array(Domain.InboxRule) }),
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const InboxRule = Tool.make("inbox_rule", {
+  description:
+    "Put every inbox entry from a repository in the version bumps (routine true) or what's worth reading (routine false), or let Upkeep decide again (routine null). An entry moved in the dashboard stays where it was moved.",
+  parameters: Schema.Struct({
+    repo: Domain.RepoName,
+    routine: Schema.NullOr(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    repo: Domain.RepoName,
+    routine: Schema.NullOr(Schema.Boolean),
+  }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
 export const Tools = Toolkit.make(
   Status,
@@ -223,6 +249,8 @@ export const Tools = Toolkit.make(
   Track,
   Rename,
   Untrack,
+  InboxRules,
+  InboxRule,
 );
 
 /** A repository's path parameters from `owner/name`. */
@@ -380,6 +408,21 @@ export const toolsLayer = Tools.toLayer(
             client.repos
               .untrack({ params: repoParams(input.repo) })
               .pipe(Effect.as({ repo: input.repo })),
+          ),
+        ),
+      inbox_rules: () =>
+        onServer(
+          Client.use((client) =>
+            client.inbox.rules().pipe(Effect.map((rules) => ({ rules }))),
+          ),
+        ),
+      inbox_rule: (input: {
+        readonly repo: string;
+        readonly routine: boolean | null;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.inbox.rule({ payload: input }).pipe(Effect.as(input)),
           ),
         ),
     };
