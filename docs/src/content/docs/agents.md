@@ -47,6 +47,10 @@ The plugin in `packages/opencode` reads the manifest from the `upkeep` on your
 }
 ```
 
+Its TUI part puts the count of what needs you in the prompt footer, from
+`upkeep status --json`, so it matches the bar. It reads it again every minute,
+shows nothing while nothing needs you, and lists each item when clicked.
+
 ## Skill
 
 Install it with the [Skills CLI](https://skills.sh):
