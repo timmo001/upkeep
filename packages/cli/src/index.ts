@@ -188,7 +188,7 @@ const runLine = (run: Domain.Run) =>
     run.repo == null ? "" : `for ${run.repo}`,
     run.heal === null
       ? ""
-      : `heals ${run.heal.job} ${run.heal.of} (${run.heal.target.kind === "upkeep" ? "upkeep" : run.heal.target.repo})${run.heal.decision === null ? "" : `: ${run.heal.decision}`}`,
+      : `heals ${run.heal.job} ${run.heal.of} (${run.heal.target.kind === "upkeep" ? "upkeep" : Domain.targetRepos(run.heal.target).join(", ")})${run.heal.decision === null ? "" : `: ${run.heal.decision}`}`,
   ]
     .join("  ")
     .trimEnd();

@@ -3,7 +3,7 @@
  * that is and whether it's routine. A run's own commits are placed by what
  * the run was doing; the watch job's come with their place already set.
  */
-import { Catalogue, type Domain } from "@upkeep/api";
+import { Catalogue, Domain } from "@upkeep/api";
 
 /** Where a commit goes, and how it reads there. */
 export interface Placement {
@@ -70,14 +70,22 @@ export const placement = (
 
   if (run?.heal) {
     const { release } = run;
+    const repos = Domain.targetRepos(run.heal.target);
+
+    // A fix made across several consumers at once reads as one entry
+    const fixed =
+      repos.length > 1
+        ? {
+            key: `fix:${run.id}`,
+            title: `Upkeep fixed ${jobName(run.heal.job)} in ${repos.map((repo) => repo.split("/").at(-1) ?? repo).join(", ")}`,
+          }
+        : {
+            key: `fix:${run.heal.job}:${change.repo.toLowerCase()}`,
+            title: `Upkeep fixed ${jobName(run.heal.job)} in ${change.repo.split("/").at(-1) ?? change.repo}`,
+          };
 
     return release === null
-      ? {
-          ...commit,
-          key: `fix:${run.heal.job}:${change.repo.toLowerCase()}`,
-          kind: "fix",
-          title: `Upkeep fixed ${jobName(run.heal.job)} in ${change.repo.split("/").at(-1) ?? change.repo}`,
-        }
+      ? { ...commit, ...fixed, kind: "fix" }
       : {
           ...commit,
           key: releaseKey(release),

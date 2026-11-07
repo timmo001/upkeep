@@ -109,21 +109,23 @@ const decisionLayer = (options: ModelDecisions) =>
       );
 
 /**
- * The log lines about the heal's target: for a consumer, the ones naming its
- * repository, so a run over many repositories reads as this one's failure.
- * Anything else, or a consumer the log never names, gets the whole tail.
+ * The log lines about the heal's target: for consumers, the ones naming their
+ * repositories, so a run over many repositories reads as their failure.
+ * Anything else, or consumers the log never names, gets the whole tail.
  */
 export const relevant = (
   heal: Domain.Heal,
   log: ReadonlyArray<Domain.LogLine>,
 ) => {
-  if (heal.target.kind === "upkeep") return log;
+  const repos = Domain.targetRepos(heal.target);
 
-  const { repo } = heal.target;
+  if (repos.length === 0) return log;
 
-  const about = log.filter(
-    ({ message }) =>
-      message.startsWith(`${repo}:`) || message.startsWith(`${repo}#`),
+  const about = log.filter(({ message }) =>
+    repos.some(
+      (repo) =>
+        message.startsWith(`${repo}:`) || message.startsWith(`${repo}#`),
+    ),
   );
 
   return about.length === 0 ? log : about;
@@ -139,7 +141,10 @@ export const describe = (
   failed: {
     job: run.job,
     trigger: run.trigger,
-    target: heal.target.kind === "upkeep" ? "upkeep" : heal.target.repo,
+    target:
+      heal.target.kind === "upkeep"
+        ? "upkeep"
+        : Domain.targetRepos(heal.target).join(", "),
     error: (run.error ?? "").slice(0, maxMessage),
     log: relevant(heal, log)
       .slice(-maxLines)
@@ -414,10 +419,11 @@ const handOff = Effect.fnUntraced(function* (
   const { session, directory } = result;
   const settings = (yield* Settings.load()).heal ?? {};
 
+  // A session over several consumers is shared under the first of them
   const repo =
-    healing.heal.target.kind === "consumer"
-      ? healing.heal.target.repo
-      : (settings.repo ?? "timmo001/upkeep");
+    Domain.targetRepos(healing.heal.target)[0] ??
+    settings.repo ??
+    "timmo001/upkeep";
 
   // Another worker can only open the session from a copy on the server
   yield* exec(
@@ -438,7 +444,7 @@ const handOff = Effect.fnUntraced(function* (
   );
 
   if (settings.handOff !== undefined) {
-    const target = healing.heal.target.kind === "upkeep" ? "Upkeep" : repo;
+    const target = Domain.targetName(healing.heal.target);
 
     const fill = (arg: string) =>
       arg

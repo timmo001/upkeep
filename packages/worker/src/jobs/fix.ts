@@ -2,11 +2,13 @@
  * A heal's fix: check out the target, create an OpenCode session with the
  * chosen model and variant through OpenCode's API, checking both, and run it
  * headless with `opencode run` on the failed run, so nothing opens on the
- * desktop. The agent has the session limit to finish; whatever it pushed is
+ * desktop. Several consumers are checked out side by side and fixed in the
+ * one session, each checked and pushed on its own. The agent has the session
+ * limit, per repository up to four, to finish; whatever it pushed is
  * recorded as the heal's commits and what it said last as its summary.
  */
 import { Api } from "@timmo001/effect-gh";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Option, Schema } from "effect";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -22,15 +24,25 @@ const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.map((root) => `${root}/upkeep/heal`),
 );
 
+/** A repository the agent works in, and where it's checked out. */
+interface Checkout {
+  readonly repo: string;
+  readonly directory: string;
+  readonly branch: string;
+}
+
 /** What the agent is told: the failure, how it went before, and how far it may go. */
 const prompt = (
   heal: Domain.Heal,
   run: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
   precedents: ReadonlyArray<Domain.Precedent>,
-  repo: string,
+  checkouts: ReadonlyArray<Checkout>,
   minutes: number,
 ) => {
+  const several = checkouts.length > 1;
+  const repo = several ? "each repository" : (checkouts[0]?.repo ?? "");
+
   const reach =
     heal.target.kind === "upkeep"
       ? [
@@ -42,7 +54,7 @@ const prompt = (
         ];
 
   return [
-    `Upkeep's ${run.job} run ${run.id} failed${heal.target.kind === "consumer" ? ` for ${repo}` : ""}:`,
+    `Upkeep's ${run.job} run ${run.id} failed${heal.target.kind === "upkeep" ? "" : ` for ${Domain.targetName(heal.target)}`}:`,
     "",
     run.error ?? "(no error)",
     "",
@@ -63,7 +75,18 @@ const prompt = (
           ]),
           "",
         ]),
-    `Find the cause and fix it in this checkout of ${repo}.`,
+    ...(several
+      ? [
+          "It failed the same way in several repositories, checked out side by side here:",
+          "",
+          ...checkouts.map(
+            (checkout) =>
+              `- ${checkout.repo} in ${checkout.directory} (${checkout.branch})`,
+          ),
+          "",
+          "Find the cause once and make the same fix in each, adapting it where they differ. Run each repository's own checks in its own checkout and push each on its own, so one that can't be fixed doesn't hold up the rest.",
+        ]
+      : [`Find the cause and fix it in this checkout of ${repo}.`]),
     ...(run.job === "stalled-updates"
       ? [
           "The run was taking over the dependency update pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit. If it can't land because another dependency pins the old version exactly, even in its newest release, push nothing: close the pull request with a comment naming that pin, and that's `Outcome: fixed`.",
@@ -91,7 +114,7 @@ const prompt = (
       : []),
     ...reach,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
-    `You have ${minutes} minutes. End with a short summary of what you found and did, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`.`,
+    `You have ${minutes} minutes. End with a short summary of what you found and did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
 };
 
@@ -123,36 +146,59 @@ export const fix = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const settings = (yield* Settings.load()).heal ?? {};
   const opencode = settings.opencode ?? "opencode2";
-  const minutes = settings.sessionMinutes ?? 30;
   const root = yield* cacheRoot;
 
-  const repo =
-    heal.target.kind === "consumer"
-      ? heal.target.repo
-      : (settings.repo ?? "timmo001/upkeep");
+  const repos = Domain.targetRepos(heal.target);
+  const several = repos.length > 1;
 
-  const { default_branch: branch } = yield* Api.json(
-    { endpoint: `repos/${repo}`, method: "GET" },
-    RepositoryInfo,
-  );
-
-  const directory = `${root}/${repo}`;
-  const options = { cwd: directory, trusted: root };
+  const minutes =
+    (settings.sessionMinutes ?? 30) * Math.min(Math.max(repos.length, 1), 4);
 
   yield* fs.makeDirectory(root, { recursive: true });
-  yield* checkout(repo, branch, directory, root);
 
-  // The agent's shell runs in OpenCode's service, which would ask before
-  // trusting a new checkout's mise config. Trusting it needs the cache root
-  // left out of the trusted paths, or mise has nothing to do.
-  if (yield* usesMise(directory))
-    yield* run("mise", ["trust"], { cwd: directory, trusted: "" });
+  const checkouts = yield* Effect.forEach(
+    repos.length === 0 ? [settings.repo ?? "timmo001/upkeep"] : repos,
+    Effect.fnUntraced(function* (repo) {
+      const { default_branch: branch } = yield* Api.json(
+        { endpoint: `repos/${repo}`, method: "GET" },
+        RepositoryInfo,
+      );
 
-  const before = yield* tip(branch, options);
+      const directory = `${root}/${repo}`;
+
+      yield* checkout(repo, branch, directory, root);
+
+      // The agent's shell runs in OpenCode's service, which would ask before
+      // trusting a new checkout's mise config. Trusting it needs the cache
+      // root left out of the trusted paths, or mise has nothing to do.
+      if (yield* usesMise(directory))
+        yield* run("mise", ["trust"], { cwd: directory, trusted: "" });
+
+      const before = yield* tip(branch, { cwd: directory, trusted: root });
+
+      return { repo, directory, branch, before };
+    }),
+  );
+
+  // Several checkouts are worked on from the folder holding them all: their
+  // owner's, or the cache root's when the owners differ
+  const owners = new Set(checkouts.map(({ repo }) => repo.split("/")[0]));
+
+  const directory = several
+    ? owners.size === 1
+      ? `${root}/${[...owners][0] ?? ""}`
+      : root
+    : (checkouts[0]?.directory ?? root);
+
+  const options = { cwd: directory, trusted: root };
   const session = yield* createSession(opencode, agent, options);
 
   yield* record({ session, directory });
   yield* RunLog.info(`Created OpenCode session ${session} in ${directory}`);
+
+  const name = several
+    ? `${checkouts.length} repositories`
+    : (checkouts[0]?.repo.split("/").at(-1) ?? "");
 
   // The agent runs in the background: nothing opens on the desktop, and one
   // that needs a person is picked up from its session, in the heal's record.
@@ -165,8 +211,8 @@ export const fix = Effect.fnUntraced(function* (
       "--session",
       session,
       "--title",
-      `${failed.job} ${repo.split("/").at(-1) ?? repo}`,
-      prompt(heal, failed, log, precedents, repo, minutes),
+      `${failed.job} ${name}`,
+      prompt(heal, failed, log, precedents, checkouts, minutes),
     ],
     options,
   ).pipe(
@@ -180,14 +226,22 @@ export const fix = Effect.fnUntraced(function* (
     Effect.map(Option.getOrElse(() => "timeout" as const)),
   );
 
-  const after = yield* tip(branch, options);
+  const pushed: Array<string> = [];
 
-  if (after !== "" && after !== before) {
-    yield* record({ commit: after });
+  for (const { repo, directory: cwd, branch, before } of checkouts) {
+    const after = yield* tip(branch, { cwd, trusted: root });
+
+    if (after === "" || after === before) continue;
+
+    // The heal's one commit only says something for one repository; several
+    // are in its changes
+    if (!several) yield* record({ commit: after });
+
     yield* recordCommits(repo, before, after);
+    pushed.push(several ? `${repo}@${after.slice(0, 7)}` : after.slice(0, 7));
   }
 
-  const note = after !== before ? `, and pushed ${after.slice(0, 7)}` : "";
+  const note = pushed.length === 0 ? "" : `, and pushed ${pushed.join(", ")}`;
 
   const said = yield* lastWords(opencode, session, options).pipe(
     Effect.orElseSucceed(() => null),
@@ -202,7 +256,7 @@ export const fix = Effect.fnUntraced(function* (
   const attention =
     outcome !== "done" ||
     verdict === "needs you" ||
-    (verdict === undefined && after === before);
+    (verdict === undefined && pushed.length === 0);
 
   switch (outcome) {
     case "done":

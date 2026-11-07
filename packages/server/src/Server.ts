@@ -298,10 +298,12 @@ const queueMachine = Effect.fn("queueMachine")(function* (
 });
 
 /**
- * Queue a heal for each target of a failed or lost run: each failed consumer
- * of a bump, or Upkeep itself. A failed heal never queues another. A target
- * past its heals for the day gets no more for now: a consumer's heal waits
- * until its heals free up, and a job failing in itself is parked.
+ * Queue the heals of a failed or lost run: one for Upkeep itself, or for the
+ * consumers of a bump that failed, one heal over all of them, so a single
+ * agent session makes the same fix everywhere. A failed heal never queues
+ * another. A target past its heals for the day gets no more for now: a
+ * consumer's heal waits until its heals free up, and a job failing in itself
+ * is parked.
  */
 const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
@@ -334,19 +336,20 @@ const heal = Effect.fn("heal")(function* (
     triage.report(run, target),
   );
 
+  const healing: Array<{
+    readonly repo: string;
+    readonly issue: string | null;
+  }> = [];
+
   for (const [index, target] of targets.entries()) {
+    const issue = Option.getOrNull(issues[index] ?? Option.none());
     const used = yield* store.healsSince(run.job, target, since);
 
     if (used >= limit) {
       // One consumer failing all day mustn't stop the job for the others, so
       // only a job failing in itself is parked.
       if (target.kind === "consumer") {
-        yield* store.wait(
-          run.job,
-          target.repo,
-          run.id,
-          Option.getOrNull(issues[index] ?? Option.none()),
-        );
+        yield* store.wait(run.job, target.repo, run.id, issue);
         yield* Effect.logWarning(
           `Held a heal of ${run.job} for ${target.repo} until its heals free up: past ${limit} heals in 24 hours`,
         ).pipe(Effect.annotateLogs({ run: run.id }));
@@ -356,11 +359,7 @@ const heal = Effect.fn("heal")(function* (
 
       const reason = `${run.job} failed again after ${used} heals in 24 hours, past the limit of ${limit}`;
 
-      yield* store.park(
-        run.job,
-        reason,
-        Option.getOrNull(issues[index] ?? Option.none()),
-      );
+      yield* store.park(run.job, reason, issue);
       yield* Effect.logWarning(`Parked ${run.job}`).pipe(
         Effect.annotateLogs({ run: run.id, reason }),
       );
@@ -368,21 +367,44 @@ const heal = Effect.fn("heal")(function* (
       continue;
     }
 
-    if (target.kind === "consumer")
-      yield* store.stopWaiting(run.job, target.repo);
+    if (target.kind === "upkeep") {
+      yield* queue({
+        job: Catalogue.heal.id,
+        trigger: "heal",
+        release: run.release,
+        heal: { of: run.id, job: run.job, target, issue },
+      });
 
-    yield* queue({
-      job: Catalogue.heal.id,
-      trigger: "heal",
-      release: run.release,
-      heal: {
-        of: run.id,
-        job: run.job,
-        target,
-        issue: Option.getOrNull(issues[index] ?? Option.none()),
-      },
-    });
+      continue;
+    }
+
+    for (const repo of Domain.targetRepos(target)) {
+      yield* store.stopWaiting(run.job, repo);
+      healing.push({ repo, issue });
+    }
   }
+
+  const [first, ...more] = healing;
+
+  if (first === undefined) return;
+
+  yield* queue({
+    job: Catalogue.heal.id,
+    trigger: "heal",
+    release: run.release,
+    heal: {
+      of: run.id,
+      job: run.job,
+      target:
+        more.length === 0
+          ? { kind: "consumer", repo: first.repo }
+          : {
+              kind: "consumers",
+              repos: healing.map(({ repo }) => repo),
+            },
+      issue: healing.find(({ issue }) => issue !== null)?.issue ?? null,
+    },
+  });
 });
 
 /**

@@ -4,7 +4,7 @@
  * once it's ended, to run it again or dismiss what it left for a person.
  */
 import { mdiArrowLeft, mdiCancel, mdiCheck, mdiReplay } from "@mdi/js";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
@@ -47,8 +47,7 @@ const fact = (label: string, value: string | TemplateResult) =>
   html`<dt>${label}</dt>
     <dd>${value}</dd>`;
 
-const target = (heal: Domain.Heal) =>
-  heal.target.kind === "upkeep" ? "Upkeep" : heal.target.repo;
+const target = (heal: Domain.Heal) => Domain.targetName(heal.target);
 
 const healFacts = (
   heal: Domain.Heal,

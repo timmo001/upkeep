@@ -729,6 +729,40 @@ test("a heal's record fills in as its worker reports", () =>
     }),
   ));
 
+test("a heal of several consumers reads back and counts for each of them", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const target = {
+        kind: "consumers" as const,
+        repos: ["timmo001/a", "timmo001/b"],
+      };
+
+      const queued = yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: { of: "failed-run", job: "bump", target },
+      });
+
+      expect((yield* store.run(queued.id)).heal?.target).toEqual(target);
+
+      for (const repo of ["timmo001/a", "timmo001/b"])
+        expect(
+          yield* store.healsSince("bump", { kind: "consumer", repo }, 0),
+        ).toBe(1);
+
+      expect(
+        yield* store.healsSince(
+          "bump",
+          { kind: "consumer", repo: "timmo001/c" },
+          0,
+        ),
+      ).toBe(0);
+    }),
+  ));
+
 test("a heal's shared session can be read back by its ID", () =>
   run(
     Effect.gen(function* () {

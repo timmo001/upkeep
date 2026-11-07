@@ -634,16 +634,26 @@ const RunRow = Schema.Struct({
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
 
-/** A heal's target as it's kept: `upkeep`, or the consumer's `owner/name`. */
+/**
+ * A heal's target as it's kept: `upkeep`, the consumer's `owner/name`, or
+ * several consumers' names joined by commas, which a name never has.
+ */
 const targetColumn = (target: Domain.Target) =>
-  target.kind === "upkeep" ? "upkeep" : target.repo;
+  target.kind === "upkeep" ? "upkeep" : Domain.targetRepos(target).join(",");
 
 /** A summary's period or agent as it's kept: JSON, or NULL for other runs. */
 const jsonColumn = (value: Domain.Period | Domain.AgentModel | null) =>
   value === null ? null : JSON.stringify(value);
 
-const targetOf = (column: string): Domain.Target =>
-  column === "upkeep" ? { kind: "upkeep" } : { kind: "consumer", repo: column };
+const targetOf = (column: string): Domain.Target => {
+  if (column === "upkeep") return { kind: "upkeep" };
+
+  const [repo = "", ...more] = column.split(",");
+
+  return more.length === 0
+    ? { kind: "consumer", repo }
+    : { kind: "consumers", repos: [repo, ...more] };
+};
 
 const toRun = ({
   releaseRepo,
@@ -1805,9 +1815,14 @@ export class Store extends Context.Service<
       target: Domain.Target,
       since: number,
     ) {
+      // A heal of several consumers counts for each of them
       const rows = yield* sql<{ count: number }>`
         SELECT count(*) AS count FROM runs
-        WHERE heal_job = ${job} AND heal_target = ${targetColumn(target)}
+        WHERE heal_job = ${job}
+          AND (
+            heal_target = ${targetColumn(target)}
+            OR instr(',' || heal_target || ',', ',' || ${targetColumn(target)} || ',') > 0
+          )
           AND queued_at >= ${since}
       `;
 
@@ -2370,14 +2385,15 @@ export class Store extends Context.Service<
       const since = numberOf(state.get("since"));
       const workTime = state.get("work_time");
 
-      // Repositories with a run that left something for a person
+      // Repositories with a run that left something for a person, with a
+      // heal of several consumers counting for each
       const needing = new Set(
         (yield* sql<{ repo: string }>`
           SELECT DISTINCT lower(coalesce(heal_target, release_repo)) AS repo
           FROM runs
           WHERE attention = 1
             AND coalesce(heal_target, release_repo) IS NOT NULL
-        `).map(({ repo }) => repo),
+        `).flatMap(({ repo }) => repo.split(",")),
       );
 
       const rows = yield* sql`

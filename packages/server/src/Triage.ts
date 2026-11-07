@@ -6,7 +6,7 @@
  * nothing.
  */
 import { Api as TriageApi, Event, Fingerprint } from "@timmo001/effect-triage";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import {
   Clock,
   Config,
@@ -179,7 +179,7 @@ const client = (url: string, token: Redacted.Redacted) => {
 };
 
 const targetName = (target: Domain.Target) =>
-  target.kind === "upkeep" ? "upkeep" : target.repo;
+  target.kind === "upkeep" ? "upkeep" : Domain.targetRepos(target).join(",");
 
 const make = Effect.fnUntraced(function* (options: {
   readonly url: string;

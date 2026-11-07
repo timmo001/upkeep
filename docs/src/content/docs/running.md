@@ -327,16 +327,19 @@ running runs are never pruned.
 
 When a run fails or is lost, the server queues a `heal` run for it. A failed
 run of a job over repositories, such as `bump`, `stalled-updates`, `drift` or
-`ci`, gets one heal per repository that failed, each with that repository as
-its target; any other failure gets one heal with Upkeep itself as the target.
-A failed heal never queues another.
+`ci`, gets one heal for the repositories that failed. One repository is its
+target; several are fixed together, so a release that breaks the same way in
+several consumers is fixed once in one agent session rather than again in
+each. Any other failure gets one heal with Upkeep itself as the target. A
+failed heal never queues another.
 
 Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
 OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
 
 A job gets `UPKEEP_HEALS_PER_DAY` heals for each target in any 24 hours, a
-rolling window rather than the calendar day. A repository past that has its
+rolling window rather than the calendar day, and a heal of several
+repositories counts for each of them. A repository past that has its
 heal held, while the job carries on for the others: the server queues it once
 the repository's oldest heal is a day old, unless a later run of the job
 reaches that repository first. The job's dashboard page lists the heals
@@ -357,9 +360,13 @@ model chooses what to do:
   and repository, with the failure as its prompt. Nothing opens on the
   desktop. The agent gets `sessionMinutes` (30 by default) to finish; every
   commit it pushes to the default branch is recorded as the heal's changes,
-  and what it said last as its summary. One that stopped, ran out of time or
-  asked for you is marked as needing you, and its heal's record keeps the
-  session to pick it up from.
+  and what it said last as its summary. A heal of several repositories checks
+  each one out side by side and runs the session from the folder holding them,
+  with `sessionMinutes` for each repository, up to four. The agent runs each
+  repository's checks and pushes each on its own, and its commits show in the
+  inbox as one fix. One that stopped, ran out of time or asked for you is
+  marked as needing you, and its heal's record keeps the session to pick it
+  up from.
 - `park` parks the job, with the model's reason.
 - `ask` means the model isn't sure, so the last agent, the one for hard fixes,
   works on it as for `fix`.

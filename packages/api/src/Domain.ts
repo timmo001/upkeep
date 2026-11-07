@@ -189,15 +189,43 @@ export const TrackedRepo = Schema.Struct({
 export interface TrackedRepo extends Schema.Schema.Type<typeof TrackedRepo> {}
 
 /**
- * What a heal works on: Upkeep itself, or a consumer whose checks failed
- * after a bump. The agent's reach is set by it.
+ * What a heal works on: Upkeep itself, a consumer whose checks failed after
+ * a bump, or several consumers the same run failed in, fixed together in one
+ * agent session. The agent's reach is set by it.
  */
 export const Target = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("upkeep") }),
   Schema.Struct({ kind: Schema.Literal("consumer"), repo: RepoName }),
+  Schema.Struct({
+    kind: Schema.Literal("consumers"),
+    repos: Schema.Array(RepoName).check(Schema.isMinLength(2)),
+  }),
 ]);
 
 export type Target = typeof Target.Type;
+
+/** The repositories a heal works on: none for Upkeep itself. */
+export const targetRepos = (target: Target): ReadonlyArray<string> => {
+  switch (target.kind) {
+    case "upkeep":
+      return [];
+    case "consumer":
+      return [target.repo];
+    case "consumers":
+      return target.repos;
+  }
+};
+
+/** A heal's target as people read it, such as `timmo001/a and timmo001/b`. */
+export const targetName = (target: Target) => {
+  const repos = targetRepos(target);
+
+  return repos.length === 0
+    ? "Upkeep"
+    : repos.length === 1
+      ? (repos[0] ?? "")
+      : `${repos.slice(0, -1).join(", ")} and ${repos.at(-1) ?? ""}`;
+};
 
 /** An OpenCode model and its variant, as an agent runs it. */
 export const AgentModel = Schema.Struct({
