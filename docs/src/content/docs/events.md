@@ -63,17 +63,20 @@ that it starts seconds after the release rather than up to 30 minutes later.
    bunx wrangler queues consumer http add upkeep-events
    ```
 
-2. Deploy the Worker. Workers Builds deploys it from `main`, like the docs
-   site, with `packages/events` as its root and `bunx wrangler deploy` as its
-   deploy command. It answers at `events.upkeep.timmo.dev`.
+2. Deploy the Worker with `bun run deploy` in `packages/events`. It answers
+   at `events.upkeep.timmo.dev`. To deploy it from `main` instead, connect it
+   to Workers Builds like the docs site, with `packages/events` as its root
+   and `bunx wrangler deploy` as its deploy command.
 3. Create the GitHub App under your account: its webhook URL is the Worker's,
    with a long random webhook secret, such as from `openssl rand -hex 32`.
    Give it read access to Contents and Actions, subscribe it to Release, Push
    and Workflow run, and install it on all your repositories.
-4. Give the Worker the same secret:
+4. Give the Worker the same secret. With it kept in 1Password, pipe it in so
+   it never shows on screen:
 
    ```bash
-   bunx wrangler secret put WEBHOOK_SECRET
+   op item get "Upkeep GitHub App webhook secret" --fields password --reveal \
+     | tr -d '\n' | bunx wrangler secret put WEBHOOK_SECRET
    ```
 
 5. Create a Cloudflare API token with Queues edit, then set the Home
