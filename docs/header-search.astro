@@ -1,0 +1,20 @@
+---
+/**
+ * docs-kit's header search with the theme picker offering every Groundwork
+ * theme: Glazing, the site's own, first, then the other core themes, then
+ * the optional ones, the same order as the dashboard's picker.
+ */
+import HeaderSearch from "@timmo001/docs-kit/blume/header-search.astro";
+import {
+  coreThemeChoices,
+  optionalThemeChoices,
+} from "@timmo001/groundwork-tokens/choices";
+
+const themes = [
+  ...coreThemeChoices.filter((theme) => theme.id === "glazing"),
+  ...coreThemeChoices.filter((theme) => theme.id !== "glazing"),
+  ...optionalThemeChoices,
+];
+---
+
+<HeaderSearch {...Astro.props} themes={themes} defaultTheme="glazing" />

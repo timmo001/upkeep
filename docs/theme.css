@@ -1,16 +1,21 @@
 /*
  * The docs site's styles: docs-kit's Blume theme with Groundwork's Glazing
- * colours, Upkeep's starting point until its own design lands, set in Mona
- * Sans and Geist Mono rather than Glazing's Inter.
+ * colours, Upkeep's own, and every other Groundwork theme for the header's
+ * picker. Every theme is set in Mona Sans and Geist Mono, as the dashboard
+ * is.
  */
 @import "@timmo001/docs-kit/blume/theme.css";
 @import "@timmo001/docs-kit/blume/themes/glazing.css";
+@import "@timmo001/docs-kit/blume/themes/all.css";
 
 @import "@fontsource-variable/mona-sans";
 @import "@fontsource-variable/geist-mono";
 
-:root {
+:root,
+:root[data-gw-docs-theme] {
   --blume-font-body: "Mona Sans Variable", "Mona Sans", system-ui, sans-serif;
   --blume-font-display:
     "Mona Sans Variable", "Mona Sans", system-ui, sans-serif;
+  --blume-font-mono:
+    "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
 }
