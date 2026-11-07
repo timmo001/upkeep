@@ -1,6 +1,7 @@
 /**
  * Ties Effect atoms to Lit elements, after groundwork's lit-effect: an element
- * keeps an atom mounted while it's connected and redraws when it changes.
+ * keeps an atom mounted while it's connected and redraws when its data
+ * changes, not when a refresh brings back the same.
  */
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { type Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
@@ -41,8 +42,47 @@ export class AtomController<A> implements ReactiveController {
     host.addController(this);
   }
 
+  /** The atom's latest value, as last read. */
+  #seen: { readonly value: A } | undefined;
+
+  /** The value the host draws, kept while a refresh brings the same data. */
+  #shown: { readonly value: A } | undefined;
+
+  /** The data the shown value holds, to tell a refresh that changed nothing. */
+  #digest: string | undefined;
+
+  /**
+   * The value to draw: the shown one again when a refresh brought the same
+   * data, so nothing redraws and the host's lists keep their items.
+   */
+  #settle(value: A): A {
+    if (this.#seen?.value === value && this.#shown !== undefined) {
+      return this.#shown.value;
+    }
+
+    this.#seen = { value };
+
+    const digest =
+      AsyncResult.isAsyncResult(value) && AsyncResult.isSuccess(value)
+        ? JSON.stringify(value.value)
+        : undefined;
+
+    if (
+      digest !== undefined &&
+      digest === this.#digest &&
+      this.#shown !== undefined
+    ) {
+      return this.#shown.value;
+    }
+
+    this.#digest = digest;
+    this.#shown = { value };
+
+    return value;
+  }
+
   get value(): A {
-    return registry.get(this.#atom ?? this.#select());
+    return this.#settle(registry.get(this.#atom ?? this.#select()));
   }
 
   hostConnected() {
@@ -86,9 +126,17 @@ export class AtomController<A> implements ReactiveController {
 
     this.#unsubscribe?.();
     this.#atom = atom;
-    this.#unsubscribe = registry.subscribe(atom, () =>
-      this.#host.requestUpdate(),
-    );
+    this.#seen = undefined;
+    this.#shown = undefined;
+    this.#digest = undefined;
+    this.#unsubscribe = registry.subscribe(atom, (value) => {
+      const before = this.#shown;
+
+      this.#settle(value);
+
+      // A refresh that brought the same data leaves the host as it is
+      if (this.#shown !== before) this.#host.requestUpdate();
+    });
   }
 
   hostDisconnected() {
