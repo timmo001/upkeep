@@ -31,7 +31,8 @@ on `main`, follow the installed release.
    has its own), and the theme's font files. An app whose own theme isn't in
    Groundwork's set renders its stylesheet with `blumeThemeCss` from
    `@timmo001/groundwork-tokens/runtime` in a site script, which writes it into
-   `theme.css` between marker comments, as the docs-kit README shows. Blume
+   `theme.css` between marker comments, as the docs-kit README shows, with
+   `blumeThemesCss` too to offer it in the theme picker. Blume
    copies `theme.css` into its build folder, so a relative `@import` of a
    generated file breaks the build. Leave `theme.accent` out of the
    config. Put site overrides, such as the `--home-banner-*` properties, after
