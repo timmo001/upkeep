@@ -3,7 +3,7 @@
  * log, the releases that start them and the inbox of what changed. Times are
  * milliseconds since the Unix epoch.
  */
-import { Effect, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 
 /** A job's ID, such as `releases`, used in commands and URLs. */
 export const JobId = Schema.String.check(
@@ -220,11 +220,13 @@ export const targetRepos = (target: Target): ReadonlyArray<string> => {
 export const targetName = (target: Target) => {
   const repos = targetRepos(target);
 
-  return repos.length === 0
-    ? "Upkeep"
-    : repos.length === 1
-      ? (repos[0] ?? "")
-      : `${repos.slice(0, -1).join(", ")} and ${repos.at(-1) ?? ""}`;
+  return Match.value(repos.length).pipe(
+    Match.when(0, () => "Upkeep"),
+    Match.when(1, () => repos[0] ?? ""),
+    Match.orElse(
+      () => `${repos.slice(0, -1).join(", ")} and ${repos.at(-1) ?? ""}`,
+    ),
+  );
 };
 
 /** An OpenCode model and its variant, as an agent runs it. */
