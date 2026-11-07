@@ -104,7 +104,9 @@ out. The jobs that work across repositories on their own use it: bump,
 labels, stalled updates, drift, sync, dependencies, watch and skill
 consumers. Heals, changes, agents and the jobs that read what involves you,
 such as attention, notifications and CI, which reads your CI notifications,
-keep the worker's own `gh` login.
+keep the worker's own `gh` login. So does bump's search for the repositories
+that use a release, since GitHub's code search returns only some of its
+matches to an installation token.
 
 1. Give the App read and write access to Contents, Pull requests, Issues,
    Workflows and Actions, and approve the new permissions on its

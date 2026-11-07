@@ -27,6 +27,7 @@ import {
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import * as RateLimits from "../RateLimits";
 import * as RunLog from "../RunLog";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
@@ -223,9 +224,12 @@ const decodeManifest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Manifest),
 );
 
-/** Code search allows a handful of requests a minute, so back off on a limit. */
+/**
+ * Code search allows a handful of requests a minute, so back off on a limit.
+ * It runs with the machine's login, since the App's token drops results.
+ */
 const search = (input: Search.CodeInput) =>
-  Search.code({ ...input, limit: 1000 }).pipe(
+  GitHubApp.withMachineLogin(Search.code({ ...input, limit: 1000 })).pipe(
     Effect.retry({ schedule: Schedule.exponential("15 seconds"), times: 4 }),
     Effect.map((results) => [
       ...new Set(results.map((result) => result.repository.nameWithOwner)),

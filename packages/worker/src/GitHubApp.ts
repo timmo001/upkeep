@@ -3,10 +3,16 @@
  * own, such as bumps and syncs, run their `gh` and `git` calls with an
  * installation token the server hands out, so bulk work counts against the
  * App's rate limit and shows as the App. Heals, agents and the jobs that read
- * what involves you keep the machine's login. Without an App on the server,
- * or with a server too old to have one, every job uses the machine's login.
+ * what involves you keep the machine's login, as does bump's code search.
+ * Without an App on the server, or with a server too old to have one, every
+ * job uses the machine's login.
  */
-import { Api, layer as ghLayer } from "@timmo001/effect-gh";
+import {
+  Api,
+  Gh,
+  layer as ghLayer,
+  type Interface as GhInterface,
+} from "@timmo001/effect-gh";
 import { Catalogue, Client, type Domain } from "@upkeep/api";
 import {
   Clock,
@@ -47,6 +53,28 @@ export const Account = Context.Reference<Option.Option<string>>(
   "@upkeep/worker/GitHubApp/Account",
   { defaultValue: () => Option.none() },
 );
+
+/**
+ * The machine's own `gh`, for a run that acts as the App. None when the run
+ * keeps the machine's login anyway.
+ */
+export const MachineGh = Context.Reference<Option.Option<GhInterface>>(
+  "@upkeep/worker/GitHubApp/MachineGh",
+  { defaultValue: () => Option.none() },
+);
+
+/**
+ * Run `gh` calls with the machine's login, even in a run that acts as the App.
+ * Code search with an installation token reports every match in its count but
+ * returns only some of them, differing from one call to the next.
+ */
+export const withMachineLogin = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.flatMap(MachineGh, (machine) =>
+    Option.match(machine, {
+      onNone: () => effect,
+      onSome: (gh) => Effect.provideService(effect, Gh, gh),
+    }),
+  );
 
 const User = Schema.Struct({ login: Schema.String });
 
@@ -99,6 +127,7 @@ interface Held {
 export const make = Effect.gen(function* () {
   const client = yield* Client;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const machine = yield* Gh;
 
   const held = yield* SynchronizedRef.make<Held>({
     token: Option.none(),
@@ -162,6 +191,7 @@ export const make = Effect.gen(function* () {
       spawning,
       ghLayer().pipe(Layer.provide(spawning)),
       Layer.succeed(Account, Option.some(token.value.account)),
+      Layer.succeed(MachineGh, Option.some(machine)),
     );
   });
 
