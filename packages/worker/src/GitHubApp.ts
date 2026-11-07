@@ -28,7 +28,6 @@ const appJobs: ReadonlySet<string> = new Set(
     Catalogue.drift,
     Catalogue.sync,
     Catalogue.deps,
-    Catalogue.ci,
     Catalogue.watch,
     Catalogue.skillConsumers,
   ].map(({ id }) => id),

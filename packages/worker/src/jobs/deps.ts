@@ -68,14 +68,30 @@ const readFile = (repo: string, path: string, ref?: string) =>
 const repositories = Effect.fnUntraced(function* () {
   const login = yield* GitHubApp.login;
 
-  const pages = yield* Api.pages(
-    {
-      endpoint: "user/repos",
-      method: "GET",
-      query: { affiliation: "owner", per_page: 100 },
-    },
-    Schema.Array(OwnedRepository),
-  );
+  // An installation token can't list `user/repos`, only the repositories the
+  // App is installed on
+  const pages = yield* Option.match(yield* GitHubApp.Account, {
+    onNone: () =>
+      Api.pages(
+        {
+          endpoint: "user/repos",
+          method: "GET",
+          query: { affiliation: "owner", per_page: 100 },
+        },
+        Schema.Array(OwnedRepository),
+      ),
+    onSome: () =>
+      Api.pages(
+        {
+          endpoint: "installation/repositories",
+          method: "GET",
+          query: { per_page: 100 },
+        },
+        Schema.Struct({ repositories: Schema.Array(OwnedRepository) }),
+      ).pipe(
+        Effect.map((pages) => pages.map(({ repositories }) => repositories)),
+      ),
+  });
 
   return pages
     .flat()

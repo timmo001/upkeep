@@ -101,9 +101,10 @@ counts against the App's rate limit rather than your account's, and their
 pushes show as the App. The server holds the App's private key and hands each
 worker an installation token, which it renews before the hour it lasts runs
 out. The jobs that work across repositories on their own use it: bump,
-labels, stalled updates, drift, sync, dependencies, CI, watch and skill
+labels, stalled updates, drift, sync, dependencies, watch and skill
 consumers. Heals, changes, agents and the jobs that read what involves you,
-such as attention and notifications, keep the worker's own `gh` login.
+such as attention, notifications and CI, which reads your CI notifications,
+keep the worker's own `gh` login.
 
 1. Give the App read and write access to Contents, Pull requests, Issues,
    Workflows and Actions, and approve the new permissions on its
