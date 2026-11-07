@@ -14,6 +14,7 @@ import type { Domain } from "@upkeep/api";
 import { Clock, Effect, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import { pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -25,8 +26,6 @@ import {
 } from "./bump";
 import { open, prune } from "./skill-changes";
 import { other as otherSkills, send, shared } from "./skill-snapshots";
-
-const User = Schema.Struct({ login: Schema.String });
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
@@ -92,7 +91,7 @@ type Start = Extract<Domain.Command, { readonly kind: "skill-start" }>;
 const build = Effect.fnUntraced(function* () {
   const path = yield* Path.Path;
   const root = path.join(path.dirname(yield* bumpCacheRoot), "skills");
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
   const repo = `${login}/skills`;
 
   const info = yield* Api.json(

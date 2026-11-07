@@ -28,6 +28,7 @@ import {
 } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 import { Events } from "./Events";
+import { GitHubApp } from "./GitHubApp";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -907,6 +908,7 @@ const WorkHandlers = HttpApiBuilder.group(
   Effect.fn(function* (handlers) {
     const store = yield* Store;
     const triage = yield* Triage;
+    const app = yield* GitHubApp;
 
     return handlers.handleAll({
       claim: Effect.fn(function* ({ payload }) {
@@ -967,6 +969,15 @@ const WorkHandlers = HttpApiBuilder.group(
       }),
       status: () =>
         status().pipe(Effect.provideService(Store, store), Effect.orDie),
+      githubToken: () =>
+        app.token().pipe(
+          Effect.map(Option.getOrNull),
+          // Without a token the worker uses its machine's login, so a failure
+          // is only logged
+          Effect.catchTag("GitHubAppError", (error) =>
+            Effect.logWarning(error.message).pipe(Effect.as(null)),
+          ),
+        ),
       heartbeat: Effect.fn(function* ({ params, query }) {
         const worker = yield* Api.CurrentWorker;
 
@@ -2057,6 +2068,6 @@ export const layer = (options: ServeOptions) =>
     pruneRuns,
     pullEvents,
   ).pipe(
-    Layer.provide([Tokens.layer, Triage.layer, Events.layer]),
+    Layer.provide([Tokens.layer, Triage.layer, Events.layer, GitHubApp.layer]),
     Layer.provideMerge(Store.layer),
   );

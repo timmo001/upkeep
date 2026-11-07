@@ -17,14 +17,13 @@ import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
 import { ghReason, reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
 import * as Bump from "./bump";
 import * as Drift from "./drift";
-
-const User = Schema.Struct({ login: Schema.String });
 
 const OwnedRepository = Schema.Struct({
   full_name: Schema.String,
@@ -67,7 +66,7 @@ const readFile = (repo: string, path: string, ref?: string) =>
 
 /** The account's own repositories that aren't archived or forks. */
 const repositories = Effect.fnUntraced(function* () {
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
 
   const pages = yield* Api.pages(
     {

@@ -15,6 +15,7 @@ import type { Api as UpkeepApi, Domain } from "@upkeep/api";
 import { homedir } from "node:os";
 import { Clock, Effect, Schema } from "effect";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import * as Kept from "../Kept";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -23,8 +24,6 @@ import { run } from "./bump";
 
 /** How far back each run looks; commits the inbox has are skipped. */
 const lookbackHours = 48;
-
-const User = Schema.Struct({ login: Schema.String });
 
 const Commit = Schema.Struct({
   sha: Schema.String,
@@ -301,7 +300,7 @@ const namesOf = Effect.fnUntraced(function* (repos: ReadonlyArray<string>) {
 export const watch = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos();
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
   const now = yield* Clock.currentTimeMillis;
   const kept = yield* Kept.make("watch", { onlyOnSuccess: true });
 

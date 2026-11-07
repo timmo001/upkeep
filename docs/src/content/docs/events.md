@@ -93,3 +93,34 @@ release's workflow pins don't wait at all.
 The App's **Advanced** page lists each delivery and its response: `202` when
 it was queued or isn't an event Upkeep takes, `204` for the ping, and `401`
 when the secret doesn't match.
+
+## Jobs as the App
+
+The same App can run the jobs' own GitHub calls, so a day of bumps and syncs
+counts against the App's rate limit rather than your account's, and their
+pushes show as the App. The server holds the App's private key and hands each
+worker an installation token, which it renews before the hour it lasts runs
+out. The jobs that work across repositories on their own use it: bump,
+labels, stalled updates, drift, sync, dependencies, CI, watch and skill
+consumers. Heals, changes, agents and the jobs that read what involves you,
+such as attention and notifications, keep the worker's own `gh` login.
+
+1. Give the App read and write access to Contents, Pull requests, Issues,
+   Workflows and Actions, and approve the new permissions on its
+   installation. Workflows is needed because bumps and drift edit
+   `.github/workflows`.
+2. Generate a private key on the App's page, keep it in 1Password, and delete
+   the downloaded file.
+3. Set the Home Assistant app's `github_app_id` and `github_app_key`, the key
+   pasted as it is or in base64, and restart it. Outside the app, they're
+   `UPKEEP_GITHUB_APP_ID` and `UPKEEP_GITHUB_APP_KEY`. Set
+   `github_app_account` only when the App is installed on more than one
+   account. The app's log says "Handing workers GitHub App tokens for the
+   jobs' GitHub calls" once it's on.
+4. Add the App as a bypass actor on any ruleset that stops direct pushes to
+   the default branch, as it pushes there in place of your account.
+
+A run of one of those jobs points `gh` at the token through `GH_TOKEN`, and
+`git` at GitHub over HTTPS with a credential helper that gives the token, so
+clones with an SSH remote push as the App too. Without the App set up, or
+when the server can't make a token, every job uses the worker's login.

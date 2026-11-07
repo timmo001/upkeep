@@ -38,3 +38,6 @@ schema:
   events_account_id: str?
   events_queue_id: str?
   events_token: password?
+  github_app_id: str?
+  github_app_key: password?
+  github_app_account: str?

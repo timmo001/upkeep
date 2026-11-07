@@ -16,6 +16,7 @@ import { Catalogue } from "@upkeep/api";
 import { Config, Effect, Path, Schedule, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -32,8 +33,6 @@ import {
 
 /** The file at an app's root that names what it takes from groundwork. */
 export const syncFile = "sync.json";
-
-const User = Schema.Struct({ login: Schema.String });
 
 const RepositoryInfo = Schema.Struct({
   archived: Schema.Boolean,
@@ -146,7 +145,7 @@ const runSync = Effect.fnUntraced(function* (
 
 /** Every repository of the signed-in account with a sync.json at its root. */
 const repositories = Effect.fnUntraced(function* () {
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
 
   const results = yield* Search.code({
     query: "items",

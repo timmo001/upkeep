@@ -53,3 +53,20 @@ configuration:
     name: Events token
     description: >-
       A Cloudflare API token with Queues edit, to pull and acknowledge events.
+  github_app_id:
+    name: GitHub App ID
+    description: >-
+      The ID of the GitHub App the jobs' own GitHub calls run as, such as
+      bumps and syncs, so they count against the App's rate limit. Heals and
+      agents keep the worker's own login. Without it, every job uses the
+      worker's login.
+  github_app_key:
+    name: GitHub App private key
+    description: >-
+      The App's private key: the .pem GitHub gives, pasted as it is, or the
+      file in base64.
+  github_app_account:
+    name: GitHub App account
+    description: >-
+      The account whose installation to use, only needed when the App is
+      installed on more than one.

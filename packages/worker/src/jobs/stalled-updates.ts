@@ -13,6 +13,7 @@ import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Config, Effect, Path, Schema } from "effect";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import { attention, listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -30,8 +31,6 @@ import {
 
 /** The updaters whose pull requests are taken over, by search author. */
 const updaters = ["app/renovate", "app/dependabot"];
-
-const User = Schema.Struct({ login: Schema.String });
 
 const Found = Schema.Struct({
   items: Schema.Array(
@@ -126,7 +125,7 @@ export const leftBecause = (pr: PullRequest, checks: Checks) => {
 
 /** Every open update pull request in the signed-in account's repositories. */
 const open = Effect.fnUntraced(function* () {
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
   const prefix = "https://api.github.com/repos/";
 
   const found = yield* Effect.forEach(updaters, (author) =>

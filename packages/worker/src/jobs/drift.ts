@@ -16,6 +16,7 @@ import { Catalogue, EventJobs } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
 import { Yaml } from "effect/encoding";
 import { reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed, skipped } from "../Worker";
@@ -57,8 +58,6 @@ export class DriftError extends Schema.TaggedError<DriftError>()("DriftError", {
 }) {}
 
 const LatestRelease = Schema.Struct({ tag_name: Schema.String });
-
-const User = Schema.Struct({ login: Schema.String });
 
 const RepositoryInfo = Schema.Struct({
   archived: Schema.Boolean,
@@ -312,7 +311,7 @@ const latest = Effect.fnUntraced(function* (tool: Tool, options: Options) {
 
 /** Every repository of the signed-in account with a tooling.yml. */
 const repositories = Effect.fnUntraced(function* () {
-  const { login } = yield* Api.json({ endpoint: "user", method: "GET" }, User);
+  const login = yield* GitHubApp.login;
 
   const results = yield* Search.code({
     query: "reviewed",

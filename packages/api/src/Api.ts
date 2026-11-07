@@ -31,6 +31,7 @@ import {
   Command,
   DesktopTheme,
   Entry,
+  GitHubToken,
   Heal,
   HealDecision,
   Inbox,
@@ -857,6 +858,14 @@ export class WorkGroup extends HttpApiGroup.make("work")
     }),
     /** Upkeep's one status, for a worker to tell you when something new needs you. */
     HttpApiEndpoint.get("status", "/status", { success: Status }),
+    /**
+     * A token for the GitHub App's installation, good for at least ten more
+     * minutes, for the jobs' own `gh` and `git` calls. None when the server
+     * has no App set up, so the worker uses its machine's login.
+     */
+    HttpApiEndpoint.post("githubToken", "/github-token", {
+      success: Schema.NullOr(GitHubToken),
+    }),
     /**
      * Tell the server the run is still going. With `wait`, it's held for up
      * to that many seconds, ending early as `RunNotClaimed` when the run is

@@ -26,6 +26,7 @@ import type { FileSystem, Path } from "effect";
 import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
+import * as GitHubApp from "./GitHubApp";
 import * as Notify from "./Notify";
 import * as RateLimits from "./RateLimits";
 import { narrowTo, Reporter } from "./Reporter";
@@ -135,9 +136,11 @@ const execute = Effect.fnUntraced(function* (
   run: Domain.Run,
   heartbeatInterval: Duration.Input,
   hold: (until: number) => Effect.Effect<void>,
+  app: GitHubApp.Runs,
 ) {
   const client = yield* Client;
   const params = { id: run.id };
+  const asApp = yield* app.forRun(run.job);
 
   // A run the server no longer has as ours, such as one it failed as lost or
   // one that was cancelled, stops here. The server holds each heartbeat until
@@ -231,11 +234,15 @@ const execute = Effect.fnUntraced(function* (
 
   const scope = run.repo ?? null;
 
+  // A job that runs as the App has its spawner and `gh` swapped for the run,
+  // including the rate limit read when it fails, which is the App's then
+  const attempts = attempt(0).pipe(Effect.provide(asApp));
+
   return yield* (
     scope === null
-      ? attempt(0)
+      ? attempts
       : RunLog.use((log) => log.write("info", `Only working on ${scope}`)).pipe(
-          Effect.andThen(attempt(0)),
+          Effect.andThen(attempts),
         )
   ).pipe(
     Effect.raceFirst(heartbeats),
@@ -280,6 +287,7 @@ export const work = Effect.fn("Worker.work")(function* (
   const heartbeatInterval = options.heartbeatInterval ?? "1 minute";
 
   const status = yield* Status.make;
+  const app = yield* GitHubApp.make;
 
   // When a run finds GitHub's rate limit spent, no lane takes new work until
   // it resets, since nearly every job reads GitHub.
@@ -379,6 +387,7 @@ export const work = Effect.fn("Worker.work")(function* (
                   claimed,
                   heartbeatInterval,
                   hold,
+                  app,
                 ),
               ),
               Effect.flatMap((failed) => status.finished(claimed.job, failed)),

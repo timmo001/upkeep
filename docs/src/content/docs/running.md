@@ -26,6 +26,11 @@ behind a reverse proxy for HTTPS.
 | `UPKEEP_TRIAGE_URL`         | Triage's address, for the failure memory below; optional                    |
 | `UPKEEP_TRIAGE_HOST_TOKEN`  | A triage host token, to send failures as events                             |
 | `UPKEEP_TRIAGE_ADMIN_TOKEN` | A triage admin token, to read and resolve their issues                      |
+| `UPKEEP_GITHUB_APP_ID`      | The GitHub App the jobs' own GitHub calls run as; optional                  |
+| `UPKEEP_GITHUB_APP_KEY`     | The App's private key, the `.pem` as it is or in base64                     |
+| `UPKEEP_GITHUB_APP_ACCOUNT` | Whose installation to use, when the App is on more than one account         |
+
+The GitHub App settings are in [Jobs as the App](/events#jobs-as-the-app).
 
 The settings can also come from a JSON file at `UPKEEP_OPTIONS`, with
 lowercase keys and no `UPKEEP_` prefix, such as `{ "keep_days": 14 }`. The
