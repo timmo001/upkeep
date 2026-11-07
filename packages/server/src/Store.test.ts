@@ -1088,6 +1088,48 @@ test("a run's commit replaces the same commit the watch job found", () =>
     }),
   ));
 
+test("your own commits start read, and stay read as more of yours join", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const yours = (sha: string, at: number) => ({
+        repo: "timmo001/a",
+        sha,
+        url: "",
+        at,
+        subject: `Change ${sha}`,
+        group: "you:timmo001/a:2026-11-07",
+        title: "Your commits to a",
+        kind: "commit" as const,
+        you: true,
+      });
+
+      yield* store.seen([
+        yours("abc", 1),
+        {
+          repo: "timmo001/b",
+          sha: "def",
+          url: "",
+          at: 2,
+          subject: "Someone else's change",
+        },
+      ]);
+      yield* store.seen([yours("ghi", 3)]);
+
+      const { entries } = yield* store.inbox(0);
+
+      expect(
+        Object.fromEntries(
+          entries.map((entry) => [entry.title, entry.readAt !== null]),
+        ),
+      ).toEqual({
+        "Someone else's change": false,
+        "Your commits to a": true,
+      });
+    }),
+  ));
+
 test("a held release keeps the latest per repository until it's taken", () =>
   run(
     Effect.gen(function* () {

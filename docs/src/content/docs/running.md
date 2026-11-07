@@ -119,7 +119,9 @@ Below that:
 
 An opened entry links to the job behind it and, while it's kept, the run.
 An entry is unread until you open it or mark everything read, and comes back
-unread when something new joins it. Read and dismissed entries are deleted 30
+unread when something new joins it. Your own commits start read, and stay
+read as more of yours join them: they're kept as history, but they aren't
+counted as new or summed up as unread. Read and dismissed entries are deleted 30
 days after they last changed. The first time the server starts with the
 inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 `watch` job adds the commits made outside Upkeep.

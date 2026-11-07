@@ -3147,6 +3147,8 @@ export class Store extends Context.Service<
           count: 1,
           firstAt: entry.at,
           lastAt: entry.at,
+          // Your own commits are history you already know, so start read
+          readAt: entry.you ? entry.at : null,
         })}
         ON CONFLICT (key) DO UPDATE SET
           title = ${replace ? sql`excluded.title` : sql`entries.title`},
@@ -3158,7 +3160,7 @@ export class Store extends Context.Service<
           you = entries.you OR excluded.you,
           count = entries.count + 1,
           last_at = max(entries.last_at, excluded.last_at),
-          read_at = NULL,
+          read_at = ${entry.you ? sql`entries.read_at` : sql`NULL`},
           dismissed_at = NULL
         RETURNING id
       `;
