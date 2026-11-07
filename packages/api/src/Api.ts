@@ -92,6 +92,20 @@ export class ReleaseRequired extends Schema.TaggedError<ReleaseRequired>()(
   }
 }
 
+/**
+ * A run was narrowed to a repository the job can't be narrowed to: a job that
+ * doesn't work on repositories, or one the repository isn't tracked for.
+ */
+export class RepoNotScopable extends Schema.TaggedError<RepoNotScopable>()(
+  "RepoNotScopable",
+  { id: Schema.String, repo: Schema.String, reason: Schema.String },
+  { httpApiStatus: 400 },
+) {
+  override get message() {
+    return `${this.id} can't run for ${this.repo}: ${this.reason}`;
+  }
+}
+
 export class RunNotFound extends Schema.TaggedError<RunNotFound>()(
   "RunNotFound",
   { id: Schema.String },
@@ -459,13 +473,18 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
     /**
      * Queue a run, as the run button does. A run of the job for the same
      * release that's still waiting is returned instead of a second one. A job
-     * that runs on releases needs one.
+     * that runs on releases needs one. With `repo`, the run only works on that
+     * repository, and a waiting run for it or for every repository is
+     * returned instead.
      */
     HttpApiEndpoint.post("run", "/:id/runs", {
       params: { id: Schema.String },
-      payload: Schema.Struct({ release: Schema.optionalKey(Release) }),
+      payload: Schema.Struct({
+        release: Schema.optionalKey(Release),
+        repo: Schema.optionalKey(RepoName),
+      }),
       success: Run,
-      error: [JobNotFound, ReleaseRequired],
+      error: [JobNotFound, ReleaseRequired, RepoNotScopable],
     }),
     /** Let a parked job be queued again. */
     HttpApiEndpoint.delete("unpark", "/:id/park", {

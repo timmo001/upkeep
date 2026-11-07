@@ -266,6 +266,13 @@ export const machineJobs: ReadonlyArray<Job> = [
   upPlugins,
 ];
 
+/**
+ * Whether a run of a job can be narrowed to one repository: the jobs that
+ * work on the repositories tracked for them, and watch, which reads every
+ * tracked repository.
+ */
+export const scopable = (job: Job) => job.tracked || job.id === watch.id;
+
 export const jobs: ReadonlyArray<Job> = [
   releases,
   watch,

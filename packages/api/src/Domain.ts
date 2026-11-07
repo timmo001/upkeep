@@ -610,6 +610,12 @@ export const Run = Schema.Struct({
   trigger: Trigger,
   /** The release it's for, when a release started it or was given. */
   release: Schema.NullOr(Release),
+  /**
+   * The one repository it works on, when it was narrowed to one, such as by
+   * an event from that repository. Null for every repository the job tracks.
+   * Missing from older servers.
+   */
+  repo: Schema.optionalKey(Schema.NullOr(RepoName)),
   /** For a command run: what it's asked to do. */
   command: Schema.NullOr(Command),
   state: RunState,

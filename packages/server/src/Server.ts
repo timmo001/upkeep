@@ -100,6 +100,42 @@ const healsPerDay = Config.Int("UPKEEP_HEALS_PER_DAY").pipe(
   Config.withDefault(3),
 );
 
+/**
+ * The repository a run of a job is narrowed to, as the server tracks it: the
+ * job has to work on repositories, and the repository has to be tracked for
+ * it (or at all, for watch).
+ */
+const scopeTo = Effect.fn("scopeTo")(function* (
+  store: Store["Service"],
+  job: Domain.Job,
+  repo: string,
+) {
+  if (!Catalogue.scopable(job)) {
+    return yield* new Api.RepoNotScopable({
+      id: job.id,
+      repo,
+      reason: "it doesn't work on repositories",
+    });
+  }
+
+  const found = (yield* store.repos().pipe(Effect.orDie)).find(
+    (tracked) => tracked.repo.toLowerCase() === repo.toLowerCase(),
+  );
+
+  if (found === undefined || (job.tracked && !found.jobs.includes(job.id))) {
+    return yield* new Api.RepoNotScopable({
+      id: job.id,
+      repo,
+      reason:
+        found === undefined
+          ? "it isn't tracked"
+          : `it isn't tracked for ${job.id}`,
+    });
+  }
+
+  return found.repo;
+});
+
 /** Queue a run and log it, so the server's log shows what it started. */
 const queue = Effect.fn("queue")(function* (run: NewRun) {
   const store = yield* Store;
@@ -137,6 +173,7 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
         queued.release === null
           ? ""
           : `${queued.release.repo}@${queued.release.tag}`,
+      repo: queued.repo ?? "",
       heals: queued.heal?.of ?? "",
     }),
   );
@@ -465,6 +502,11 @@ const JobsHandlers = HttpApiBuilder.group(
           return yield* new Api.ReleaseRequired({ id: params.id });
         }
 
+        const repo =
+          payload.repo === undefined
+            ? null
+            : yield* scopeTo(store, job.value, payload.repo);
+
         const queued = yield* (
           job.value.machine === true
             ? queueMachine(params.id, "manual")
@@ -472,6 +514,7 @@ const JobsHandlers = HttpApiBuilder.group(
                 job: params.id,
                 trigger: "manual",
                 release: payload.release ?? null,
+                repo,
               })
         ).pipe(Effect.provideService(Store, store), Effect.orDie);
 
@@ -583,6 +626,7 @@ const RunsHandlers = HttpApiBuilder.group(
             job: found.job,
             trigger: "manual" as const,
             release: found.release,
+            repo: found.repo ?? null,
           };
 
           const queued = yield* found.heal === null
@@ -845,6 +889,7 @@ const WorkHandlers = HttpApiBuilder.group(
             job: run.job,
             trigger: "heal",
             release: run.release,
+            repo: run.repo ?? null,
           });
 
           return { run: Option.getOrNull(queued) };

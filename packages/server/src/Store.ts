@@ -565,6 +565,12 @@ const migrations = SqliteMigrator.fromRecord({
       ALTER TABLE worker_agents ADD COLUMN resume INTEGER NOT NULL DEFAULT 0
     `;
   }),
+  // The one repository a run works on, when it was narrowed to one
+  "0028_run_scope": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN scope_repo TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -574,6 +580,7 @@ const RunRow = Schema.Struct({
   releaseRepo: Schema.NullOr(Schema.String),
   releaseTag: Schema.NullOr(Schema.String),
   releaseUrl: Schema.NullOr(Schema.String),
+  scopeRepo: Schema.NullOr(Schema.String),
   state: Domain.RunState,
   worker: Schema.NullOr(Schema.String),
   queuedAt: Schema.Finite,
@@ -621,6 +628,7 @@ const toRun = ({
   releaseRepo,
   releaseTag,
   releaseUrl,
+  scopeRepo,
   healOf,
   healJob,
   healTarget,
@@ -639,6 +647,7 @@ const toRun = ({
   ...row
 }: typeof RunRow.Type): Domain.Run => ({
   ...row,
+  repo: scopeRepo,
   attention: attention !== 0,
   release:
     releaseRepo === null || releaseTag === null
@@ -900,6 +909,8 @@ export interface NewRun {
   readonly job: Domain.JobId;
   readonly trigger: Domain.Trigger;
   readonly release: Domain.Release | null;
+  /** The one repository it works on, or every one the job tracks without it. */
+  readonly repo?: string | null;
   /** For a command run: what it's asked to do. */
   readonly command?: Domain.Command;
   /** For a heal: the failed run, its job, what to heal and its triage issue. */
@@ -916,7 +927,8 @@ export class Store extends Context.Service<
   {
     /**
      * Queue a run, unless one of the same job for the same release is still
-     * waiting, which is returned instead.
+     * waiting, which is returned instead. A run for one repository is also
+     * covered by a waiting run for every repository.
      */
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
     runs(filter: {
@@ -1316,10 +1328,14 @@ export class Store extends Context.Service<
     });
 
     const queueRun = Effect.fn("Store.queueRun")(
-      function* ({ job, trigger, release, command, heal }: NewRun) {
+      function* ({ job, trigger, release, repo, command, heal }: NewRun) {
         const commandColumn =
           command === undefined ? null : JSON.stringify(command);
 
+        const scope = repo ?? null;
+
+        // Repositories are matched ignoring case, as GitHub does, and a run
+        // for every repository covers one for a single repository
         const waiting = yield* selectRuns(sql`
           SELECT * FROM runs
           WHERE job = ${job}
@@ -1329,6 +1345,11 @@ export class Store extends Context.Service<
             AND coalesce(command, '') = ${commandColumn ?? ""}
             AND coalesce(heal_of, '') = ${heal?.of ?? ""}
             AND coalesce(heal_target, '') = ${heal === undefined ? "" : targetColumn(heal.target)}
+            AND (
+              scope_repo IS NULL
+              OR lower(scope_repo) = ${scope?.toLowerCase() ?? ""}
+            )
+          ORDER BY scope_repo IS NULL DESC
           LIMIT 1
         `);
 
@@ -1342,6 +1363,7 @@ export class Store extends Context.Service<
             releaseRepo: release?.repo ?? null,
             releaseTag: release?.tag ?? null,
             releaseUrl: release?.url ?? null,
+            scopeRepo: scope,
             command: commandColumn,
             state: "queued",
             queuedAt: yield* Clock.currentTimeMillis,

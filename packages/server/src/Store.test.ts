@@ -423,6 +423,35 @@ test("a waiting run of the same job and release isn't queued twice", () =>
     }),
   ));
 
+test("a run for one repository reuses a waiting run for it or for every repository", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const queue = (repo: string | null = null) =>
+        store.queueRun({
+          job: "watch",
+          trigger: "manual",
+          release: null,
+          repo,
+        });
+
+      const first = yield* queue("timmo001/a");
+      const again = yield* queue("Timmo001/A");
+      const other = yield* queue("timmo001/b");
+      const all = yield* queue();
+      const later = yield* queue("timmo001/c");
+
+      expect(first.repo).toBe("timmo001/a");
+      expect(again.id).toBe(first.id);
+      expect(other.id).not.toBe(first.id);
+      // A run for one repository doesn't cover every repository
+      expect(all.id).not.toBe(first.id);
+      expect(all.repo).toBeNull();
+      expect(later.id).toBe(all.id);
+    }),
+  ));
+
 test("a command for one worker waits for that one", () =>
   run(
     Effect.gen(function* () {
