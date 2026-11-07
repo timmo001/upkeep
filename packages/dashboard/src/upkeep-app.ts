@@ -9,10 +9,11 @@ import { ref } from "lit/directives/ref.js";
 import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
 import { phSignOut } from "./icons.ts";
-import { bindTheme } from "./theme.ts";
+import { bindTheme, offerDesktopTheme } from "./theme.ts";
 import { shared } from "./ui.ts";
 import {
   attentionHref,
+  desktopTheme,
   homeHref,
   inbox,
   jobsHref,
@@ -93,8 +94,16 @@ export class UpkeepApp extends LitElement {
 
   readonly #skills = new AtomController(this, () => skillsPage);
 
+  readonly #desktopTheme = new AtomController(this, () => desktopTheme);
+
   // Keeps the server's changes coming for as long as the dashboard is open
   readonly #live = new AtomController(this, () => live);
+
+  override willUpdate() {
+    const result = this.#desktopTheme.value;
+
+    if (AsyncResult.isSuccess(result)) offerDesktopTheme(result.value.theme);
+  }
 
   /** How many held skill changes wait for approval, for the menu. */
   #waiting() {

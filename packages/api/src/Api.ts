@@ -29,6 +29,7 @@ import {
   AttentionWait,
   Change,
   Command,
+  DesktopTheme,
   Entry,
   Heal,
   HealDecision,
@@ -37,6 +38,7 @@ import {
   JobStatus,
   LogEntry,
   LogLine,
+  OmarchyTheme,
   Outcome,
   Parked,
   Period,
@@ -1074,6 +1076,11 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: SkillsSnapshot,
       success: HttpApiSchema.NoContent,
     }),
+    /** Keep the Omarchy theme the worker's desktop just switched to. */
+    HttpApiEndpoint.put("putTheme", "/theme", {
+      payload: OmarchyTheme,
+      success: HttpApiSchema.NoContent,
+    }),
   )
   .middleware(WorkerAuthorization)
   .prefix("/api/work")
@@ -1212,6 +1219,21 @@ export class SessionsGroup extends HttpApiGroup.make("sessions")
     }),
   ) {}
 
+export class ThemeGroup extends HttpApiGroup.make("theme")
+  .add(
+    /** The Omarchy theme a desktop worker last sent, for the dashboard to offer. */
+    HttpApiEndpoint.get("get", "/", { success: DesktopTheme }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/theme")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Theme",
+      description:
+        "The desktop's Omarchy theme, which the dashboard can follow",
+    }),
+  ) {}
+
 export class TokensGroup extends HttpApiGroup.make("tokens")
   .add(
     HttpApiEndpoint.get("list", "/:scope", {
@@ -1264,6 +1286,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(ReposGroup)
   .add(SkillsGroup)
   .add(SessionsGroup)
+  .add(ThemeGroup)
   .add(TokensGroup)
   .add(SystemGroup)
   .annotateMerge(OpenApi.annotations({ title: "Upkeep" })) {}

@@ -32,6 +32,7 @@ import { narrowTo, Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
 import * as Settings from "./settings";
 import * as Status from "./Status";
+import * as Theme from "./Theme";
 
 /** What a handler ends with when its run found nothing to do. */
 export const skipped = "skipped";
@@ -409,13 +410,18 @@ export const work = Effect.fn("Worker.work")(function* (
     .map((name) => [name, jobs.filter((job) => laneOf(job) === name)] as const)
     .filter(([, jobsInLane]) => jobsInLane.length > 0);
 
-  // Telling you what's new that needs you runs beside the lanes, once a minute
+  // Telling you what's new that needs you runs beside the lanes, once a minute,
+  // and so does following the desktop's Omarchy theme
   const notify = (yield* Notify.make).pipe(
     Effect.repeat(Schedule.spaced("1 minute")),
   );
 
   return yield* Effect.all(
-    [...lanes.map(([name, laneJobs]) => lane(name, laneJobs)), notify],
+    [
+      ...lanes.map(([name, laneJobs]) => lane(name, laneJobs)),
+      notify,
+      Theme.follow,
+    ],
     {
       concurrency: "unbounded",
       discard: true,

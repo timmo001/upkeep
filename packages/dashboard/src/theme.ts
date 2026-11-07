@@ -16,6 +16,7 @@ import {
 } from "@timmo001/groundwork-tokens/page";
 import { on } from "@timmo001/groundwork-ui";
 import type { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
+import type { Domain } from "@upkeep/api";
 import { themeOptions } from "./theme-options.ts";
 
 /** Glazing first, then the other core themes, then the optional ones by family. */
@@ -29,6 +30,21 @@ const modes: ReadonlyArray<ThemeMode> = ["auto", "light", "dark", "darker"];
 
 /** The page's theme, set up once for the whole dashboard. */
 export const page = pageTheme({ ...themeOptions, themes });
+
+let offered: string | undefined;
+
+/**
+ * Offer the desktop's Omarchy theme the server passed on, or drop it with
+ * `null`. The same theme again changes nothing.
+ */
+export const offerDesktopTheme = (theme: Domain.OmarchyTheme | null) => {
+  const key = JSON.stringify(theme);
+
+  if (key === offered) return;
+
+  offered = key;
+  void page.setOmarchyTheme(theme);
+};
 
 /** Keep a theme picker in step with the page's theme and mode, both ways. */
 export const bindTheme = (picker: GwThemePicker) => {

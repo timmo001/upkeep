@@ -71,6 +71,8 @@ const skillsKey = ["skills"];
 
 const workersKey = ["workers"];
 
+const themeKey = ["theme"];
+
 /** Requests that couldn't be made or understood are defects, as in queries. */
 const asDefects = <A, E, R>(
   effect: Effect.Effect<
@@ -97,6 +99,11 @@ export const agents = UpkeepApi.query("jobs", "agents", {
 
 /** The server's version, shown in the header. */
 export const serverVersion = UpkeepApi.query("system", "version", {});
+
+/** The desktop's Omarchy theme, as a worker last sent it, for the picker. */
+export const desktopTheme = UpkeepApi.query("theme", "get", {
+  reactivityKeys: themeKey,
+});
 
 /** The latest runs, of every job or one. */
 export const runs = Atom.family((job: string) =>
@@ -326,6 +333,8 @@ const touched = (change: Domain.StateChange) => {
       return skillsKey;
     case "workers":
       return workersKey;
+    case "theme":
+      return themeKey;
   }
 };
 
@@ -335,6 +344,7 @@ const everything = [
   ...attentionKey,
   ...skillsKey,
   ...workersKey,
+  ...themeKey,
 ];
 
 /**

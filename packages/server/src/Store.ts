@@ -592,6 +592,20 @@ const migrations = SqliteMigrator.fromRecord({
     `;
     yield* sql`CREATE INDEX github_events_received ON github_events (received_at)`;
   }),
+  // The Omarchy theme a desktop worker last sent, one row at most
+  "0030_desktop_theme": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE desktop_theme (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        name TEXT NOT NULL,
+        colors TEXT NOT NULL,
+        worker TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -739,6 +753,10 @@ const decodeSnapshots = Schema.decodeUnknownEffect(
   Schema.Array(
     Schema.Struct({ snapshot: Schema.fromJsonString(Domain.SkillsSnapshot) }),
   ),
+);
+
+const decodeThemes = Schema.decodeUnknownEffect(
+  Schema.Array(Domain.OmarchyTheme),
 );
 
 const decodeParked = Schema.decodeUnknownEffect(
@@ -1116,6 +1134,13 @@ export class Store extends Context.Service<
     putSkills(snapshot: Domain.SkillsSnapshot): Effect.Effect<void, StoreError>;
     /** The Skills page: every repository's skills, changes and workers. */
     skillsPage(): Effect.Effect<Domain.SkillsPage, StoreError>;
+    /** Keep the Omarchy theme `worker`'s desktop switched to, replacing the last. */
+    putTheme(
+      theme: Domain.OmarchyTheme,
+      worker: string,
+    ): Effect.Effect<void, StoreError>;
+    /** The Omarchy theme a worker last sent, or none yet. */
+    theme(): Effect.Effect<Domain.DesktopTheme, StoreError>;
     /**
      * Keep what the attention job found: add new items, update the ones
      * whose fingerprint moved and record what moved, and, for a complete
@@ -2152,6 +2177,34 @@ export class Store extends Context.Service<
         })),
       };
     });
+
+    const putTheme = Effect.fn("Store.putTheme")(function* (
+      theme: Domain.OmarchyTheme,
+      worker: string,
+    ) {
+      const at = yield* Clock.currentTimeMillis;
+
+      yield* sql`
+        INSERT INTO desktop_theme ${sql.insert({
+          id: 1,
+          name: theme.name,
+          colors: theme.colors,
+          worker,
+          at,
+        })}
+        ON CONFLICT (id) DO UPDATE
+        SET name = excluded.name, colors = excluded.colors,
+          worker = excluded.worker, at = excluded.at
+      `;
+    }, Effect.mapError(storeError));
+
+    const theme = Effect.fn("Store.theme")(function* () {
+      const rows = yield* sql`
+        SELECT name, colors FROM desktop_theme WHERE id = 1
+      `.pipe(Effect.flatMap(decodeThemes));
+
+      return { theme: rows[0] ?? null };
+    }, Effect.mapError(storeError));
 
     const attentionState = Effect.fnUntraced(function* () {
       const rows = yield* sql<{ key: string; value: string }>`
@@ -3735,6 +3788,8 @@ export class Store extends Context.Service<
       setSkillChangeState: announce(touches("skills"), setSkillChangeState),
       putSkills: announce(touches("skills"), putSkills),
       skillsPage,
+      putTheme: announce(touches("theme"), putTheme),
+      theme,
       recordAttention: announce(touches("attention"), recordAttention),
       attention,
       looked: announce(touches("attention"), looked),

@@ -889,9 +889,28 @@ export const Status = Schema.Struct({
 export interface Status extends Schema.Schema.Type<typeof Status> {}
 
 /**
+ * The Omarchy theme a desktop worker runs under: its name, such as `Tokyo
+ * Night`, and the text of its `colors.toml`, which the dashboard maps itself.
+ */
+export const OmarchyTheme = Schema.Struct({
+  name: Schema.String,
+  colors: Schema.String,
+});
+
+export interface OmarchyTheme extends Schema.Schema.Type<typeof OmarchyTheme> {}
+
+/** The latest Omarchy theme a worker sent, or none yet. */
+export const DesktopTheme = Schema.Struct({
+  theme: Schema.NullOr(OmarchyTheme),
+});
+
+export interface DesktopTheme extends Schema.Schema.Type<typeof DesktopTheme> {}
+
+/**
  * A part of the server's state that a change touched: `runs` covers runs and
- * jobs, `log` a run's log, `inbox` the inbox and tracked repositories, and
- * `workers` what the workers last said they're set up with.
+ * jobs, `log` a run's log, `inbox` the inbox and tracked repositories,
+ * `workers` what the workers last said they're set up with, and `theme` the
+ * desktop's Omarchy theme.
  */
 export const Topic = Schema.Literals([
   "runs",
@@ -900,6 +919,7 @@ export const Topic = Schema.Literals([
   "attention",
   "skills",
   "workers",
+  "theme",
 ]);
 
 export type Topic = typeof Topic.Type;

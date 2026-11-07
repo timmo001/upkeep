@@ -1216,6 +1216,11 @@ const WorkHandlers = HttpApiBuilder.group(
           .pipe(Effect.catchTag("StoreError", Effect.die)),
       skillCommand: ({ payload }) => queueSkillCommand(store, payload),
       putSkills: ({ payload }) => store.putSkills(payload).pipe(Effect.orDie),
+      putTheme: Effect.fn(function* ({ payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store.putTheme(payload, worker.name).pipe(Effect.orDie);
+      }),
     });
   }),
 );
@@ -1486,6 +1491,16 @@ const SessionsHandlers = HttpApiBuilder.group(
   }),
 );
 
+const ThemeHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "theme",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handle("get", () => store.theme().pipe(Effect.orDie));
+  }),
+);
+
 const TokensHandlers = HttpApiBuilder.group(
   Api.Api,
   "tokens",
@@ -1533,6 +1548,7 @@ const apiRoutes = (
       ReposHandlers,
       SkillsHandlers,
       SessionsHandlers,
+      ThemeHandlers,
       TokensHandlers,
       SystemHandlers,
     ]),

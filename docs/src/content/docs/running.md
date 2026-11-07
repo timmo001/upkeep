@@ -139,6 +139,16 @@ paused or unparked, and runs cancelled, from there.
 The inbox is `GET /api/inbox?days=7`. What happened in the last day, by run,
 is `GET /api/activity?hours=24`, and the `activity` tool in MCP and Code Mode.
 
+### Theme
+
+The theme picker in the app bar offers every Groundwork theme, starting on
+Glazing, and the light, dark and darker modes. A worker on a machine with
+[Omarchy](https://omarchy.org) sends the desktop's theme to the server when it
+starts and each time Omarchy switches it, and the picker offers it under
+Desktop as Omarchy with the theme's name. It's never the default; while it's
+picked, the dashboard follows each switch on the desktop. The server keeps the
+latest one sent, at `GET /api/theme`. A worker without Omarchy sends nothing.
+
 ## Tokens
 
 Admins read runs, start jobs and manage tokens; workers take runs. Each token
