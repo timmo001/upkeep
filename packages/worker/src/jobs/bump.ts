@@ -4,7 +4,9 @@
  * repository and from `package.json` dependencies on the packages it
  * publishes. Each one is cloned, edited, checked and pushed straight to its
  * default branch, then its CI is watched. A consumer that fails is logged and
- * the rest carry on; the run fails at the end, naming them.
+ * the rest carry on; the run fails at the end, naming them. Consumers start as
+ * soon as what they need is published, and only the work on their clones is
+ * limited to four at a time, so a slow CI run doesn't hold up the next push.
  */
 import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
@@ -19,6 +21,7 @@ import {
   Path,
   Schedule,
   Schema,
+  Semaphore,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/http";
@@ -270,33 +273,61 @@ const packages = Effect.fnUntraced(function* (release: Domain.Release) {
 
 /**
  * Wait for a version to reach npm, since the release usually starts the
- * publish. Gives up after 20 minutes.
+ * publish. Checks every 15 seconds and gives up after 20 minutes, warning
+ * that its consumers are left.
  */
 const published = Effect.fnUntraced(function* (name: string, version: string) {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 80; attempt++) {
     const response = yield* HttpClient.get(
       `https://registry.npmjs.org/${name}/${version}`,
     );
 
-    if (response.status === 200) return true;
+    if (response.status === 200) {
+      if (attempt > 0) yield* RunLog.info(`${name}@${version} is on npm`);
+
+      return true;
+    }
 
     if (attempt === 0) {
       yield* RunLog.info(`Waiting for ${name}@${version} to reach npm`);
     }
 
-    yield* Effect.sleep("1 minute");
+    yield* Effect.sleep("15 seconds");
   }
+
+  yield* RunLog.warn(
+    `${name}@${version} isn't on npm after 20 minutes, so its consumers are left`,
+  );
 
   return false;
 });
 
-/** Every consumer of the release and what changes in each. */
+/**
+ * Every consumer of the release and what changes in each, found before any
+ * package reaches npm. Each package's wait for npm runs once, from when the
+ * first consumer needs it, and is shared by the rest.
+ */
 const discover = Effect.fnUntraced(function* (
   release: Domain.Release,
   sha: string,
 ) {
   const [owner = ""] = release.repo.split("/");
   const consumers = new Map<string, Array<Edit>>();
+  const toPublish = yield* packages(release);
+
+  const onNpm = new Map(
+    yield* Effect.forEach(toPublish, ({ name, version }) =>
+      Effect.cached(
+        published(name, version).pipe(
+          Effect.catchCause((cause) =>
+            RunLog.warn(
+              `Couldn't check npm for ${name}@${version}: ${reason(cause)}`,
+            ).pipe(Effect.as(false)),
+          ),
+        ),
+      ).pipe(Effect.map((wait) => [name, wait] as const)),
+    ),
+  );
 
   const add = (repos: ReadonlyArray<string>, edit: Edit) => {
     for (const repo of repos) {
@@ -311,15 +342,7 @@ const discover = Effect.fnUntraced(function* (
     Edit.Pins({ repo: release.repo, sha, tag: release.tag }),
   );
 
-  for (const { name, version } of yield* packages(release)) {
-    if (!(yield* published(name, version))) {
-      yield* RunLog.warn(
-        `${name}@${version} isn't on npm after 20 minutes, so its consumers are left`,
-      );
-
-      continue;
-    }
-
+  for (const { name, version } of toPublish) {
     // gh escapes quotes inside a quoted term, and code search can then report
     // matches but return no items, so the name goes in bare
     add(
@@ -328,8 +351,25 @@ const discover = Effect.fnUntraced(function* (
     );
   }
 
-  return consumers;
+  return { consumers, onNpm };
 });
+
+/**
+ * A consumer's edits once the packages they need are on npm: pins at once,
+ * dependencies as their package lands, dropping any that never does.
+ */
+const ready = <R>(
+  edits: ReadonlyArray<Edit>,
+  onNpm: ReadonlyMap<string, Effect.Effect<boolean, never, R>>,
+) =>
+  Effect.filter(
+    edits,
+    (edit) =>
+      Edit.$is("Dependency")(edit)
+        ? (onNpm.get(edit.name) ?? Effect.succeed(false))
+        : Effect.succeed(true),
+    { concurrency: "unbounded" },
+  );
 
 export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.orElse(() =>
@@ -721,10 +761,44 @@ interface BumpContext {
   readonly root: string;
   readonly settings: Settings.Settings;
   readonly dryRun: boolean;
+  /** Holds one of the four slots for local work: clone, install, check, push. */
+  readonly slot: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
 }
 
-/** Apply a consumer's edits, check, push and watch its CI. */
+/**
+ * Apply a consumer's edits, check and push, then watch its CI. Only the work
+ * on the clone holds a slot, so watching CI doesn't hold up the next push.
+ */
 const bumpRepository = Effect.fnUntraced(function* (
+  repo: string,
+  edits: ReadonlyArray<Edit>,
+  context: BumpContext,
+) {
+  const prepared = yield* context.slot(prepare(repo, edits, context));
+
+  if (prepared.pushed === null) return prepared.outcome;
+
+  const runs = yield* watch(repo, prepared.pushed);
+
+  yield* RunLog.info(
+    runs === 0
+      ? `${repo}: no CI ran on ${prepared.pushed.slice(0, 7)}`
+      : `${repo}: CI passed`,
+  );
+
+  return prepared.outcome;
+});
+
+/** What preparing a consumer came to, with the commit pushed if there was one. */
+interface Prepared {
+  readonly outcome: Outcome;
+  readonly pushed: string | null;
+}
+
+/** A consumer's edits applied, checked and pushed. */
+const prepare = Effect.fnUntraced(function* (
   repo: string,
   edits: ReadonlyArray<Edit>,
   context: BumpContext,
@@ -742,7 +816,7 @@ const bumpRepository = Effect.fnUntraced(function* (
       `${repo}: skipped, ${info.archived ? "archived" : "a fork"}`,
     );
 
-    return "skipped" satisfies Outcome;
+    return { outcome: "skipped", pushed: null } satisfies Prepared;
   }
 
   const branch = info.default_branch;
@@ -786,7 +860,7 @@ const bumpRepository = Effect.fnUntraced(function* (
   if (applied.length === 0) {
     yield* RunLog.info(`${repo}: already up to date`);
 
-    return "current" satisfies Outcome;
+    return { outcome: "current", pushed: null } satisfies Prepared;
   }
 
   const mise = yield* usesMise(directory);
@@ -820,7 +894,7 @@ const bumpRepository = Effect.fnUntraced(function* (
       `${repo}: would push "${message}" (${files.join(", ")})`,
     );
 
-    return "updated" satisfies Outcome;
+    return { outcome: "updated", pushed: null } satisfies Prepared;
   }
 
   yield* run("git", ["add", "--", ...files], options);
@@ -833,18 +907,14 @@ const bumpRepository = Effect.fnUntraced(function* (
     `${repo}: pushed ${sha.slice(0, 7)} "${message}", watching CI`,
   );
 
-  const runs = yield* watch(repo, sha);
-
-  yield* RunLog.info(
-    runs === 0
-      ? `${repo}: no CI ran on ${sha.slice(0, 7)}`
-      : `${repo}: CI passed`,
-  );
-
-  return "updated" satisfies Outcome;
+  return { outcome: "updated", pushed: sha } satisfies Prepared;
 });
 
-/** Bump every consumer of a release, four at a time. */
+/**
+ * Bump every consumer of a release. Each starts once the packages it needs
+ * are on npm, straight away for pins, and the local work runs four at a
+ * time.
+ */
 export const bump = Effect.fnUntraced(function* (
   release: Domain.Release | null,
 ) {
@@ -863,9 +933,10 @@ export const bump = Effect.fnUntraced(function* (
   );
 
   const tracked = yield* trackedFor(Catalogue.bump.id);
+  const found = yield* discover(release, sha);
 
   const consumers = new Map(
-    [...(yield* discover(release, sha))].filter(([repo]) => tracked(repo)),
+    [...found.consumers].filter(([repo]) => tracked(repo)),
   );
 
   if (consumers.size === 0) {
@@ -873,6 +944,15 @@ export const bump = Effect.fnUntraced(function* (
 
     return skipped;
   }
+
+  const slots = yield* Semaphore.make(4);
+
+  const context: BumpContext = {
+    root,
+    settings,
+    dryRun,
+    slot: (effect) => slots.withPermit(effect),
+  };
 
   const failed: Array<string> = [];
   const updated: Array<string> = [];
@@ -890,7 +970,14 @@ export const bump = Effect.fnUntraced(function* (
   yield* Effect.forEach(
     [...consumers].toSorted(([a], [b]) => a.localeCompare(b)),
     ([repo, edits]) =>
-      bumpRepository(repo, edits, { root, settings, dryRun }).pipe(
+      ready(edits, found.onNpm).pipe(
+        Effect.flatMap((ready) =>
+          ready.length === 0
+            ? RunLog.info(
+                `${repo}: skipped, what it uses never reached npm`,
+              ).pipe(Effect.as<Outcome>("skipped"))
+            : bumpRepository(repo, ready, context),
+        ),
         Effect.tap((outcome) =>
           Effect.sync(() => {
             counts[outcome] += 1;
@@ -904,7 +991,7 @@ export const bump = Effect.fnUntraced(function* (
           ),
         ),
       ),
-    { concurrency: 4, discard: true },
+    { concurrency: "unbounded", discard: true },
   );
 
   yield* summary(

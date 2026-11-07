@@ -49,9 +49,11 @@ repository is reused, so a burst of pushes queues one. Upkeep's own pushes
 come back as events too: `watch` already knows their commits, and a `drift`
 run that finds nothing to move ends as skipped.
 
-Runs an event started show `event` as their trigger. `bump` already waits up
-to 20 minutes for a release's npm packages to be published, which matters now
-that it starts seconds after the release rather than up to 30 minutes later.
+Runs an event started show `event` as their trigger. `bump` starts seconds
+after the release rather than up to 30 minutes later, so it finds the
+consumers straight away and starts each one as soon as the packages it needs
+reach npm, checking every 15 seconds for up to 20 minutes. Consumers of the
+release's workflow pins don't wait at all.
 
 ## Setting it up
 
