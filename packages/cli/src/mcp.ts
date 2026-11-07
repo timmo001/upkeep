@@ -78,7 +78,7 @@ const Run = Tool.make("run", {
 
 const Cancel = Tool.make("cancel", {
   description:
-    "Cancel a run on the server. A queued run is dropped; a running one is marked cancelled and its worker stops at its next heartbeat.",
+    "Cancel a run on the server. A queued run is dropped; a running one is marked cancelled and its worker stops it shortly.",
   parameters: Schema.Struct({ run: Schema.String }),
   success: Api.Cancelled,
   failure: UpkeepError,

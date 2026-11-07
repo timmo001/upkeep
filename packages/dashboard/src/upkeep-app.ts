@@ -17,6 +17,7 @@ import {
   homeHref,
   inbox,
   jobsHref,
+  live,
   reposHref,
   Route,
   route,
@@ -93,6 +94,9 @@ export class UpkeepApp extends LitElement {
 
   readonly #skills = new AtomController(this, () => skillsPage);
 
+  // Keeps the server's changes coming for as long as the dashboard is open
+  readonly #live = new AtomController(this, () => live);
+
   /** How many held skill changes wait for approval, for the menu. */
   #waiting() {
     const result = this.#skills.value;
@@ -145,6 +149,14 @@ export class UpkeepApp extends LitElement {
             AsyncResult.isSuccess(this.#version.value)
               ? html`<span class="muted"
                   >${this.#version.value.value.version}</span
+                >`
+              : nothing
+          }${
+            AsyncResult.isSuccess(this.#live.value) && !this.#live.value.value
+              ? html`<span
+                  class="muted"
+                  title="Lost the server's live updates, trying again"
+                  >reconnecting</span
                 >`
               : nothing
           }</a

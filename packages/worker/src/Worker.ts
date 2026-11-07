@@ -123,6 +123,10 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
 /** How many times a run that failed on a spent rate limit runs again. */
 const limitWaits = 2;
 
+/** What's left of `interval` after `elapsed` milliseconds, or none. */
+const remaining = (interval: Duration.Input, elapsed: number) =>
+  Duration.millis(Math.max(Duration.toMillis(interval) - elapsed, 0));
+
 /** Run one claimed run to the end and report how it went. */
 const execute = Effect.fnUntraced(function* (
   handler: Handler,
@@ -133,23 +137,43 @@ const execute = Effect.fnUntraced(function* (
   const client = yield* Client;
   const params = { id: run.id };
 
-  // A run the server no longer has as ours, such as one it failed as lost,
-  // stops here. Anything else, like the server being down for a moment, is
-  // only logged so the run carries on.
-  const beat = client.work.heartbeat({ params }).pipe(
-    Effect.as(true),
-    Effect.catchTag(["RunNotClaimed", "RunNotFound"], () =>
-      Effect.succeed(false),
-    ),
-    Effect.catch((error) =>
-      Effect.logWarning("Couldn't send a heartbeat", error).pipe(
-        Effect.as(true),
+  // A run the server no longer has as ours, such as one it failed as lost or
+  // one that was cancelled, stops here. The server holds each heartbeat until
+  // the next is due, or ends it early when the run is cancelled. Anything
+  // else, like the server being down for a moment, is only logged so the run
+  // carries on.
+  const beat = client.work
+    .heartbeat({
+      params,
+      query: { wait: Duration.toSeconds(heartbeatInterval) },
+    })
+    .pipe(
+      Effect.as(true),
+      Effect.catchTag(["RunNotClaimed", "RunNotFound"], () =>
+        Effect.succeed(false),
       ),
-    ),
-  );
+      Effect.catch((error) =>
+        Effect.logWarning("Couldn't send a heartbeat", error).pipe(
+          Effect.as(true),
+        ),
+      ),
+    );
 
+  // An older server answers straight away, so the rest of the interval is
+  // waited out here
   const heartbeats = Effect.gen(function* () {
-    while (yield* beat) yield* Effect.sleep(heartbeatInterval);
+    for (;;) {
+      const started = yield* Clock.currentTimeMillis;
+
+      if (!(yield* beat)) break;
+
+      yield* Effect.sleep(
+        remaining(
+          heartbeatInterval,
+          (yield* Clock.currentTimeMillis) - started,
+        ),
+      );
+    }
 
     return yield* new RunLost({ id: run.id });
   });
@@ -295,26 +319,43 @@ export const work = Effect.fn("Worker.work")(function* (
     ),
   );
 
-  // The command lane asks every few seconds, so it leaves reporting the
-  // agents and what needs attention to the others
+  // Each lane's claim is held by the server until a run is queued for it, up
+  // to `pollInterval`, so a queued run starts straight away. An older server
+  // answers straight away, so the rest of the lane's interval is waited out
+  // here. The command lane's is shorter, so it leaves reporting the agents and
+  // what needs attention to the others.
   const lane = (name: Domain.Lane, laneJobs: ReadonlyArray<string>) => {
     const command = name === "command";
     const wait = command ? commandPollInterval : pollInterval;
 
-    const next = holdOff.pipe(
-      Effect.andThen(command ? Effect.succeed({}) : agents),
-      Effect.flatMap((setup) =>
-        client.work.claim({
-          payload: { jobs: laneJobs, protocol: Api.protocol, ...setup },
-        }),
-      ),
-      Effect.tap(() => status.update({ reachable: true })),
-      Effect.flatMap(({ run }) =>
+    const next = Effect.gen(function* () {
+      yield* holdOff;
+
+      const setup = command ? {} : yield* agents;
+      const started = yield* Clock.currentTimeMillis;
+
+      const { run } = yield* client.work.claim({
+        payload: {
+          jobs: laneJobs,
+          protocol: Api.protocol,
+          wait: Math.round(Duration.toSeconds(pollInterval)),
+          ...setup,
+        },
+      });
+
+      yield* status.update({ reachable: true });
+
+      return { run, started };
+    }).pipe(
+      Effect.flatMap(({ run, started }) =>
         Option.match(Option.fromNullishOr(run), {
           onNone: () =>
-            command
-              ? Effect.sleep(wait)
-              : attention.pipe(Effect.andThen(Effect.sleep(wait))),
+            Clock.currentTimeMillis.pipe(
+              Effect.flatMap((now) =>
+                Effect.sleep(remaining(wait, now - started)),
+              ),
+              Effect.andThen(command ? Effect.void : attention),
+            ),
           onSome: (claimed) =>
             status.started(claimed.job).pipe(
               Effect.andThen(

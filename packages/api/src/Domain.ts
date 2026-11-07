@@ -843,6 +843,34 @@ export const Status = Schema.Struct({
 
 export interface Status extends Schema.Schema.Type<typeof Status> {}
 
+/**
+ * A part of the server's state that a change touched: `runs` covers runs and
+ * jobs, `log` a run's log, `inbox` the inbox and tracked repositories, and
+ * `workers` what the workers last said they're set up with.
+ */
+export const Topic = Schema.Literals([
+  "runs",
+  "log",
+  "inbox",
+  "attention",
+  "skills",
+  "workers",
+]);
+
+export type Topic = typeof Topic.Type;
+
+/**
+ * Something changed on the server, for the dashboard to fetch again and a
+ * worker waiting on work or a cancel to look again. `run` is the one run it
+ * was about, when it was about one.
+ */
+export const StateChange = Schema.Struct({
+  topic: Topic,
+  run: Schema.optionalKey(Schema.String),
+});
+
+export interface StateChange extends Schema.Schema.Type<typeof StateChange> {}
+
 export const LogLevel = Schema.Literals(["info", "warn", "error"]);
 
 export type LogLevel = typeof LogLevel.Type;

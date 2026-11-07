@@ -187,8 +187,11 @@ Once your own admin is saved, the server admin token can go.
 UPKEEP_WORKER_TOKEN=... upkeep worker
 ```
 
-A worker asks for work every 30 seconds, sends a heartbeat every minute while
-a run goes and sends its log as it's written. When a worker is stopped mid-run,
+A worker asks for work and the server holds the request for up to 30 seconds,
+answering as soon as a run is queued, so a queued run starts straight away. It
+sends a heartbeat every minute while a run goes, which the server holds too and
+ends early when the run is cancelled, and sends its log as it's written. When a
+worker is stopped mid-run,
 such as by a restart after an upgrade, or goes quiet for 10 minutes, the server
 puts its run back at the front of the queue. That happens once per run: the
 second time, the run fails as lost, so a run that brings its worker down can't
@@ -200,8 +203,8 @@ doesn't hold up the others: heals in one, the quick API-only jobs
 clone and push to repositories in a third, where they take turns, what the
 dashboard asks for, such as starting an agent, in a fourth, and the
 [machine jobs](#machines) that keep the worker's own machine current in the
-last. The command lane asks the server every few seconds, so a click is
-picked up straight away.
+last. The command lane is held the same way, so a click is picked up straight
+away.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
@@ -301,7 +304,7 @@ so a burst of requests queues one run. Retrying a narrowed run keeps it
 narrowed. The `run` tool in MCP and Code Mode takes the same `repo`.
 
 `upkeep cancel` drops a queued run from the queue. A running one is marked
-`cancelled`, and its worker stops it at its next heartbeat.
+`cancelled`, and its worker stops it straight away.
 
 `upkeep retry` runs a finished run again: its job for the same release, or a
 heal as the same heal, even when the job is parked. `upkeep dismiss` clears

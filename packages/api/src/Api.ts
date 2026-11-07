@@ -49,6 +49,7 @@ import {
   SkillChangeState,
   SkillsPage,
   SkillsSnapshot,
+  StateChange,
   Status,
   TrackedRepo,
   WorkerAgents,
@@ -561,7 +562,8 @@ export class RunsGroup extends HttpApiGroup.make("runs")
     }),
     /**
      * Cancel a run. A queued run is dropped; a running one is marked
-     * cancelled, and its worker stops at its next heartbeat.
+     * cancelled, which ends its worker's held heartbeat so it stops straight
+     * away. Workers that don't hold heartbeats stop at their next one.
      */
     HttpApiEndpoint.post("cancel", "/:id/cancel", {
       params: { id: Schema.String },
@@ -622,6 +624,14 @@ export class StatusGroup extends HttpApiGroup.make("status")
      * which the CLI, the bar and the dashboard all read.
      */
     HttpApiEndpoint.get("get", "/", { success: Status }),
+    /**
+     * What changes on the server, as server-sent events, for the dashboard to
+     * fetch again what it shows. It holds the connection open until the
+     * server stops.
+     */
+    HttpApiEndpoint.get("changes", "/changes", {
+      success: HttpApiSchema.StreamSse({ data: StateChange }),
+    }),
   )
   .middleware(AdminAuthorization)
   .prefix("/api/status")
@@ -801,23 +811,31 @@ export class WorkGroup extends HttpApiGroup.make("work")
     /**
      * Take the oldest waiting run of one of these jobs, if there is one.
      * `agents` is how the worker is set up to heal, which the dashboard shows.
-     * A worker sending an older `protocol` than the server's, or none, is
-     * refused before any run is taken.
+     * With `wait`, a worker with nothing to take is held for up to that many
+     * seconds until a run is queued for it. A worker sending an older
+     * `protocol` than the server's, or none, is refused before any run is
+     * taken.
      */
     HttpApiEndpoint.post("claim", "/claim", {
       payload: Schema.Struct({
         jobs: Schema.Array(JobId),
         agents: Schema.optionalKey(AgentSetup),
         protocol: Schema.optionalKey(Schema.Int),
+        wait: Schema.optionalKey(Schema.Int),
       }),
       success: Schema.Struct({ run: Schema.NullOr(Run) }),
       error: WorkerOutdated,
     }),
     /** Upkeep's one status, for a worker to tell you when something new needs you. */
     HttpApiEndpoint.get("status", "/status", { success: Status }),
-    /** Tell the server the run is still going. */
+    /**
+     * Tell the server the run is still going. With `wait`, it's held for up
+     * to that many seconds, ending early as `RunNotClaimed` when the run is
+     * cancelled, so the worker hears of a cancel as it happens.
+     */
     HttpApiEndpoint.post("heartbeat", "/runs/:id/heartbeat", {
       params: { id: Schema.String },
+      query: { wait: Schema.optional(Schema.FiniteFromString) },
       success: HttpApiSchema.NoContent,
       error: [RunNotFound, RunNotClaimed],
     }),

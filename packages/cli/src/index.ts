@@ -431,7 +431,7 @@ const cancel = Command.make(
       yield* Console.log(
         cancelled.dropped
           ? `Dropped ${cancelled.run.job} from the queue`
-          : `Cancelled ${cancelled.run.job}; ${cancelled.run.worker ?? "its worker"} stops at its next heartbeat`,
+          : `Cancelled ${cancelled.run.job}; ${cancelled.run.worker ?? "its worker"} stops it shortly`,
       );
     },
     (effect, input) => Effect.provide(effect, adminClient(input.server)),

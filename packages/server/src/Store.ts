@@ -15,7 +15,10 @@ import {
   Layer,
   Option,
   Path,
+  PubSub,
   Schema,
+  type Scope,
+  Stream,
   String,
 } from "effect";
 import { SecureRandom } from "effect/crypto";
@@ -1186,8 +1189,9 @@ export class Store extends Context.Service<
       context: Api.AttentionContext,
     ): Effect.Effect<void, StoreError>;
     /**
-     * Drop a queued run, or mark a running one cancelled so its worker stops
-     * at its next heartbeat. `by` is who cancelled it, for the run's error.
+     * Drop a queued run, or mark a running one cancelled, which ends its
+     * worker's held heartbeat so it stops. `by` is who cancelled it, for the
+     * run's error.
      */
     cancel(
       id: string,
@@ -1346,6 +1350,17 @@ export class Store extends Context.Service<
       scope: Api.TokenScope,
       name: string,
     ): Effect.Effect<boolean, StoreError>;
+    /** Every change from now on, as it's written. */
+    readonly changes: Stream.Stream<Domain.StateChange>;
+    /**
+     * Start hearing of changes, for as long as the scope is open. Taking the
+     * subscription before reading means nothing written in between is missed.
+     */
+    readonly subscribe: Effect.Effect<
+      PubSub.Subscription<Domain.StateChange>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("@upkeep/server/Store") {
   static readonly make = Effect.gen(function* () {
@@ -3607,88 +3622,160 @@ export class Store extends Context.Service<
 
     yield* backfill.pipe(Effect.catchCause(Effect.logError));
 
+    // A change goes out once its write has succeeded, so whoever hears of it
+    // reads what was written. A reader that falls behind loses the oldest.
+    const changes = yield* PubSub.sliding<Domain.StateChange>(1024);
+
+    const announce =
+      <Args extends ReadonlyArray<unknown>, A, E>(
+        touched: (write: {
+          readonly args: NoInfer<Args>;
+          readonly result: NoInfer<A>;
+        }) => ReadonlyArray<Domain.StateChange>,
+        write: (...args: Args) => Effect.Effect<A, E>,
+      ) =>
+      (...args: Args) =>
+        write(...args).pipe(
+          Effect.tap((result) =>
+            PubSub.publishAll(changes, touched({ args, result })),
+          ),
+        );
+
+    const touches =
+      (...topics: ReadonlyArray<Domain.Topic>) =>
+      (): ReadonlyArray<Domain.StateChange> =>
+        topics.map((topic) => ({ topic }));
+
+    // A change to one run, which a worker waiting on its cancel listens for
+    const touchesRun =
+      (...topics: ReadonlyArray<Domain.Topic>) =>
+      ({
+        args: [run],
+      }: {
+        readonly args: readonly [string, ...Array<unknown>];
+      }): ReadonlyArray<Domain.StateChange> =>
+        topics.map((topic) => ({ topic, run }));
+
+    // What runs every minute or so only counts when it moved something
+    const touchesIf =
+      <A>(moved: (result: A) => boolean, topic: Domain.Topic) =>
+      ({ result }: { readonly result: A }): ReadonlyArray<Domain.StateChange> =>
+        moved(result) ? [{ topic }] : [];
+
     return Store.of({
-      queueRun,
+      queueRun: announce(touches("runs"), queueRun),
       runs,
       run,
       latestRuns,
       machineRuns,
-      claim,
+      claim: announce(
+        touchesIf(
+          (taken: Option.Option<Domain.Run>) => Option.isSome(taken),
+          "runs",
+        ),
+        claim,
+      ),
       heartbeat,
-      appendLog,
-      finish,
-      updateHeal,
-      shareSession,
+      appendLog: announce(touchesRun("log"), appendLog),
+      finish: announce(touchesRun("runs", "log", "inbox"), finish),
+      updateHeal: announce(touchesRun("runs"), updateHeal),
+      shareSession: announce(touchesRun("runs"), shareSession),
       session,
-      report,
+      report: announce(touchesRun("runs", "inbox"), report),
       activity,
       healsSince,
       heals,
-      park,
-      unpark,
+      park: announce(touches("runs"), park),
+      unpark: announce(touches("runs"), unpark),
       parked,
-      wait,
-      stopWaiting,
+      wait: announce(touches("runs"), wait),
+      stopWaiting: announce(touches("runs"), stopWaiting),
       waiting,
-      pause,
-      resume,
+      pause: announce(touches("runs"), pause),
+      resume: announce(touches("runs"), resume),
+      paused,
       hold,
       takeHeld,
-      setAgents,
+      setAgents: announce(touches("workers"), setAgents),
       agents,
-      putSkillChange,
+      putSkillChange: announce(touches("skills"), putSkillChange),
       skillChange,
       skillChanges,
-      setSkillChangeState,
-      putSkills,
+      setSkillChangeState: announce(touches("skills"), setSkillChangeState),
+      putSkills: announce(touches("skills"), putSkills),
       skillsPage,
-      recordAttention,
+      recordAttention: announce(touches("attention"), recordAttention),
       attention,
-      looked,
-      hideAttention,
-      markAttentionRead,
-      createGroup,
-      updateGroup,
-      deleteGroup,
-      linkAttention,
-      addWait,
-      removeWait,
-      commentAttention,
-      addRule,
-      removeRule,
-      recordContext,
-      paused,
-      cancel,
+      looked: announce(touches("attention"), looked),
+      hideAttention: announce(touches("attention"), hideAttention),
+      markAttentionRead: announce(touches("attention"), markAttentionRead),
+      createGroup: announce(touches("attention"), createGroup),
+      updateGroup: announce(touches("attention"), updateGroup),
+      deleteGroup: announce(touches("attention"), deleteGroup),
+      linkAttention: announce(touches("attention"), linkAttention),
+      addWait: announce(touches("attention"), addWait),
+      removeWait: announce(touches("attention"), removeWait),
+      commentAttention: announce(touches("attention"), commentAttention),
+      addRule: announce(touches("attention"), addRule),
+      removeRule: announce(touches("attention"), removeRule),
+      recordContext: announce(touches("attention"), recordContext),
+      cancel: announce(touchesRun("runs"), cancel),
       log,
       logTail,
       claimed,
-      prune,
-      requeue,
-      failLost,
-      recordReleases,
+      prune: announce(
+        touchesIf((pruned: number) => pruned > 0, "runs"),
+        prune,
+      ),
+      requeue: announce(touchesRun("runs"), requeue),
+      failLost: announce(
+        touchesIf(
+          ({
+            requeued,
+            failed,
+          }: {
+            readonly requeued: ReadonlyArray<unknown>;
+            readonly failed: ReadonlyArray<unknown>;
+          }) => requeued.length + failed.length > 0,
+          "runs",
+        ),
+        failLost,
+      ),
+      recordReleases: announce(
+        touchesIf(
+          (changed: ReadonlyArray<Domain.Release>) => changed.length > 0,
+          "inbox",
+        ),
+        recordReleases,
+      ),
       inbox,
-      markRead,
-      dismiss,
-      dismissRun,
+      markRead: announce(touches("inbox"), markRead),
+      dismiss: announce(touches("inbox"), dismiss),
+      dismissRun: announce(touchesRun("runs", "inbox"), dismissRun),
       known,
-      seen,
-      needs,
-      settle,
-      pruneInbox,
+      seen: announce(touches("inbox"), seen),
+      needs: announce(touches("inbox"), needs),
+      settle: announce(touches("inbox"), settle),
+      pruneInbox: announce(
+        touchesIf((pruned: number) => pruned > 0, "inbox"),
+        pruneInbox,
+      ),
       recordEvent,
       forgetEvent,
       events,
       pruneEvents,
       repos,
-      track,
-      untrack,
-      setTitles,
-      setNames,
-      rename,
+      track: announce(touches("inbox"), track),
+      untrack: announce(touches("inbox"), untrack),
+      setTitles: announce(touches("inbox"), setTitles),
+      setNames: announce(touches("inbox"), setNames),
+      rename: announce(touches("inbox"), rename),
       addToken,
       tokenName,
       tokens,
       removeToken,
+      changes: Stream.fromPubSub(changes),
+      subscribe: PubSub.subscribe(changes),
     });
   });
 

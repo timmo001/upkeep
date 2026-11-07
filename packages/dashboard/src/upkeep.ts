@@ -5,7 +5,16 @@
  */
 import { BrowserKeyValueStore } from "@effect/platform-browser";
 import { Api, type Domain } from "@upkeep/api";
-import { Data, Effect, Layer, Option, Schedule, Schema, Stream } from "effect";
+import {
+  Data,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -54,6 +63,14 @@ export class UpkeepApi extends AtomHttpApi.Service<UpkeepApi>()(
 
 const runsKey = ["runs"];
 
+const inboxKey = ["inbox"];
+
+const attentionKey = ["attention"];
+
+const skillsKey = ["skills"];
+
+const workersKey = ["workers"];
+
 /** Requests that couldn't be made or understood are defects, as in queries. */
 const asDefects = <A, E, R>(
   effect: Effect.Effect<
@@ -74,7 +91,9 @@ export const jobs = UpkeepApi.query("jobs", "list", {
 });
 
 /** Each worker's agents, as it last told the server. */
-export const agents = UpkeepApi.query("jobs", "agents", {});
+export const agents = UpkeepApi.query("jobs", "agents", {
+  reactivityKeys: workersKey,
+});
 
 /** The server's version, shown in the header. */
 export const serverVersion = UpkeepApi.query("system", "version", {});
@@ -86,8 +105,6 @@ export const runs = Atom.family((job: string) =>
     reactivityKeys: runsKey,
   }),
 );
-
-const inboxKey = ["inbox"];
 
 /** The tracked repositories, with their titles and jobs. */
 export const repos = UpkeepApi.query("repos", "list", {
@@ -129,8 +146,6 @@ export const renameRepo = UpkeepApi.runtime.fn(
     ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(inboxKey)));
   },
 );
-
-const attentionKey = ["attention"];
 
 /** The Attention page: every item by section, and what moved lately. */
 export const attention = UpkeepApi.query("attention", "get", {
@@ -296,17 +311,110 @@ export const run = Atom.family((id: string) =>
 const ended = (state: Domain.RunState) =>
   state !== "queued" && state !== "running";
 
+/** What a change from the server touched, as the keys of the atoms showing it. */
+const touched = (change: Domain.StateChange) => {
+  switch (change.topic) {
+    case "runs":
+      return runsKey;
+    case "log":
+      return { log: [change.run ?? ""] };
+    case "inbox":
+      return inboxKey;
+    case "attention":
+      return attentionKey;
+    case "skills":
+      return skillsKey;
+    case "workers":
+      return workersKey;
+  }
+};
+
+const everything = [
+  ...runsKey,
+  ...inboxKey,
+  ...attentionKey,
+  ...skillsKey,
+  ...workersKey,
+];
+
+/**
+ * Whether the server's changes are reaching the page. While connected, each
+ * change fetches again what it touched, and the pages' own polling slows to
+ * a fallback. A dropped connection is tried again every few seconds, and
+ * everything is fetched again once it's back, for what changed meanwhile.
+ */
+export const live = UpkeepApi.runtime.atom(
+  Stream.suspend(() => {
+    let dropped = false;
+
+    // Connected once the server answers, before its first change
+    const connect = Stream.unwrap(
+      UpkeepApi.use((client) =>
+        client.status.changes().pipe(
+          Effect.tap(() =>
+            dropped ? Reactivity.invalidate(everything) : Effect.void,
+          ),
+          Effect.map((changes) =>
+            Stream.make(true).pipe(
+              Stream.concat(
+                changes.pipe(
+                  Stream.tap((change) =>
+                    Reactivity.invalidate(touched(change)),
+                  ),
+                  Stream.as(true),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).pipe(Stream.catchCause(() => Stream.make()));
+
+    return connect.pipe(
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.sync(() => {
+            dropped = true;
+
+            return false;
+          }),
+        ),
+      ),
+      Stream.concat(
+        Stream.fromEffect(Effect.sleep("5 seconds")).pipe(Stream.drain),
+      ),
+      Stream.repeat(Schedule.forever),
+    );
+  }),
+);
+
+/** Wait for the server to say a run's log grew, or `fallback` at most. */
+const logGrew = (id: string, fallback: Duration.Input) =>
+  Effect.gen(function* () {
+    const reactivity = yield* Reactivity.Reactivity;
+
+    yield* Effect.callback<void>((resume) => {
+      const cancel = reactivity.registerUnsafe({ log: [id] }, () =>
+        resume(Effect.void),
+      );
+
+      return Effect.sync(cancel);
+    }).pipe(Effect.timeoutOption(fallback));
+  });
+
 /**
  * A run's log as it grows: every line so far, fetched a page at a time and
- * then every two seconds until the run ends. The run is read before each
- * page, so once it has ended that page holds the last of its lines.
+ * then again whenever the server says it grew, until the run ends. Without
+ * the server's changes it falls back to every few seconds. The run is read
+ * before each page, so once it has ended that page holds the last of its
+ * lines.
  */
 export const runLog = Atom.family((id: string) =>
   UpkeepApi.runtime.atom(
     Stream.paginate({ after: 0, wait: false }, ({ after, wait }) =>
       UpkeepApi.use((client) =>
         Effect.gen(function* () {
-          if (wait) yield* Effect.sleep("2 seconds");
+          if (wait) yield* logGrew(id, "5 seconds");
 
           const current = yield* client.runs.get({ params: { id } });
 
@@ -399,8 +507,6 @@ export const dismissRun = UpkeepApi.runtime.fn((id: string) =>
     Effect.ensuring(Reactivity.invalidate([...runsKey, ...inboxKey])),
   ),
 );
-
-const skillsKey = ["skills"];
 
 /** The Skills page: each repository's skills, the held changes and workers. */
 export const skillsPage = UpkeepApi.query("skills", "get", {

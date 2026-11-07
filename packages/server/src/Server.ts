@@ -16,6 +16,7 @@ import {
   Effect,
   Layer,
   Option,
+  PubSub,
   Redacted,
   Schedule,
 } from "effect";
@@ -34,6 +35,42 @@ import { version } from "./Version";
 
 /** How long a running run can go without a heartbeat before it's lost. */
 export const lostAfter = Duration.minutes(10);
+
+/** The longest a worker is held waiting for work or a cancel. */
+const longestWait = 120;
+
+/**
+ * Wait up to `seconds` for a change that `matches`, then run `next`, as many
+ * times as it says to go on. Only the waiting is timed, so `next`, which may
+ * take a run, is never cut off with its result lost.
+ */
+const held = Effect.fnUntraced(function* <A, E>(
+  changes: PubSub.Subscription<Domain.StateChange>,
+  seconds: number,
+  matches: (change: Domain.StateChange) => boolean,
+  next: Effect.Effect<Option.Option<A>, E>,
+) {
+  const deadline =
+    (yield* Clock.currentTimeMillis) +
+    Math.min(Math.max(seconds, 0), longestWait) * 1000;
+
+  for (;;) {
+    const left = deadline - (yield* Clock.currentTimeMillis);
+
+    if (left <= 0) return Option.none<A>();
+
+    const change = yield* PubSub.take(changes).pipe(
+      Effect.repeat({ until: matches }),
+      Effect.timeoutOption(Duration.millis(left)),
+    );
+
+    if (Option.isNone(change)) return Option.none<A>();
+
+    const done = yield* Effect.uninterruptible(next);
+
+    if (Option.isSome(done)) return done;
+  }
+});
 
 const defaultRuns = 50;
 
@@ -806,6 +843,7 @@ const StatusHandlers = HttpApiBuilder.group(
     return handlers.handleAll({
       get: () =>
         status().pipe(Effect.provideService(Store, store), Effect.orDie),
+      changes: () => Effect.succeed(store.changes),
     });
   }),
 );
@@ -865,9 +903,28 @@ const WorkHandlers = HttpApiBuilder.group(
             .pipe(Effect.orDie);
         }
 
-        const run = yield* store
-          .claim(payload.jobs, worker.name)
-          .pipe(Effect.orDie);
+        const take = Effect.uninterruptible(
+          store.claim(payload.jobs, worker.name).pipe(Effect.orDie),
+        );
+
+        // Hearing of changes starts before the first look, so a run queued
+        // between that look and the wait still wakes it
+        const run = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const changes = yield* store.subscribe;
+            const first = yield* take;
+
+            if (Option.isSome(first) || payload.wait === undefined)
+              return first;
+
+            return yield* held(
+              changes,
+              payload.wait,
+              ({ topic }) => topic === "runs",
+              take,
+            );
+          }),
+        );
 
         if (Option.isSome(run)) {
           yield* Effect.logInfo(`${worker.name} took ${run.value.job}`).pipe(
@@ -879,12 +936,29 @@ const WorkHandlers = HttpApiBuilder.group(
       }),
       status: () =>
         status().pipe(Effect.provideService(Store, store), Effect.orDie),
-      heartbeat: Effect.fn(function* ({ params }) {
+      heartbeat: Effect.fn(function* ({ params, query }) {
         const worker = yield* Api.CurrentWorker;
 
-        yield* store
-          .heartbeat(params.id, worker.name)
-          .pipe(Effect.catchTag("StoreError", Effect.die));
+        // Held until the run stops being this worker's, failing then as
+        // `RunNotClaimed`, or until the wait is up
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const changes = yield* store.subscribe;
+
+            yield* store.heartbeat(params.id, worker.name);
+
+            if (query.wait === undefined) return;
+
+            yield* held(
+              changes,
+              query.wait,
+              (change) => change.topic === "runs" && change.run === params.id,
+              store
+                .claimed(params.id, worker.name)
+                .pipe(Effect.as(Option.none())),
+            );
+          }),
+        ).pipe(Effect.catchTag("StoreError", Effect.die));
       }),
       log: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
