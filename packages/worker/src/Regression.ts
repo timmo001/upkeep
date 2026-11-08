@@ -3,11 +3,19 @@
  * lands, and what a repository runs for one. The rules read the version
  * change and the release notes: a major, a minor below 1.0 or a breaking
  * change in the notes needs a check, a patch, digest, pin or lockfile-only
- * update doesn't, and anything else is unclear. Only repositories that opt in
- * are checked; one with no commands to run has the update held for an agent.
+ * update doesn't, and anything else is unclear. The decision model settles an
+ * unclear one from its notes when there is one; without it, or when it fails,
+ * an unclear update is checked. Only repositories that opt in are checked;
+ * one with no commands to run has the update held for an agent.
  */
+import { Effect, Option, Schema } from "effect";
+import { Decision, DecisionModel } from "effect/ai";
 import semver from "semver";
+import * as Decisions from "./Decisions";
 import type { UpdateType } from "./deps/Policy";
+import { reason } from "./Failure";
+import * as RunLog from "./RunLog";
+import type * as Settings from "./settings";
 
 /** The mise task a repository opts in with. */
 export const task = "regression";
@@ -137,6 +145,162 @@ export const decide = (change: Change): Decided => {
     why: `it's ${type === "minor" ? "a minor update" : "an update"} with nothing breaking in its notes`,
   };
 };
+
+/** How likely an unclear update must be to change the app to be checked, by default. */
+export const defaultThreshold = 0.3;
+
+/**
+ * Release notes as the decision model reads them: their first lines with
+ * text, each cut short, as the heal cuts a run's log. The top of the notes is
+ * kept, where releases put what matters most.
+ */
+export const trimNotes = (notes: string) =>
+  notes
+    .split("\n")
+    .map((text) => text.trimEnd())
+    .filter((text) => text.trim() !== "")
+    .slice(0, Decisions.maxLines)
+    .map((text) => text.slice(0, Decisions.maxMessage))
+    .join("\n");
+
+/** What the model's probability comes to: a check at or above the threshold. */
+export const verdictOf = (
+  probability: number,
+  threshold: number,
+): Exclude<Verdict, "unclear"> => (probability >= threshold ? "check" : "skip");
+
+/** An update as the decision model reads it, its notes already trimmed. */
+const Update = Schema.Struct({
+  package: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+  updateType: Schema.String,
+  notes: Schema.String,
+});
+
+export type Update = typeof Update.Type;
+
+const statement =
+  "could change how an app that uses it looks or behaves, so it should be checked before it lands";
+
+const outcomes = {
+  false:
+    "A maintenance release: dependency updates, internal refactors, docs, tests or CI, or fixes that keep what people see and do the same",
+  true: "New or changed features, screens, styles, defaults, behaviour or APIs that could change what an app using it looks like or does",
+};
+
+const Risk = Decision.make({
+  input: Schema.Struct({ update: Update }),
+  decisions: {
+    changes: Decision.probability({
+      instructions: `\`update\` ${statement}`,
+      criteria: outcomes,
+    }),
+  },
+});
+
+const Answer = Schema.Struct({
+  probability: Schema.Number.check(
+    Schema.isBetween({ minimum: 0, maximum: 1 }),
+  ),
+});
+
+/**
+ * Whether the decision model may make another regression decision today.
+ * Regression decisions get a daily cap of their own, separate from the
+ * heal's, but where it's counted isn't settled yet, so for now it always may.
+ */
+export const mayDecide = (_model: Settings.DecisionModel) =>
+  Effect.succeed(true);
+
+/** How likely the decision model thinks an update is to change the app. */
+const likelihood = Effect.fnUntraced(function* (
+  update: Update,
+  model: Settings.DecisionModel,
+  opencode: string,
+) {
+  if (model.provider !== "opencode")
+    return yield* DecisionModel.DecisionModel.pipe(
+      Effect.flatMap((decisions) =>
+        decisions.decide(Risk, { input: { update } }),
+      ),
+      Effect.map(({ answers }) => answers.changes.probability),
+      Effect.provide(Decisions.layer(model)),
+    );
+
+  const { probability } = yield* Decisions.decideByAgent({
+    answer: Answer,
+    prompt: [
+      `Say how likely this update ${statement}. Don't use any tools: reply with only one line of JSON, \`{"probability": ...}\`, a number from 0 to 1, and nothing else.`,
+      "",
+      `Unlikely: ${outcomes.false}.`,
+      `Likely: ${outcomes.true}.`,
+      "",
+      "The update:",
+      "",
+      JSON.stringify(update, null, 2),
+    ].join("\n"),
+    title: "Upkeep regression decision",
+    model,
+    opencode,
+  });
+
+  return probability;
+});
+
+/**
+ * Ask the decision model whether an update the rules can't settle needs a
+ * check, logging its answer once with the model's name so its use can be
+ * counted. None when there's no model, it may not decide today or it fails,
+ * so the rules' verdict stands.
+ */
+export const ask = Effect.fnUntraced(function* (
+  update: Update,
+  settings: Settings.Settings,
+) {
+  const model = settings.heal?.decisions;
+
+  if (model === undefined) return Option.none<Decided>();
+
+  const about = `${update.package} ${update.from} to ${update.to}`;
+
+  if (!(yield* mayDecide(model))) {
+    yield* RunLog.info(
+      `Not asking the decision model about ${about}: it's made its regression decisions for today`,
+    );
+
+    return Option.none<Decided>();
+  }
+
+  const answer = yield* likelihood(
+    update,
+    model,
+    settings.heal?.opencode ?? "opencode2",
+  ).pipe(
+    Effect.map(Option.some),
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `The decision model couldn't decide whether ${about} needs a regression check: ${reason(cause)}`,
+      ).pipe(Effect.as(Option.none<number>())),
+    ),
+  );
+
+  if (Option.isNone(answer)) return Option.none<Decided>();
+
+  const threshold = settings.regression?.threshold ?? defaultThreshold;
+  const verdict = verdictOf(answer.value, threshold);
+  const percent = Math.round(answer.value * 100);
+  const limit = Math.round(threshold * 100);
+
+  yield* RunLog.info(
+    `Decided ${about} ${verdict === "check" ? "needs" : "doesn't need"} a regression check: ${percent}% likely to change how an app looks or behaves, against a ${limit}% threshold (${Decisions.by(model)})`,
+  );
+
+  return Option.some<Decided>({
+    verdict,
+    why: `the decision model gives it a ${percent}% chance of changing how the app looks or behaves, ${verdict === "check" ? "at or over" : "under"} the ${limit}% threshold`,
+  });
+});
 
 /**
  * What a held update's log line says after its repository, which the fix

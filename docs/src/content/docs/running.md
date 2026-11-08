@@ -662,10 +662,19 @@ checks pass and before the push:
   heading, `BREAKING CHANGE:`, a Conventional Commits `!`, a migration, or
   something removed or deprecated) need a check.
 - A patch, or a release with no notes, doesn't.
-- Anything else the rules can't settle, so it's checked.
+- Anything else the rules can't settle goes to the decision model in
+  `heal.decisions` (see [Heals](#heals)). It reads the release, the versions
+  it moves from and to, the type of update and the first 40 lines of the
+  notes, and says how likely the update is to change how an app looks or
+  behaves. At or over `regression.threshold`, 0.3 by default, it's checked;
+  under it, it isn't. Without a model, or when it can't answer, it's checked.
+  Each answer is logged with how likely it was and `by` the model, as
+  `provider/model`.
 
-The notes are read once per run. A check runs the commands, and one that
-fails fails that consumer as a failed check does. A repository opted in with
+The notes are read once per run, and the model is asked once per run for each
+version change, so consumers moving between the same versions share its
+answer. A check runs the commands, and one that fails fails that consumer as
+a failed check does. A repository opted in with
 nothing to run, `"regression": {}` and no task, has the update held instead:
 nothing is pushed, the run logs what needs checking with links to the release
 notes and changes, and it ends handed off. The heal then hands each held
@@ -681,7 +690,8 @@ logs that it would hold the update.
       "owner/app": { "regression": { "commands": ["npm run e2e"] } },
       "owner/dashboard": { "regression": {} }
     }
-  }
+  },
+  "regression": { "threshold": 0.5 }
 }
 ```
 

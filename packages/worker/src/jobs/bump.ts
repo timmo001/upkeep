@@ -15,6 +15,7 @@ import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
   ByteSize,
+  Cache,
   Clock,
   Config,
   Data,
@@ -972,6 +973,14 @@ interface BumpContext {
   readonly release: Domain.Release;
   /** The release's notes, read once for the run by the first consumer that needs them. */
   readonly notes: ReturnType<typeof readNotes>;
+  /**
+   * The decision model's verdict on a version change the rules can't settle,
+   * asked once per run for each change, as the notes are the same for every
+   * consumer.
+   */
+  readonly decide: (
+    change: Moved | undefined,
+  ) => Effect.Effect<Option.Option<Regression.Decided>>;
   /** Where clones live, which mise is told to trust. */
   readonly root: string;
   readonly settings: Settings.Settings;
@@ -1028,7 +1037,8 @@ const severity: Record<Regression.Verdict, number> = {
  * A consumer's regression check, when it opts in and the release needs one:
  * its commands run, failing the consumer when one does, or with none the
  * update is held for an agent. The notes decide for the whole release and the
- * versions for each consumer; with no decision model, an unclear update is
+ * versions for each consumer. The decision model settles an unclear update
+ * from its notes; without one, or when it can't, an unclear update is
  * checked. Returns whether the update is held.
  */
 const regressionCheck = Effect.fnUntraced(function* (
@@ -1051,12 +1061,31 @@ const regressionCheck = Effect.fnUntraced(function* (
 
   const notes = yield* context.notes;
 
-  const [decided] = (moved.length === 0 ? [undefined] : moved)
-    .map((change) => ({
-      change,
-      ...Regression.decide({ from: change?.from, to: change?.to, notes }),
-    }))
-    .toSorted((a, b) => severity[b.verdict] - severity[a.verdict]);
+  const verdicts = yield* Effect.forEach(
+    moved.length === 0 ? [undefined] : moved,
+    (change) => {
+      const ruled = {
+        change,
+        ...Regression.decide({ from: change?.from, to: change?.to, notes }),
+      };
+
+      // With no notes to read there's nothing for the model to go on
+      return ruled.verdict !== "unclear" || notes === undefined
+        ? Effect.succeed(ruled)
+        : context.decide(change).pipe(
+            Effect.map(
+              Option.match({
+                onNone: () => ruled,
+                onSome: (decided) => ({ change, ...decided }),
+              }),
+            ),
+          );
+    },
+  );
+
+  const [decided] = verdicts.toSorted(
+    (a, b) => severity[b.verdict] - severity[a.verdict],
+  );
 
   const { release } = context;
   const against = `${release.repo} ${release.tag}`;
@@ -1287,10 +1316,39 @@ export const bump = Effect.fnUntraced(function* (
   }
 
   const slots = yield* Semaphore.make(4);
+  const notes = yield* Effect.cached(readNotes(release));
+
+  // Keyed by the version change, so consumers on the same version share an
+  // answer, and the notes are the same for them all
+  const decisions = yield* Cache.make({
+    capacity: 64,
+    lookup: Effect.fnUntraced(function* (key: string) {
+      const [from = "", to = ""] = key.split("\u0000");
+      const read = yield* notes;
+
+      if (read === undefined) return Option.none<Regression.Decided>();
+
+      return yield* Regression.ask(
+        {
+          package: release.repo,
+          from,
+          to,
+          updateType: Regression.updateTypeOf(from, to) ?? "unknown",
+          notes: Regression.trimNotes(read),
+        },
+        settings,
+      );
+    }),
+  });
 
   const context: BumpContext = {
     release,
-    notes: yield* Effect.cached(readNotes(release)),
+    notes,
+    decide: (change) =>
+      Cache.get(
+        decisions,
+        `${change?.from ?? "unknown"}\u0000${change?.to ?? release.tag}`,
+      ),
     root,
     settings,
     dryRun,

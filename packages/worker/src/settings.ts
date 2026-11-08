@@ -32,10 +32,11 @@ const BumpRepo = Schema.Struct({
 });
 
 /**
- * Where heal decisions are made: any TypeSafe System One API at `url`, with
- * `$UPKEEP_DECISION_API_KEY` when it needs one, Clef on Cloudflare Workers AI
- * with `$CLOUDFLARE_ACCOUNT_ID` and `$CLOUDFLARE_API_TOKEN`, or an LLM through
- * OpenCode, `provider/model#variant`, which needs no decision model at all.
+ * Where heal and regression check decisions are made: any TypeSafe System
+ * One API at `url`, with `$UPKEEP_DECISION_API_KEY` when it needs one, Clef on
+ * Cloudflare Workers AI with `$CLOUDFLARE_ACCOUNT_ID` and
+ * `$CLOUDFLARE_API_TOKEN`, or an LLM through OpenCode, `provider/model#variant`,
+ * which needs no decision model at all.
  */
 const DecisionModel = Schema.Union([
   Schema.Struct({
@@ -197,6 +198,20 @@ export const Settings = Schema.Struct({
     Schema.Struct({
       /** By repository, as `owner/name`. */
       repos: Schema.optionalKey(Schema.Record(Schema.String, BumpRepo)),
+    }),
+  ),
+  regression: Schema.optionalKey(
+    Schema.Struct({
+      /**
+       * How likely, from 0 to 1, the decision model must think an update the
+       * rules can't settle is to change how an app looks or behaves before
+       * it's checked. At or above it the update is checked, below it isn't.
+       * 0.3 by default, leaning towards a check, as a missed regression costs
+       * more than a check. Without a model, or when it fails, it's checked.
+       */
+      threshold: Schema.optionalKey(
+        Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+      ),
     }),
   ),
   heal: Schema.optionalKey(

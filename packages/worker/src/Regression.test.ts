@@ -1,6 +1,14 @@
-/** How the rules decide whether an update needs a regression check. */
+/** How the rules decide on regression checks, and what the model reads. */
 import { expect, test } from "bun:test";
-import { breaking, commands, decide, line, updateTypeOf } from "./Regression";
+import {
+  breaking,
+  commands,
+  decide,
+  line,
+  trimNotes,
+  updateTypeOf,
+  verdictOf,
+} from "./Regression";
 
 test("a major, or a minor below 1.0, needs a check", () => {
   expect(decide({ from: "1.4.0", to: "2.0.0", notes: "Fixes" })).toEqual({
@@ -113,4 +121,28 @@ test("a held update's line names the release, why and its links", () => {
   ).toBe(
     "needs a regression check against timmo001/groundwork 0.13.0, as it's a minor update below 1.0, so it's held. Release notes: https://github.com/timmo001/groundwork/releases/tag/0.13.0, compare: https://github.com/timmo001/groundwork/compare/0.12.0...0.13.0.",
   );
+});
+
+test("the model reads the notes' first lines with text, each cut short", () => {
+  expect(
+    trimNotes("## What's changed\n\n  - Fix the menu  \n\n- Add dark mode"),
+  ).toBe("## What's changed\n  - Fix the menu\n- Add dark mode");
+
+  const long = Array.from(
+    { length: 60 },
+    (_, index) => `${index} ${"x".repeat(400)}`,
+  ).join("\n");
+
+  const trimmed = trimNotes(long).split("\n");
+
+  expect(trimmed).toHaveLength(40);
+  expect(trimmed[0]).toHaveLength(300);
+  expect(trimmed[0]?.startsWith("0 ")).toBe(true);
+});
+
+test("a probability at or over the threshold needs a check", () => {
+  expect(verdictOf(0.3, 0.3)).toBe("check");
+  expect(verdictOf(0.9, 0.3)).toBe("check");
+  expect(verdictOf(0.29, 0.3)).toBe("skip");
+  expect(verdictOf(0, 0)).toBe("check");
 });
