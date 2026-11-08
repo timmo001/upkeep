@@ -782,13 +782,24 @@ Renovate's pull request for it. It's due when no lock file maintenance commit,
 Renovate's or Upkeep's, has landed within its `schedule`'s period: a day, a
 week (Renovate's default, before 4am on Mondays) or a month.
 
-Replacements are planned as Renovate plans them, from `replacementName` and
+Replacements are planned as Renovate plans them, from `replacementName`,
+`replacementNameTemplate` (with Renovate's `replace` helper) and
 `replacementVersion` in package rules, including the `replacements:*` presets
 `config:recommended` brings in. Each goes on its own
 `renovate/<name>-replacement` branch beside the dependency's version updates,
-and applying it renames the `package.json` entry or workflow action and moves
-its version, keeping the range operator. A pinned action, an npm alias, and
-any other manager's renames are left to Renovate.
+and applying it renames the `package.json` entry, workflow action or image and
+moves its version, keeping the range operator. A pinned action or image, an
+npm alias, and any other manager's renames are left to Renovate.
+
+A `package.json`'s `overrides` are read however deeply they nest, as
+Renovate reads them, and an update edits only its own entry. A `"."` override
+is noted and left out.
+
+The notes a repository's run logs only name config that could change what's
+updated there: a package rule Upkeep can't match, or one with settings it
+doesn't model, is noted only when its other matchers find one of the
+repository's dependencies. Config for a Renovate manager Upkeep doesn't read
+is left out without a note.
 
 Vulnerability alerts are planned as Renovate plans them on GitHub, unless the
 config turns `vulnerabilityAlerts` off. The `deps` job reads the repository's
