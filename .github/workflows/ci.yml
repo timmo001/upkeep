@@ -19,20 +19,20 @@ permissions:
 
 jobs:
   build:
-    uses: timmo001/workflows/.github/workflows/build-bun-cli.yml@056c2aa0b36cbd28bfa721b936589a369b1331bd # 20261108.1
+    uses: timmo001/workflows/.github/workflows/build-bun-cli.yml@f39552735dd1e0766144bfd674cd5d11af1676c9 # 20261108.2
     with:
       smoke-test: |-
         ./dist/upkeep --help
         ./dist/upkeep --version
 
   actionlint:
-    uses: timmo001/workflows/.github/workflows/lint-actionlint.yml@056c2aa0b36cbd28bfa721b936589a369b1331bd # 20261108.1
+    uses: timmo001/workflows/.github/workflows/lint-actionlint.yml@f39552735dd1e0766144bfd674cd5d11af1676c9 # 20261108.2
 
   markdownlint:
-    uses: timmo001/workflows/.github/workflows/lint-markdownlint.yml@056c2aa0b36cbd28bfa721b936589a369b1331bd # 20261108.1
+    uses: timmo001/workflows/.github/workflows/lint-markdownlint.yml@f39552735dd1e0766144bfd674cd5d11af1676c9 # 20261108.2
 
   yamllint:
-    uses: timmo001/workflows/.github/workflows/lint-yamllint.yml@056c2aa0b36cbd28bfa721b936589a369b1331bd # 20261108.1
+    uses: timmo001/workflows/.github/workflows/lint-yamllint.yml@f39552735dd1e0766144bfd674cd5d11af1676c9 # 20261108.2
 
   jsonlint:
-    uses: timmo001/workflows/.github/workflows/lint-jsonlint.yml@056c2aa0b36cbd28bfa721b936589a369b1331bd # 20261108.1
+    uses: timmo001/workflows/.github/workflows/lint-jsonlint.yml@f39552735dd1e0766144bfd674cd5d11af1676c9 # 20261108.2
