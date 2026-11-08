@@ -218,6 +218,13 @@ const Manifest = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   version: Schema.optionalKey(Schema.String),
   private: Schema.optionalKey(Schema.Boolean),
+  dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  peerDependencies: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String),
+  ),
+  optionalDependencies: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String),
+  ),
 });
 
 const decodeManifest = Schema.decodeUnknownEffect(
@@ -236,7 +243,11 @@ const search = (input: Search.CodeInput) =>
     ]),
   );
 
-/** The npm packages the release publishes, from its `package.json` files. */
+/**
+ * The npm packages the release publishes, from its `package.json` files, each
+ * with the release's other packages it depends on. Dev dependencies are left
+ * out, as consumers don't install them.
+ */
 const packages = Effect.fnUntraced(function* (release: Domain.Release) {
   const { tree } = yield* Api.json(
     {
@@ -246,7 +257,11 @@ const packages = Effect.fnUntraced(function* (release: Domain.Release) {
     Tree,
   );
 
-  const found: Array<{ readonly name: string; readonly version: string }> = [];
+  const found: Array<{
+    readonly name: string;
+    readonly version: string;
+    readonly dependencies: ReadonlyArray<string>;
+  }> = [];
 
   const manifests = tree.filter(
     (entry) =>
@@ -268,12 +283,48 @@ const packages = Effect.fnUntraced(function* (release: Domain.Release) {
       manifest.version !== undefined &&
       manifest.version !== "0.0.0"
     ) {
-      found.push({ name: manifest.name, version: manifest.version });
+      found.push({
+        name: manifest.name,
+        version: manifest.version,
+        dependencies: Object.keys({
+          ...manifest.dependencies,
+          ...manifest.peerDependencies,
+          ...manifest.optionalDependencies,
+        }),
+      });
     }
   }
 
-  return found;
+  const names = new Set(found.map(({ name }) => name));
+
+  return found.map((manifest) => ({
+    ...manifest,
+    dependencies: manifest.dependencies.filter(
+      (name) => name !== manifest.name && names.has(name),
+    ),
+  }));
 });
+
+/**
+ * A package and every package of the release it depends on, directly or
+ * through another, which all have to be on npm before it installs.
+ */
+export const needed = (
+  name: string,
+  dependencies: ReadonlyMap<string, ReadonlyArray<string>>,
+) => {
+  const seen = new Set<string>();
+  const pending = [name];
+
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (seen.has(next)) continue;
+
+    seen.add(next);
+    pending.push(...(dependencies.get(next) ?? []));
+  }
+
+  return [...seen];
+};
 
 /**
  * Wait for a version to reach npm, since the release usually starts the
@@ -355,22 +406,34 @@ const discover = Effect.fnUntraced(function* (
     );
   }
 
-  return { consumers, onNpm };
+  return {
+    consumers,
+    onNpm,
+    dependencies: new Map(
+      toPublish.map(({ name, dependencies }) => [name, dependencies] as const),
+    ),
+  };
 });
 
 /**
  * A consumer's edits once the packages they need are on npm: pins at once,
- * dependencies as their package lands, dropping any that never does.
+ * dependencies as their package and the release's packages it depends on
+ * land, dropping any where one never does.
  */
 const ready = <R>(
   edits: ReadonlyArray<Edit>,
   onNpm: ReadonlyMap<string, Effect.Effect<boolean, never, R>>,
+  dependencies: ReadonlyMap<string, ReadonlyArray<string>>,
 ) =>
   Effect.filter(
     edits,
     (edit) =>
       Edit.$is("Dependency")(edit)
-        ? (onNpm.get(edit.name) ?? Effect.succeed(false))
+        ? Effect.forEach(
+            needed(edit.name, dependencies),
+            (name) => onNpm.get(name) ?? Effect.succeed(false),
+            { concurrency: "unbounded" },
+          ).pipe(Effect.map((landed) => landed.every(Boolean)))
         : Effect.succeed(true),
     { concurrency: "unbounded" },
   );
@@ -1009,7 +1072,7 @@ export const bump = Effect.fnUntraced(function* (
   yield* Effect.forEach(
     [...consumers].toSorted(([a], [b]) => a.localeCompare(b)),
     ([repo, edits]) =>
-      ready(edits, found.onNpm).pipe(
+      ready(edits, found.onNpm, found.dependencies).pipe(
         Effect.flatMap((ready) =>
           ready.length === 0
             ? RunLog.info(

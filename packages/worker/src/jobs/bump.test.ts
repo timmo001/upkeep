@@ -1,6 +1,6 @@
 /** How the bump job rewrites pins and dependencies in a consumer's files. */
 import { expect, test } from "bun:test";
-import { Edit, rewrite } from "./bump";
+import { Edit, needed, rewrite } from "./bump";
 
 const old = "a".repeat(40);
 const sha = "b".repeat(40);
@@ -44,4 +44,20 @@ test("a dependency keeps its range and skips workspace and git specs", () => {
   expect(rewrite(edit, `{ "@timmo001/effect-gh-extra": "0.10.0" }`)).toBe(
     `{ "@timmo001/effect-gh-extra": "0.10.0" }`,
   );
+});
+
+test("a package needs the release's packages it depends on, through others too", () => {
+  const dependencies = new Map([
+    ["docs-kit", ["groundwork"]],
+    ["groundwork", ["tokens", "docs-kit"]],
+    ["tokens", []],
+    ["other", []],
+  ]);
+
+  expect(needed("docs-kit", dependencies).toSorted()).toEqual([
+    "docs-kit",
+    "groundwork",
+    "tokens",
+  ]);
+  expect(needed("other", dependencies)).toEqual(["other"]);
 });
