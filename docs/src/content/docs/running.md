@@ -371,7 +371,8 @@ of its repositories rather than one over them all, since each needs its own
 review rather than the same fix. These go straight to an agent without a
 decision, and raise no triage issue, since nothing broke. Each is given only
 the lines of the run's log about its repository, and its own log starts with
-them, so its run page shows what the agent was asked to do.
+them, so its run page shows what the agent was asked to do before it starts,
+and its reason names the releases it's reviewing against.
 
 A worker runs up to `heal.sessions` heals at once (3 by default), so a review
 handed off for several repositories is worked on side by side. Two heals never

@@ -36,7 +36,7 @@ import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { run as exec } from "./bump";
-import { fix } from "./fix";
+import { fix, handedTo } from "./fix";
 
 /** The longest log line or error the model reads. */
 const maxMessage = 300;
@@ -181,23 +181,41 @@ export const fallback = (
  * A handed-off run, such as a drift review, ends that way on purpose to hand
  * its list to an agent, so there's nothing for a decision model to choose: it
  * goes to the last agent, the one for hard fixes, or is left for you without
- * one.
+ * one. Its reason names the releases the agent reviews against, when the
+ * list has them, so the heal says what it's for from the start.
  */
-const reviewing = (agents: ReadonlyArray<Settings.Agent>): Chosen =>
-  Option.match(Option.fromNullishOr(agents.at(-1)), {
+const reviewing = (
+  agents: ReadonlyArray<Settings.Agent>,
+  asked: ReadonlyArray<Domain.LogLine>,
+): Chosen => {
+  const against = [
+    ...new Set(
+      asked.flatMap(
+        ({ message }) => /\bagainst (\S+ \S+?),/.exec(message)?.[1] ?? [],
+      ),
+    ),
+  ];
+
+  const work =
+    against.length === 0
+      ? "A handed-off run always goes to an agent"
+      : `Handed off to review against ${against.join(", ")}`;
+
+  return Option.match(Option.fromNullishOr(agents.at(-1)), {
     onNone: () => ({
       decision: "ask",
-      reason: "This was handed off for an agent, and there's none set up",
+      reason: `${work}, and there's no agent set up`,
       agent: Option.none(),
       decided: false,
     }),
     onSome: (agent) => ({
       decision: "fix",
-      reason: "A handed-off run always goes to an agent",
+      reason: work,
       agent: Option.some(agent),
       decided: false,
     }),
   });
+};
 
 /** How a heal's reason names the model that chose it, to count its use. */
 const by = (model: Settings.DecisionModel) =>
@@ -583,9 +601,19 @@ export const heal = Effect.fnUntraced(function* () {
       : `Healing ${run.job} run ${run.id}: ${run.error ?? ""}`,
   );
 
+  // What a handed-off run asks of this heal's repository leads its log, so
+  // its page shows the work before the agent starts on it
+  const asked = handedTo(record, run, log);
+
+  if (run.state === "handed-off" && asked !== log) {
+    yield* RunLog.info("The agent is asked to:");
+
+    for (const line of asked) yield* RunLog.info(line.message);
+  }
+
   const chosen: Chosen =
     run.state === "handed-off" || run.job === Catalogue.driftReview.id
-      ? reviewing(settings.agents ?? [])
+      ? reviewing(settings.agents ?? [], asked)
       : yield* Option.match(Option.fromNullishOr(settings.decisions), {
           onNone: () => Effect.succeed(fallback(run)),
           onSome: Effect.fnUntraced(function* (model) {
