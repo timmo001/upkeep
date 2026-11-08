@@ -12,11 +12,16 @@ import { Gh, GhCommandError } from "@timmo001/effect-gh";
 import jsonata from "jsonata";
 import { Cache, Context, Effect, Layer, Match, Schema } from "effect";
 import { Yaml } from "effect/encoding";
-import { HttpClient } from "effect/http";
+import {
+  HttpClient,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/http";
 import semver from "semver";
 import { ghReason } from "../Failure";
 import * as Kept from "../Kept";
 import { render } from "./Managers";
+import { compareVersions, dockerVersion } from "./Planner";
 import {
   type CustomDatasource,
   type Dependency,
@@ -80,6 +85,136 @@ const Commit = Schema.Struct({
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
+const RegistryToken = Schema.Struct({
+  token: Schema.optionalKey(Schema.String),
+  access_token: Schema.optionalKey(Schema.String),
+});
+
+const TagList = Schema.Struct({
+  tags: Schema.NullOr(Schema.Array(Schema.String)),
+});
+
+/** An image manifest or an index of them, as far as a date needs it. */
+const ImageManifest = Schema.Struct({
+  manifests: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        digest: Schema.String,
+        platform: Schema.optionalKey(
+          Schema.Struct({ architecture: Schema.String, os: Schema.String }),
+        ),
+      }),
+    ),
+  ),
+  config: Schema.optionalKey(Schema.Struct({ digest: Schema.String })),
+});
+
+const ImageConfig = Schema.Struct({
+  created: Schema.optionalKey(Schema.String),
+});
+
+/** A tag from Docker Hub's own API, which a date costs no pull from. */
+const HubTag = Schema.Struct({
+  digest: Schema.optionalKey(Schema.String),
+  tag_last_pushed: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  last_updated: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+
+/** The manifest types a digest is read for, as Renovate asks for them. */
+const manifestTypes = [
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+  "application/vnd.docker.distribution.manifest.v2+json",
+  "application/vnd.oci.image.manifest.v1+json",
+].join(", ");
+
+/** The most pages of tags read for one image. */
+const maxTagPages = 100;
+
+/** Newer tags dated overall and in the major in use, as `datedTags` for GitHub. */
+const datedImages = 5;
+
+/**
+ * Where an image lives, as Docker reads its name: a first part with a dot or
+ * port, or `localhost`, is the registry, and anything else is on Docker Hub,
+ * where a one-part name is an official image under `library/`.
+ */
+export const imageLocation = (name: string) => {
+  const [first = "", ...rest] = name.split("/");
+
+  const registry =
+    rest.length > 0 &&
+    (first.includes(".") || first.includes(":") || first === "localhost")
+      ? first
+      : undefined;
+
+  const path = registry === undefined ? name : rest.join("/");
+
+  if (
+    registry === undefined ||
+    registry === "docker.io" ||
+    registry === "index.docker.io" ||
+    registry === "registry-1.docker.io"
+  )
+    return {
+      registry: "registry-1.docker.io",
+      repository: path.includes("/") ? path : `library/${path}`,
+      hub: true,
+    };
+
+  return { registry, repository: path, hub: false };
+};
+
+/**
+ * The tags worth a date and digest: of the tags the one in use could move to,
+ * the same shape and newer, the newest few overall and in its major.
+ */
+export const tagsToDate = (
+  tags: ReadonlyArray<string>,
+  current: string,
+): ReadonlyArray<string> => {
+  const now = dockerVersion(current);
+
+  if (now === undefined) return [];
+
+  const newer = tags
+    .flatMap((tag) => {
+      const version = dockerVersion(tag);
+
+      return version !== undefined &&
+        version.suffix === now.suffix &&
+        version.parts.length === now.parts.length &&
+        (version.prerelease === undefined || now.prerelease !== undefined) &&
+        compareVersions(version, now) > 0
+        ? [{ tag, version }]
+        : [];
+    })
+    .toSorted((a, b) => compareVersions(b.version, a.version));
+
+  return [
+    ...new Set(
+      [
+        ...newer.slice(0, datedImages),
+        ...newer
+          .filter(({ version }) => version.parts[0] === now.parts[0])
+          .slice(0, datedImages),
+      ].map(({ tag }) => tag),
+    ),
+  ];
+};
+
+/** A `WWW-Authenticate` header's parameters, when it's a Bearer challenge. */
+const bearerChallenge = (header: string | undefined) => {
+  if (header === undefined || !/^Bearer\s/i.test(header)) return undefined;
+
+  return Object.fromEntries(
+    [...header.matchAll(/(?<key>\w+)="(?<value>[^"]*)"/g)].map((match) => [
+      match.groups?.key ?? "",
+      match.groups?.value ?? "",
+    ]),
+  );
+};
+
 /** What a custom datasource's transforms must leave, as Renovate reads it. */
 const CustomReleases = Schema.Struct({
   releases: Schema.Array(
@@ -135,6 +270,7 @@ export const supported = new Set([
   "github-releases",
   "github-tags",
   "git-refs",
+  "docker",
 ]);
 
 /** Whether a version name is older than the version in use, `floor`. */
@@ -428,6 +564,222 @@ export class Datasources extends Context.Service<
         );
       });
 
+      /**
+       * An image's tags from its registry's v2 API, each tag a release, with
+       * the digest of the tag in use and dates and digests for the newest
+       * tags it could move to. A registry that asks for a Bearer token gets
+       * an anonymous pull token from the realm it names. Docker Hub dates come
+       * from its own API, as a manifest read there counts against its pull
+       * limit; elsewhere, as Renovate dates them, from the image config's
+       * `created`.
+       */
+      const docker = Effect.fnUntraced(function* (
+        name: string,
+        current: string,
+      ) {
+        const { registry, repository, hub } = imageLocation(name);
+        const origin = `https://${registry}`;
+        const base = `${origin}/v2/${repository}`;
+        let token: string | undefined;
+
+        const request = Effect.fnUntraced(function* (
+          method: "GET" | "HEAD",
+          url: string,
+          accept?: string,
+        ) {
+          const send = () =>
+            http.execute(
+              HttpClientRequest.make(method)(url, {
+                headers: {
+                  ...(accept !== undefined && { accept }),
+                  ...(token !== undefined && {
+                    authorization: `Bearer ${token}`,
+                  }),
+                },
+              }),
+            );
+
+          const response = yield* send();
+
+          const challenge = bearerChallenge(
+            response.headers["www-authenticate"],
+          );
+
+          if (
+            response.status !== 401 ||
+            token !== undefined ||
+            challenge?.realm === undefined
+          )
+            return response;
+
+          const params = new URLSearchParams({
+            ...(challenge.service !== undefined && {
+              service: challenge.service,
+            }),
+            scope: challenge.scope ?? `repository:${repository}:pull`,
+          });
+
+          const issued = yield* http.get(`${challenge.realm}?${params}`);
+
+          if (issued.status !== 200)
+            return yield* new DepsError({
+              message: `${registry} gave no token for ${name}: ${issued.status}`,
+            });
+
+          const body = yield* Schema.decodeUnknownEffect(RegistryToken)(
+            yield* issued.json,
+          );
+
+          token = body.token ?? body.access_token;
+
+          return yield* send();
+        });
+
+        const json = Effect.fnUntraced(function* <A>(
+          url: string,
+          schema: Schema.Decoder<A>,
+          accept?: string,
+        ) {
+          const response = yield* request("GET", url, accept);
+
+          if (response.status !== 200)
+            return yield* new DepsError({
+              message: `${registry} returned ${response.status} for ${name}`,
+            });
+
+          return {
+            body: yield* Schema.decodeUnknownEffect(schema)(
+              yield* response.json,
+            ),
+            digest: response.headers["docker-content-digest"],
+          };
+        });
+
+        const tags: Array<string> = [];
+        let next: string | undefined = `${base}/tags/list?n=10000`;
+
+        for (let page = 0; next !== undefined && page < maxTagPages; page++) {
+          const response: HttpClientResponse.HttpClientResponse =
+            yield* request("GET", next);
+
+          if (response.status !== 200)
+            return yield* new DepsError({
+              message: `${registry} returned ${response.status} for ${name}`,
+            });
+
+          const list = yield* Schema.decodeUnknownEffect(TagList)(
+            yield* response.json,
+          );
+
+          tags.push(...(list.tags ?? []));
+
+          const link: string | undefined = /<(?<url>[^>]+)>;\s*rel="next"/.exec(
+            response.headers.link ?? "",
+          )?.groups?.url;
+
+          next = link === undefined ? undefined : new URL(link, origin).href;
+        }
+
+        const tag = current === "" ? "latest" : current;
+
+        const head = yield* request(
+          "HEAD",
+          `${base}/manifests/${tag}`,
+          manifestTypes,
+        );
+
+        const currentDigest =
+          head.status === 200
+            ? head.headers["docker-content-digest"]
+            : undefined;
+
+        /** A tag's date and digest from Docker Hub's API. */
+        const fromHub = Effect.fnUntraced(function* (version: string) {
+          const response = yield* http.get(
+            `https://hub.docker.com/v2/namespaces/${repository.replace("/", "/repositories/")}/tags/${encodeURIComponent(version)}`,
+          );
+
+          if (response.status !== 200)
+            return yield* new DepsError({
+              message: `Docker Hub returned ${response.status} for ${name}:${version}`,
+            });
+
+          const found = yield* Schema.decodeUnknownEffect(HubTag)(
+            yield* response.json,
+          );
+
+          return {
+            digest: found.digest,
+            date: found.tag_last_pushed ?? found.last_updated ?? undefined,
+          };
+        });
+
+        /**
+         * A tag's digest, and its date from the image config, through the
+         * index's linux/amd64 image when it's multi-platform.
+         */
+        const fromConfig = Effect.fnUntraced(function* (version: string) {
+          const top = yield* json(
+            `${base}/manifests/${version}`,
+            ImageManifest,
+            manifestTypes,
+          );
+
+          const platforms = top.body.manifests ?? [];
+
+          const image =
+            platforms.find(
+              ({ platform }) =>
+                platform?.os === "linux" && platform.architecture === "amd64",
+            ) ?? platforms.find(({ platform }) => platform?.os !== "unknown");
+
+          const config =
+            image === undefined
+              ? top.body.config
+              : (yield* json(
+                  `${base}/manifests/${image.digest}`,
+                  ImageManifest,
+                  manifestTypes,
+                )).body.config;
+
+          if (config === undefined)
+            return { digest: top.digest, date: undefined };
+
+          const created = yield* json(
+            `${base}/blobs/${config.digest}`,
+            ImageConfig,
+          );
+
+          return { digest: top.digest, date: created.body.created };
+        });
+
+        // A tag that can't be dated is left undated, held by any minimum age
+        const dated = new Map(
+          yield* Effect.forEach(
+            tagsToDate(tags, current),
+            (version) =>
+              (hub ? fromHub(version) : fromConfig(version)).pipe(
+                Effect.orElseSucceed(() => ({
+                  digest: undefined,
+                  date: undefined,
+                })),
+                Effect.map((found) => [version, found] as const),
+              ),
+            { concurrency: 4 },
+          ),
+        );
+
+        return {
+          releases: [...new Set([...tags, tag])].map((version): Release => ({
+            version,
+            digest:
+              version === tag ? currentDigest : dated.get(version)?.digest,
+            date: dated.get(version)?.date,
+          })),
+          sourceUrl: null,
+        } satisfies Releases;
+      });
+
       const cache = yield* Cache.make({
         capacity: 4096,
         lookup: (key: string) => {
@@ -441,6 +793,8 @@ export class Datasources extends Context.Service<
             if (datasource === "npm") return yield* npm(packageName);
 
             if (datasource === "pypi") return yield* pypi(packageName);
+
+            if (datasource === "docker") return yield* docker(packageName, ref);
 
             if (datasource === "github-releases")
               return {
@@ -607,7 +961,8 @@ export class Datasources extends Context.Service<
               dependency.packageName,
               dependency.datasource === "git-refs" ||
               dependency.datasource === "github-tags" ||
-              dependency.datasource === "github-releases"
+              dependency.datasource === "github-releases" ||
+              dependency.datasource === "docker"
                 ? dependency.currentValue
                 : "",
             ].join("\u0000"),
