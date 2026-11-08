@@ -265,7 +265,7 @@ export const needsFullReview = (tool: Tool, tag: string) =>
     " features, commands, flags and config options the tool has that the repository doesn't cover yet, and snapshots or derived files that no longer match.",
     tool.review === undefined ? "" : ` ${tool.review}`,
     ` Release: https://github.com/${tool.repo}/releases/tag/${tag}.`,
-    ` Add what's missing and push it to the default branch${tag === tool.reviewed ? "" : `, then set its \`reviewed\` to ${tag} in ${toolingFile}`}. If nothing is missing, say so.`,
+    ` Add what's missing, keeping everything the repository already does working as it does now, and push it to the default branch${tag === tool.reviewed ? "" : `, then set its \`reviewed\` to ${tag} in ${toolingFile}`}. If nothing is missing, say so.`,
   ].join("");
 
 export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(

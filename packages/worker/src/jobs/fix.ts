@@ -123,7 +123,7 @@ const prompt = (
       : []),
     ...(run.job === "drift-review"
       ? [
-          `Nothing broke: you were asked to review ${repo} as a whole against the current release of each tool in its tooling.yml, as the log lists, for what it's still missing rather than only what changed since the last review. Read each tool's docs and release notes against what ${repo} covers, add what's missing, run its checks, and push to the default branch. Leave anything large or uncertain for a person, saying what's missing. Finding nothing missing is \`Outcome: nothing to fix\`.`,
+          `Nothing broke: you were asked to review ${repo} as a whole against the current release of each tool in its tooling.yml, as the log lists, for what it's still missing rather than only what changed since the last review. Read each tool's docs and release notes against what ${repo} covers, add what's missing, run its checks, and push to the default branch. What it already does must keep working as it does now: add to it, and change or remove existing behaviour only where the tool's release requires it. Leave anything large or uncertain for a person, saying what's missing. Finding nothing missing is \`Outcome: nothing to fix\`.`,
         ]
       : []),
     ...(run.job === "ci"
