@@ -366,11 +366,24 @@ export const work = Effect.fn("Worker.work")(function* (
     ),
   );
 
+  // Whether it's the quiet hours in the settings, read each time like the
+  // agents. Settings that can't be read leave the worker working.
+  const quiet = Effect.gen(function* () {
+    const hours = (yield* Settings.load()).quietHours;
+
+    return (
+      hours !== undefined &&
+      Settings.isQuiet(hours, yield* Clock.currentTimeMillis)
+    );
+  }).pipe(Effect.orElseSucceed(() => false));
+
   // Each lane's claim is held by the server until a run is queued for it, up
   // to `pollInterval`, so a queued run starts straight away. An older server
   // answers straight away, so the rest of the lane's interval is waited out
   // here. The command lane's is shorter, so it leaves reporting the agents and
-  // what needs attention to the others.
+  // what needs attention to the others. In the quiet hours the other lanes
+  // still ask, for no jobs, so the server keeps counting the worker as live,
+  // and what they'd have run waits in the queue until the hours end.
   const lane = (name: Domain.Lane, laneJobs: ReadonlyArray<string>) => {
     const command = name === "command";
     const wait = command ? commandPollInterval : pollInterval;
@@ -379,18 +392,21 @@ export const work = Effect.fn("Worker.work")(function* (
       yield* holdOff;
 
       const setup = command ? {} : yield* agents;
+      const resting = command ? false : yield* quiet;
       const started = yield* Clock.currentTimeMillis;
 
       const { run } = yield* client.work.claim({
         payload: {
-          jobs: laneJobs,
+          jobs: resting ? [] : laneJobs,
           protocol: Api.protocol,
           wait: Math.round(Duration.toSeconds(pollInterval)),
           ...setup,
         },
       });
 
-      yield* status.update({ reachable: true });
+      // Only the lanes that check the quiet hours say whether it's them
+      if (command) yield* status.update({ reachable: true });
+      else yield* status.update({ reachable: true, quiet: resting });
 
       return { run, started };
     }).pipe(
@@ -457,8 +473,10 @@ export const work = Effect.fn("Worker.work")(function* (
   const copies = (name: Domain.Lane) => (name === "heal" ? healSessions : 1);
 
   // Telling you what's new that needs you runs beside the lanes, once a minute,
-  // and so does following the desktop's Omarchy theme
+  // and so does following the desktop's Omarchy theme. It's held in the quiet
+  // hours, so what came up overnight is told when they end.
   const notify = (yield* Notify.make).pipe(
+    Effect.when(Effect.map(quiet, (resting) => !resting)),
     Effect.repeat(Schedule.spaced("1 minute")),
   );
 

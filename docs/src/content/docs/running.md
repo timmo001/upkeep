@@ -259,6 +259,22 @@ service monitor can show more than that the process is up. It's `warning`
 while the OpenCode command its heals need, `opencode2` by default, isn't on
 its `PATH`, and `degraded` while the server can't be reached.
 
+A worker can rest for set hours each day, such as overnight, with
+`quietHours` in its settings, on its own clock:
+
+```json
+{
+  "quietHours": { "start": "00:00", "end": "07:00" }
+}
+```
+
+In those hours it takes no new runs, except what the dashboard asks for, and
+holds its notifications until they end. A run already going finishes. The
+worker keeps asking the server for work, for no jobs, so the server still
+counts it as live and Upkeep's status doesn't warn that no worker is. Runs
+queued for it in the meantime, such as its machine jobs, start when the hours
+end. Its status reads `Quiet hours` and stays `ok`.
+
 ## Repositories
 
 Jobs that work on repositories (`releases`, `labels`, `bump`,

@@ -18,6 +18,8 @@ export interface State {
   readonly asking: number;
   /** Commands the settings need that aren't on the worker's PATH. */
   readonly missing: ReadonlyArray<string>;
+  /** Whether it's the worker's quiet hours, when it takes no new runs. */
+  readonly quiet: boolean;
 }
 
 export const initial: State = {
@@ -27,15 +29,18 @@ export const initial: State = {
   parked: [],
   asking: 0,
   missing: [],
+  quiet: false,
 };
 
 /** The status a monitor reads: its health and one line saying why. */
 export const report = (state: State) => {
   const parts = [
     state.reachable
-      ? state.running.length === 0
-        ? "Waiting for runs"
-        : `Running ${state.running.join(", ")}`
+      ? state.running.length > 0
+        ? `Running ${state.running.join(", ")}`
+        : state.quiet
+          ? "Quiet hours"
+          : "Waiting for runs"
       : "Can't reach the server",
     ...(state.last === null
       ? []

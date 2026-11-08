@@ -5,7 +5,7 @@
  * groundwork's tasks. A missing file means every default.
  */
 import { Domain } from "@upkeep/api";
-import { Config, Effect, FileSystem, Schema } from "effect";
+import { Config, DateTime, Effect, FileSystem, Schema } from "effect";
 import { Rule } from "./deps/Policy";
 
 /** How the bump job treats one consumer. */
@@ -130,9 +130,24 @@ const Notify = Schema.Struct({
 
 export type Notify = typeof Notify.Type;
 
+/** A time of day on the worker's clock, `HH:MM`. */
+const TimeOfDay = Schema.String.check(
+  Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+);
+
+/**
+ * Hours the worker rests, such as overnight: from `start` until `end`, on its
+ * own clock, wrapping past midnight when `end` is earlier. It takes no new
+ * runs then except what the dashboard asks for, and holds its notifications.
+ */
+const QuietHours = Schema.Struct({ start: TimeOfDay, end: TimeOfDay });
+
+export type QuietHours = typeof QuietHours.Type;
+
 export const Settings = Schema.Struct({
   attention: Schema.optionalKey(Attention),
   notify: Schema.optionalKey(Notify),
+  quietHours: Schema.optionalKey(QuietHours),
   /**
    * Opt in to naming tracked repositories from your own list, over their
    * README titles. The watch job runs `command` each time and reads the JSON
@@ -264,6 +279,28 @@ export const openCodeCommand = (settings: Settings) =>
   (settings.heal?.agents ?? []).length > 0
     ? (settings.heal?.opencode ?? "opencode2")
     : null;
+
+/** Minutes past midnight of an `HH:MM` time. */
+const minutesOf = (time: string) => {
+  const [hours = 0, minutes = 0] = time.split(":").map(Number);
+
+  return hours * 60 + minutes;
+};
+
+/** Whether `at`, in milliseconds, falls in the quiet hours on the local clock. */
+export const isQuiet = (hours: QuietHours, at: number) => {
+  const local = DateTime.makeZonedUnsafe(at, {
+    timeZone: DateTime.zoneMakeLocal(),
+  });
+
+  const now =
+    DateTime.getPart(local, "hour") * 60 + DateTime.getPart(local, "minute");
+
+  const start = minutesOf(hours.start);
+  const end = minutesOf(hours.end);
+
+  return start <= end ? now >= start && now < end : now >= start || now < end;
+};
 
 /** An agent as the server keeps it. */
 export const agentModel = (agent: Agent): Domain.AgentModel => ({
