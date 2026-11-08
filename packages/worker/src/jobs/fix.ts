@@ -334,20 +334,54 @@ export const across = Effect.fnUntraced(
     ),
 );
 
-/** Hand a heal's fix to an agent, over the heal's target. */
-export const fix = (
+/**
+ * The lines of a handed-off run's log a heal for one repository is about:
+ * those naming that repository, so its agent isn't handed the others' work
+ * or a log cut short by them. Any other heal, or one with no such lines, gets
+ * the whole log.
+ */
+const handedTo = (
+  heal: Domain.Heal,
+  run: Domain.Run,
+  log: ReadonlyArray<Domain.LogLine>,
+) => {
+  if (run.state !== "handed-off" || heal.target.kind !== "consumer") return log;
+
+  const prefix = `${heal.target.repo.toLowerCase()}:`;
+
+  const own = log.filter((line) =>
+    line.message.toLowerCase().startsWith(prefix),
+  );
+
+  return own.length === 0 ? log : own;
+};
+
+/**
+ * Hand a heal's fix to an agent, over the heal's target. A handed-off run's
+ * work is logged first, so the heal's run shows what its agent was asked.
+ */
+export const fix = Effect.fnUntraced(function* (
   heal: Domain.Heal,
   failed: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
   precedents: ReadonlyArray<Domain.Precedent>,
   agent: Settings.Agent,
   record: Recorder,
-) =>
-  across(
+) {
+  const asked = handedTo(heal, failed, log);
+
+  if (failed.state === "handed-off" && asked !== log) {
+    yield* RunLog.info("Asking the agent to:");
+
+    for (const line of asked) yield* RunLog.info(line.message);
+  }
+
+  return yield* across(
     Domain.targetRepos(heal.target),
     agent,
     failed.job,
     (checkouts, minutes) =>
-      prompt(heal, failed, log, precedents, checkouts, minutes),
+      prompt(heal, failed, asked, precedents, checkouts, minutes),
     record,
   );
+});
