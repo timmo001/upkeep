@@ -5,7 +5,8 @@
  * updater when it automerges the group, otherwise Upkeep. In the repositories
  * set to apply, Upkeep's groups are applied, checked and pushed one at a time,
  * then its lock file maintenance when it's due, as a dry run unless that's
- * turned off (#5).
+ * turned off (#5). A group in a repository that opts in to regression checks
+ * runs them, or is held for an agent, when its updates need one.
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
@@ -18,6 +19,7 @@ import { type Dependency, DepsError, type Policy } from "../deps/Policy";
 import { type ReadFile, Updaters } from "../deps/Updaters";
 import { ghReason, reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
+import * as Regression from "../Regression";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -347,8 +349,213 @@ interface ApplyContext {
   readonly root: string;
   readonly checks: ReadonlyArray<string> | undefined;
   readonly generate: ReadonlyArray<string> | undefined;
+  readonly regression: Regression.Setting | undefined;
   readonly dryRun: boolean;
 }
+
+/**
+ * Whether a group or lock file maintenance was applied, or would be in a dry
+ * run, or is held for a regression check.
+ */
+type Applied = boolean | "held";
+
+/** A group's regression check, run after its checks and before the push. */
+interface Check {
+  /** What it runs; with none, the group is held for an agent. */
+  readonly commands: ReadonlyArray<string>;
+  /** The update that called for it, by name and version. */
+  readonly against: string;
+  readonly why: string;
+  readonly notes?: string | undefined;
+  readonly compare?: string | undefined;
+}
+
+/** What the rules made of one update, with where its notes and changes are. */
+type Decided = Regression.Decided & {
+  readonly against: string;
+  readonly notes?: string | undefined;
+  readonly compare?: string | undefined;
+};
+
+/**
+ * Where an update's release notes and changes are without reading them, when
+ * its versions are a GitHub repository's tags.
+ */
+const tagLinks = (update: Planner.Update) => {
+  const source = update.dependency.sourceUrl ?? "";
+  const { datasource } = update.dependency;
+
+  if (
+    !source.startsWith("https://github.com/") ||
+    (datasource !== "github-releases" && datasource !== "github-tags")
+  )
+    return {};
+
+  return {
+    notes:
+      datasource === "github-releases"
+        ? `${source}/releases/tag/${update.to}`
+        : undefined,
+    compare: `${source}/compare/${update.from}...${update.to}`,
+  };
+};
+
+/** Verdicts, most severe first, which is the one a group takes. */
+const verdicts: ReadonlyArray<Regression.Verdict> = [
+  "check",
+  "unclear",
+  "skip",
+];
+
+/**
+ * A group's regression check, when its repository opts in and an update in
+ * it needs one. Each update goes by its type, and only one its type can't
+ * settle has its release notes read; the most severe verdict across the group
+ * wins. With no decision model, an unclear update is checked.
+ */
+const regressionFor = Effect.fnUntraced(function* (
+  repo: string,
+  group: Planner.Group,
+  setting: Regression.Setting | undefined,
+  options: {
+    readonly cwd: string;
+    readonly trusted: string;
+    readonly mise: boolean;
+  },
+) {
+  const commands = Regression.commands(
+    setting,
+    options.mise ? yield* Bump.miseTasks(options) : [],
+  );
+
+  if (commands === undefined) return undefined;
+
+  const datasources = yield* Datasources;
+
+  const decided: ReadonlyArray<Decided> = yield* Effect.forEach(
+    group.updates,
+    Effect.fnUntraced(function* (update) {
+      const name = update.newName ?? update.dependency.depName;
+      const against = `${name} ${update.to}`;
+
+      if (update.updateType === "replacement")
+        return {
+          against,
+          verdict: "unclear",
+          why: `it replaces ${update.dependency.depName} with ${name}`,
+        } satisfies Decided;
+
+      const change = {
+        updateType: update.updateType,
+        from: update.from,
+        to: update.to,
+        lockfile: update.lockfile,
+      };
+
+      const links = tagLinks(update);
+      const byType = Regression.decide(change);
+
+      if (byType.verdict !== "unclear")
+        return { against, ...links, ...byType } satisfies Decided;
+
+      const notes = yield* datasources
+        .notes(update.dependency, update.from, update.to)
+        .pipe(
+          Effect.catch((error) =>
+            RunLog.warn(
+              `${repo}: couldn't read the release notes of ${against}: ${error.message}`,
+            ).pipe(Effect.as(undefined)),
+          ),
+        );
+
+      return {
+        against,
+        notes: notes?.url ?? links.notes,
+        compare: notes?.compare ?? links.compare,
+        ...Regression.decide({ ...change, notes: notes?.text }),
+      } satisfies Decided;
+    }),
+    { concurrency: 4 },
+  );
+
+  const [worst] = verdicts.flatMap((verdict) =>
+    decided.filter((item) => item.verdict === verdict),
+  );
+
+  if (worst === undefined || worst.verdict === "skip") {
+    yield* RunLog.info(
+      `${repo}: no regression check for renovate/${group.branch}, as ${worst?.why ?? "nothing moved"}`,
+    );
+
+    return undefined;
+  }
+
+  return {
+    commands,
+    against: worst.against,
+    why:
+      worst.verdict === "unclear"
+        ? `${worst.why}, which the rules can't settle`
+        : worst.why,
+    notes: worst.notes,
+    compare: worst.compare,
+  } satisfies Check;
+});
+
+/**
+ * Run a group's regression check once its checks pass: its commands, failing
+ * the group when one does, or with none the group is held, unpushed, for an
+ * agent, and the updater's pull request left open. Returns whether it's held.
+ */
+const regressionCheck = Effect.fnUntraced(function* (
+  repo: string,
+  topic: string,
+  check: Check,
+  options: {
+    readonly cwd: string;
+    readonly trusted: string;
+    readonly mise: boolean;
+    readonly dryRun: boolean;
+  },
+) {
+  const { against, why } = check;
+  const links = { notes: check.notes, compare: check.compare };
+
+  if (check.commands.length > 0) {
+    const ran = check.commands.join(", ");
+
+    yield* Bump.check(check.commands, options).pipe(
+      Effect.tapError(() =>
+        RunLog.warn(
+          `${repo}: ${Regression.line({ against, why, outcome: `and ${ran} failed`, ...links })}`,
+        ),
+      ),
+    );
+
+    yield* RunLog.info(
+      `${repo}: ran a regression check against ${against}, as ${why}: ${ran} passed`,
+    );
+
+    return false;
+  }
+
+  if (options.dryRun) {
+    yield* RunLog.info(
+      `${repo}: would hold renovate/${topic} for a regression check against ${against}, as ${why}`,
+    );
+
+    return true;
+  }
+
+  yield* Bump.run("git", ["reset", "--quiet", "--hard"], options);
+  yield* Bump.run("git", ["clean", "--quiet", "-fd"], options);
+
+  yield* RunLog.warn(
+    `${repo}: ${Regression.line({ against, why, outcome: `so renovate/${topic} is held, unpushed, for an agent to apply and check`, ...links })}`,
+  );
+
+  return true;
+});
 
 /**
  * Apply one group in a clean checkout, refresh its lockfiles, run the
@@ -460,17 +667,27 @@ const applyGroup = Effect.fnUntraced(function* (
     .split("\n")
     .filter((file) => file !== "");
 
+  // Workflows alone only change CI, so they need no regression check
+  const check = changed.some((file) => !file.startsWith(".github/"))
+    ? yield* regressionFor(repo, group, context.regression, {
+        ...options,
+        mise,
+      })
+    : undefined;
+
   return yield* land(repo, branch, group.branch, subject(group), changed, {
     ...context,
     mise,
+    check,
   });
 });
 
 /**
  * Rebuild the repository's generated files, check what a checkout changed,
- * then push it as one commit, watch its CI and close the updater's pull
- * request on `renovate/<topic>`. Returns true, as something was applied, or
- * would be in a dry run.
+ * run a group's regression check when it needs one, then push it as one
+ * commit, watch its CI and close the updater's pull request on
+ * `renovate/<topic>`. Returns true, as something was applied, or would be in
+ * a dry run, or `held` when the regression check holds it.
  */
 const land = Effect.fnUntraced(function* (
   repo: string,
@@ -478,7 +695,10 @@ const land = Effect.fnUntraced(function* (
   topic: string,
   message: string,
   edited: ReadonlyArray<string>,
-  context: ApplyContext & { readonly mise: boolean },
+  context: ApplyContext & {
+    readonly mise: boolean;
+    readonly check?: Check | undefined;
+  },
 ) {
   const path = yield* Path.Path;
   const options = { cwd: path.join(context.root, repo), trusted: context.root };
@@ -503,6 +723,16 @@ const land = Effect.fnUntraced(function* (
         )
       : RunLog.info(`${repo}: ${ran.join(", ")} passed`);
   }
+
+  if (
+    context.check !== undefined &&
+    (yield* regressionCheck(repo, topic, context.check, {
+      ...options,
+      mise: context.mise,
+      dryRun: context.dryRun,
+    }))
+  )
+    return "held" satisfies Applied;
 
   if (context.dryRun) {
     yield* RunLog.info(
@@ -662,8 +892,8 @@ const closeRenovate = Effect.fnUntraced(function* (
 /**
  * Apply each group Upkeep owns, in order, then lock file maintenance when
  * it's due, so it starts from the updated manifests. A group that fails is
- * logged and left, and the rest still go. Returns how many applied and which
- * failed.
+ * logged and left, and the rest still go. Returns how many applied, which
+ * failed and which are held for a regression check.
  */
 const applyRepository = Effect.fnUntraced(function* (
   repo: string,
@@ -674,17 +904,20 @@ const applyRepository = Effect.fnUntraced(function* (
 ) {
   let applied = 0;
   const failed: Array<string> = [];
+  const held: Array<string> = [];
 
-  const count = (done: boolean) =>
+  const count = (topic: string) => (done: Applied) =>
     Effect.sync(() => {
-      if (done) applied += 1;
+      if (done === true) applied += 1;
+
+      if (done === "held") held.push(topic);
     });
 
   for (const group of groups) {
     if (group.owner !== "upkeep") continue;
 
     yield* applyGroup(repo, branch, group, context).pipe(
-      Effect.tap(count),
+      Effect.tap(count(group.branch)),
       Effect.catchCause((cause) =>
         RunLog.warn(`${repo}: renovate/${group.branch}: ${reason(cause)}`).pipe(
           Effect.andThen(Effect.sync(() => failed.push(group.branch))),
@@ -701,7 +934,7 @@ const applyRepository = Effect.fnUntraced(function* (
       policy.maintenance.everyDays,
       context,
     ).pipe(
-      Effect.tap(count),
+      Effect.tap(count(maintenanceBranch)),
       Effect.catchCause((cause) =>
         RunLog.warn(
           `${repo}: renovate/${maintenanceBranch}: ${reason(cause)}`,
@@ -741,7 +974,7 @@ const applyRepository = Effect.fnUntraced(function* (
     }
   }
 
-  return { applied, failed };
+  return { applied, failed, held };
 });
 
 /** Plan every tracked repository with an updater config, two at a time. */
@@ -770,6 +1003,7 @@ export const deps = Effect.fnUntraced(function* () {
     );
 
   const failed: Array<string> = [];
+  const held: Array<string> = [];
   let planned = 0;
   let groups = 0;
   let applied = 0;
@@ -801,6 +1035,7 @@ export const deps = Effect.fnUntraced(function* () {
             root,
             checks: settings.bump?.repos?.[repo.full_name]?.checks,
             generate: settings.bump?.repos?.[repo.full_name]?.generate,
+            regression: settings.bump?.repos?.[repo.full_name]?.regression,
             dryRun,
           },
         );
@@ -808,6 +1043,8 @@ export const deps = Effect.fnUntraced(function* () {
         applied += outcome.applied;
 
         if (outcome.failed.length > 0) failed.push(repo.full_name);
+
+        if (outcome.held.length > 0) held.push(repo.full_name);
       }).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo.full_name}: ${reason(cause)}`).pipe(
@@ -824,13 +1061,27 @@ export const deps = Effect.fnUntraced(function* () {
       ...(applying.size > 0
         ? [`${dryRun ? "would apply" : "applied"} ${applied},`]
         : []),
+      ...(held.length === 0
+        ? []
+        : [
+            `${dryRun ? "would hold" : "held"} ${listed(held.toSorted())} for a regression check,`,
+          ]),
       `${listed(failed.toSorted())} failed`,
     ].join(" "),
   );
 
-  if (failed.length > 0)
+  // A run can't both fail and hand off, so a held group goes to the heal as a
+  // failure, as a drift review after the updates does
+  if (held.length > 0 && !dryRun)
+    yield* RunLog.warn(
+      `${listed(held.toSorted())} held for a regression check, so they go to the heal as failed`,
+    );
+
+  const heal = [...new Set([...failed, ...(dryRun ? [] : held)])].toSorted();
+
+  if (heal.length > 0)
     return yield* new ConsumersFailed({
       action: "update the dependencies of",
-      repos: failed.toSorted(),
+      repos: heal,
     });
 });

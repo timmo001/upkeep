@@ -650,9 +650,9 @@ behind it. New untracked files they write are left out.
 }
 ```
 
-A repository can opt in to a regression check on bumps too, for what its
-checks don't cover, such as how the app looks or how a server behaves. It
-opts in with a
+A repository can opt in to a regression check on bumps and dependency
+updates, for what its checks don't cover, such as how the app looks or how a
+server behaves. It opts in with a
 mise `regression` task, or with `regression` in its settings, whose
 `commands` run in place of the task. When a `package.json` changed, the
 release's version change and notes decide whether it needs one, after the
@@ -747,6 +747,20 @@ those only in a lockfile, are left to Renovate. Reading the alerts needs them
 turned on in the repository and, when the job runs as the GitHub App, the
 App's read access to Dependabot alerts; without either, the job logs a
 warning and plans no fixes.
+
+In a repository that opts in to regression checks, as for bumps, each group
+is decided after its checks and before the push, unless it only changes
+workflows. Each update goes by its type first: a major or a minor below 1.0
+needs a check, and a patch, digest, pin or lockfile-only update doesn't. Only
+for the rest are the release notes read, from the GitHub releases of the
+package's source, and they decide as on bumps. Notes that can't be read leave
+it unclear, so it's checked, as a replacement always is. The update needing
+it most decides for the group. A check runs the commands, and the group fails
+if they do. With none, the group is held: nothing is pushed, Renovate's pull
+request stays open, the run logs what needs checking with links to the
+release notes and changes where it knows them, and the repository counts as
+failed, so its heal applies and checks the group. Lock file maintenance is
+never checked. A dry run only logs that it would hold the group.
 
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:
