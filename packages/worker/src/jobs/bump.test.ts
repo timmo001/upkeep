@@ -1,6 +1,13 @@
 /** How the bump job rewrites a consumer's files and reports a failed check. */
 import { expect, test } from "bun:test";
-import { Edit, failedOutput, needed, rewrite } from "./bump";
+import {
+  compareLink,
+  currentVersions,
+  Edit,
+  failedOutput,
+  needed,
+  rewrite,
+} from "./bump";
 
 const old = "a".repeat(40);
 const sha = "b".repeat(40);
@@ -44,6 +51,36 @@ test("a dependency keeps its range and skips workspace and git specs", () => {
   expect(rewrite(edit, `{ "@timmo001/effect-gh-extra": "0.10.0" }`)).toBe(
     `{ "@timmo001/effect-gh-extra": "0.10.0" }`,
   );
+});
+
+test("a package's current versions are read before the rewrite, versions only", () => {
+  const text = [
+    `"@timmo001/effect-gh": "^0.12.0",`,
+    `"@timmo001/effect-gh-extra": "1.0.0",`,
+    `"@timmo001/effect-gh": "workspace:*",`,
+    `"@timmo001/effect-gh": "~0.11.2"`,
+  ].join("\n");
+
+  expect(currentVersions("@timmo001/effect-gh", text)).toEqual([
+    "0.12.0",
+    "0.11.2",
+  ]);
+});
+
+test("a compare link needs the release's tag to name its version", () => {
+  const release = { repo: "timmo001/groundwork", url: "", tag: "v0.13.0" };
+
+  expect(compareLink(release, "0.12.0", "0.13.0")).toBe(
+    "https://github.com/timmo001/groundwork/compare/v0.12.0...v0.13.0",
+  );
+  expect(
+    compareLink({ ...release, tag: "@scope/pkg@0.13.0" }, "0.12.0", "0.13.0"),
+  ).toBe(
+    "https://github.com/timmo001/groundwork/compare/@scope/pkg@0.12.0...@scope/pkg@0.13.0",
+  );
+  expect(
+    compareLink({ ...release, tag: "release-7" }, "0.12.0", "0.13.0"),
+  ).toBeUndefined();
 });
 
 test("a package needs the release's packages it depends on, through others too", () => {

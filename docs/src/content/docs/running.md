@@ -650,6 +650,41 @@ behind it. New untracked files they write are left out.
 }
 ```
 
+A repository can opt in to a regression check on bumps too, for what its
+checks don't cover, such as how the app looks or how a server behaves. It
+opts in with a
+mise `regression` task, or with `regression` in its settings, whose
+`commands` run in place of the task. When a `package.json` changed, the
+release's version change and notes decide whether it needs one, after the
+checks pass and before the push:
+
+- A major, a minor below 1.0, or notes marking a breaking change (a breaking
+  heading, `BREAKING CHANGE:`, a Conventional Commits `!`, a migration, or
+  something removed or deprecated) need a check.
+- A patch, or a release with no notes, doesn't.
+- Anything else the rules can't settle, so it's checked.
+
+The notes are read once per run. A check runs the commands, and one that
+fails fails that consumer as a failed check does. A repository opted in with
+nothing to run, `"regression": {}` and no task, has the update held instead:
+nothing is pushed, the run logs what needs checking with links to the release
+notes and changes, and it ends handed off. The heal then hands each held
+repository to the last agent in `heal.agents` to apply, check and push, or
+leaves it for you without one. When other consumers failed in the same run,
+the held ones count as failed too, so one heal takes them all. A dry run only
+logs that it would hold the update.
+
+```json
+{
+  "bump": {
+    "repos": {
+      "owner/app": { "regression": { "commands": ["npm run e2e"] } },
+      "owner/dashboard": { "regression": {} }
+    }
+  }
+}
+```
+
 ### Deps
 
 In the repositories listed in `deps.apply` in the worker's config file, the

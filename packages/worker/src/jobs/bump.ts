@@ -3,7 +3,9 @@
  * are found through code search, from workflow pins of the released
  * repository and from `package.json` dependencies on the packages it
  * publishes. Each one is cloned, edited, checked and pushed straight to its
- * default branch, then its CI is watched. A consumer that fails is logged and
+ * default branch, then its CI is watched. A consumer that opts in to
+ * regression checks runs them before the push when the release needs one, or
+ * has the update held for an agent. A consumer that fails is logged and
  * the rest carry on; the run fails at the end, naming them. Consumers start as
  * soon as what they need is published, and only the work on their clones is
  * limited to four at a time, so a slow CI run doesn't hold up the next push.
@@ -32,8 +34,9 @@ import * as GitHubApp from "../GitHubApp";
 import * as RateLimits from "../RateLimits";
 import * as RunLog from "../RunLog";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
+import * as Regression from "../Regression";
 import * as Settings from "../settings";
-import { ConsumersFailed, skipped } from "../Worker";
+import { ConsumersFailed, HandedOff, skipped } from "../Worker";
 
 /** What a release changes in a consumer. */
 export type Edit = Data.TaggedEnum<{
@@ -72,6 +75,30 @@ export const rewrite = (edit: Edit, text: string) =>
         `$1$2${version}$3`,
       ),
   });
+
+/**
+ * The versions a file depends on a package at, before `rewrite` moves them,
+ * without their `^` or `~`. Workspace, path and git specs aren't versions.
+ */
+export const currentVersions = (name: string, text: string) =>
+  [
+    ...text.matchAll(
+      new RegExp(String.raw`"${escape(name)}"\s*:\s*"[~^]?(\d[^"]*)"`, "g"),
+    ),
+  ].flatMap((match) => match[1] ?? []);
+
+/**
+ * A release's changes since a consumer's version, when its tag names the
+ * version, such as `v1.2.0` or `pkg@1.2.0`.
+ */
+export const compareLink = (
+  release: Domain.Release,
+  from: string,
+  to: string,
+) =>
+  release.tag.includes(to)
+    ? `https://github.com/${release.repo}/compare/${release.tag.replace(to, from)}...${release.tag}`
+    : undefined;
 
 /** The tracked files an edit can change, as `git ls-files` pathspecs. */
 const pathspecs = (edit: Edit) =>
@@ -915,9 +942,36 @@ export const usesMise = Effect.fnUntraced(function* (directory: string) {
   );
 });
 
-type Outcome = "updated" | "current" | "skipped";
+const ReleaseNotes = Schema.Struct({
+  body: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * A release's notes, empty when it has none, or `undefined` when they
+ * couldn't be read, which is logged.
+ */
+const readNotes = (release: Domain.Release) =>
+  Api.json(
+    {
+      endpoint: `repos/${release.repo}/releases/tags/${release.tag}`,
+      method: "GET",
+    },
+    ReleaseNotes,
+  ).pipe(
+    Effect.map(({ body }): string | undefined => body ?? ""),
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `Couldn't read the release notes of ${release.repo} ${release.tag}: ${reason(cause)}`,
+      ).pipe(Effect.as(undefined)),
+    ),
+  );
+
+type Outcome = "updated" | "current" | "skipped" | "held";
 
 interface BumpContext {
+  readonly release: Domain.Release;
+  /** The release's notes, read once for the run by the first consumer that needs them. */
+  readonly notes: ReturnType<typeof readNotes>;
   /** Where clones live, which mise is told to trust. */
   readonly root: string;
   readonly settings: Settings.Settings;
@@ -958,6 +1012,110 @@ interface Prepared {
   readonly pushed: string | null;
 }
 
+/** A dependency a consumer moves, from the version it was on. */
+interface Moved {
+  readonly from: string;
+  readonly to: string;
+}
+
+const severity: Record<Regression.Verdict, number> = {
+  skip: 0,
+  unclear: 1,
+  check: 2,
+};
+
+/**
+ * A consumer's regression check, when it opts in and the release needs one:
+ * its commands run, failing the consumer when one does, or with none the
+ * update is held for an agent. The notes decide for the whole release and the
+ * versions for each consumer; with no decision model, an unclear update is
+ * checked. Returns whether the update is held.
+ */
+const regressionCheck = Effect.fnUntraced(function* (
+  repo: string,
+  moved: ReadonlyArray<Moved>,
+  setting: Regression.Setting | undefined,
+  context: BumpContext,
+  options: {
+    readonly cwd: string;
+    readonly trusted: string;
+    readonly mise: boolean;
+  },
+) {
+  const commands = Regression.commands(
+    setting,
+    options.mise ? yield* miseTasks(options) : [],
+  );
+
+  if (commands === undefined) return false;
+
+  const notes = yield* context.notes;
+
+  const [decided] = (moved.length === 0 ? [undefined] : moved)
+    .map((change) => ({
+      change,
+      ...Regression.decide({ from: change?.from, to: change?.to, notes }),
+    }))
+    .toSorted((a, b) => severity[b.verdict] - severity[a.verdict]);
+
+  const { release } = context;
+  const against = `${release.repo} ${release.tag}`;
+
+  if (decided === undefined || decided.verdict === "skip") {
+    yield* RunLog.info(
+      `${repo}: no regression check against ${against}, as ${decided?.why ?? "nothing moved"}`,
+    );
+
+    return false;
+  }
+
+  const why =
+    decided.verdict === "unclear"
+      ? `${decided.why}, which the rules can't settle`
+      : decided.why;
+
+  const links = {
+    notes: release.url,
+    compare:
+      decided.change === undefined
+        ? undefined
+        : compareLink(release, decided.change.from, decided.change.to),
+  };
+
+  if (commands.length > 0) {
+    yield* check(commands, options).pipe(
+      Effect.tapError(() =>
+        RunLog.warn(
+          `${repo}: ${Regression.line({ against, why, outcome: `and ${commands.join(", ")} failed`, ...links })}`,
+        ),
+      ),
+    );
+
+    yield* RunLog.info(
+      `${repo}: ran a regression check against ${against}, as ${why}: ${commands.join(", ")} passed`,
+    );
+
+    return false;
+  }
+
+  if (context.dryRun) {
+    yield* RunLog.info(
+      `${repo}: would hold for a regression check against ${against}, as ${why}`,
+    );
+
+    return true;
+  }
+
+  yield* run("git", ["reset", "--quiet", "--hard"], options);
+  yield* run("git", ["clean", "--quiet", "-fd"], options);
+
+  yield* RunLog.warn(
+    `${repo}: ${Regression.line({ against, why, outcome: "so the update is held, unpushed, for an agent to apply and check", ...links })}`,
+  );
+
+  return true;
+});
+
 /** A consumer's edits applied, checked and pushed. */
 const prepare = Effect.fnUntraced(function* (
   repo: string,
@@ -989,6 +1147,7 @@ const prepare = Effect.fnUntraced(function* (
   const changed = new Set<string>();
   const manifests: Array<string> = [];
   const applied: Array<Edit> = [];
+  const moved: Array<Moved> = [];
 
   for (const edit of edits) {
     const files = (yield* run(
@@ -1012,7 +1171,12 @@ const prepare = Effect.fnUntraced(function* (
       changed.add(file);
       touched = true;
 
-      if (Edit.$is("Dependency")(edit)) manifests.push(file);
+      if (Edit.$is("Dependency")(edit)) {
+        manifests.push(file);
+
+        for (const from of currentVersions(edit.name, current))
+          if (from !== edit.version) moved.push({ from, to: edit.version });
+      }
     }
 
     if (touched) applied.push(edit);
@@ -1051,6 +1215,16 @@ const prepare = Effect.fnUntraced(function* (
           `${repo}: has no check or build task, so nothing ran before the push`,
         )
       : RunLog.info(`${repo}: ${ran.join(", ")} passed`);
+
+    // Pins only change workflows, so only a dependency's release can change
+    // how the app looks or behaves
+    if (
+      yield* regressionCheck(repo, moved, repoSettings?.regression, context, {
+        ...options,
+        mise,
+      })
+    )
+      return { outcome: "held", pushed: null } satisfies Prepared;
   }
 
   const message = `Update ${applied.map(describe).join(", ")}`;
@@ -1115,6 +1289,8 @@ export const bump = Effect.fnUntraced(function* (
   const slots = yield* Semaphore.make(4);
 
   const context: BumpContext = {
+    release,
+    notes: yield* Effect.cached(readNotes(release)),
     root,
     settings,
     dryRun,
@@ -1123,11 +1299,13 @@ export const bump = Effect.fnUntraced(function* (
 
   const failed: Array<string> = [];
   const updated: Array<string> = [];
+  const held: Array<string> = [];
 
   const counts: Record<Outcome, number> = {
     updated: 0,
     current: 0,
     skipped: 0,
+    held: 0,
   };
 
   yield* RunLog.info(
@@ -1150,6 +1328,8 @@ export const bump = Effect.fnUntraced(function* (
             counts[outcome] += 1;
 
             if (outcome === "updated") updated.push(repo);
+
+            if (outcome === "held") held.push(repo);
           }),
         ),
         Effect.catchCause((cause) =>
@@ -1165,14 +1345,30 @@ export const bump = Effect.fnUntraced(function* (
     [
       `${release.repo} ${release.tag}:`,
       `${dryRun ? "would update" : "updated"} ${listed(updated)},`,
+      ...(held.length === 0
+        ? []
+        : [
+            `${dryRun ? "would hold" : "held"} ${listed(held)} for a regression check,`,
+          ]),
       `${counts.current} already up to date, ${counts.skipped} skipped,`,
       `${listed(failed)} failed`,
     ].join(" "),
   );
 
-  if (failed.length > 0)
+  // A run can't both fail and hand off, so a heal over the failures takes the
+  // held updates with them, as the deps job does for a drift review
+  if (failed.length > 0) {
+    if (held.length > 0 && !dryRun)
+      yield* RunLog.warn(
+        `${listed(held)} held for a regression check, so they go to the heal with the failures`,
+      );
+
     return yield* new ConsumersFailed({
       action: "bump",
-      repos: failed.toSorted(),
+      repos: [...failed, ...(dryRun ? [] : held)].toSorted(),
     });
+  }
+
+  if (held.length > 0 && !dryRun)
+    return HandedOff.make({ repos: held.toSorted() });
 });
