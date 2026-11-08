@@ -8,6 +8,7 @@
  * soon as what they need is published, and only the work on their clones is
  * limited to four at a time, so a slow CI run doesn't hold up the next push.
  */
+import { stripVTControlCharacters } from "node:util";
 import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
@@ -86,6 +87,40 @@ const describe = (edit: Edit) =>
     Dependency: ({ name, version }) => `${name} to ${version}`,
   });
 
+/** A line mise prefixes with its task's name, and the one saying it failed. */
+const taskLine = /^\[([^\]]+)\] /;
+const taskFailed = /^\[([^\]]+)\] ERROR /;
+
+/**
+ * The part of a failed command's output worth showing. mise runs tasks in
+ * parallel and prefixes each line with its task, so when several tasks wrote
+ * and one failed, that's the failed task's own last 40 lines and mise's error
+ * line, without colours. Otherwise it's the last 20 lines.
+ */
+export const failedOutput = (output: string) => {
+  const lines = output.trim().split("\n");
+  const plain = lines.map((line) => stripVTControlCharacters(line));
+  const errors = plain.filter((line) => taskFailed.test(line));
+
+  const failed = new Set(
+    errors.flatMap((line) => taskFailed.exec(line)?.[1] ?? []),
+  );
+
+  const tasks = new Set(
+    plain.flatMap((line) => taskLine.exec(line)?.[1] ?? []),
+  );
+
+  // A task run on its own isn't prefixed, so its error would be filtered out
+  if (failed.size === 0 || tasks.size < 2) return lines.slice(-20).join("\n");
+
+  const own = plain.filter(
+    (line) =>
+      !taskFailed.test(line) && failed.has(taskLine.exec(line)?.[1] ?? ""),
+  );
+
+  return [...own.slice(-40), ...errors].join("\n");
+};
+
 class CommandFailed extends Schema.TaggedError<CommandFailed>()(
   "CommandFailed",
   {
@@ -95,7 +130,7 @@ class CommandFailed extends Schema.TaggedError<CommandFailed>()(
   },
 ) {
   override get message() {
-    const tail = this.output.trim().split("\n").slice(-20).join("\n");
+    const tail = failedOutput(this.output);
 
     return `${this.command} exited with ${this.exitCode}${tail === "" ? "" : `\n${tail}`}`;
   }
