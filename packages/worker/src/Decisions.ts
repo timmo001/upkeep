@@ -11,7 +11,7 @@ import {
 import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
 import { tmpdir } from "node:os";
 import { Config, Effect, Layer, Schema } from "effect";
-import { run as exec } from "./jobs/bump";
+import { run as exec } from "./Command";
 import * as Settings from "./settings";
 
 /** The longest line the model reads, such as a log line or an error. */
