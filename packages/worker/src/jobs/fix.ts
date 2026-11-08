@@ -11,6 +11,7 @@
 import { Api } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Option, Schema, Semaphore } from "effect";
+import * as Regression from "../Regression";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { createSession, lastWords, recordCommits } from "./agent";
@@ -138,6 +139,11 @@ const prompt = (
     ...(run.job === "deps"
       ? [
           "The run was applying the dependency update groups named in the log, each as a commit to the default branch; the failed group's updates are in the log line for its `renovate/` branch. Apply that group here, read its release notes and migrate whatever the new versions need until the checks pass, push it, then close the updater's open pull request for that branch, if there is one, with a comment linking the commit. A drift failure after the updates is fixed as the drift job's would be.",
+        ]
+      : []),
+    ...(log.some(({ message }) => message.includes(Regression.needsCheck))
+      ? [
+          `Some updates in the log ${Regression.needsCheck}: the line saying so gives why, with links to the release notes and changes. A held one wasn't pushed: apply it here as the job would, run the repository's checks, then check what the update could change, reading its notes for what to look at and using the app where you can. One whose regression commands failed is fixed like any other failure. Push it once it holds up. If it doesn't, or you can't tell, push nothing and say what you found, which is \`Outcome: needs you\`.`,
         ]
       : []),
     ...(run.job === "sync"

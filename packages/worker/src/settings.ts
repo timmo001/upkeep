@@ -18,6 +18,17 @@ const BumpRepo = Schema.Struct({
    * tracked files they change go in the update's commit.
    */
   generate: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Opt in to regression checks: an update whose version change or release
+   * notes say it could change how the app looks or behaves runs `commands`
+   * before the push, in place of the repository's mise `regression` task. With
+   * neither, the update is held and handed to an agent.
+   */
+  regression: Schema.optionalKey(
+    Schema.Struct({
+      commands: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
 });
 
 /**
