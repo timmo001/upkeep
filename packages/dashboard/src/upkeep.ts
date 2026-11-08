@@ -266,6 +266,24 @@ export const openSession = UpkeepApi.runtime.fn(
     ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(runsKey))),
 );
 
+/**
+ * Have an agent's session that left work for you ask you what it needs in
+ * the Plannotator Inbox, resumed in the background on the worker given.
+ */
+export const askInbox = UpkeepApi.runtime.fn(
+  (payload: {
+    readonly worker: string;
+    readonly session: string;
+    readonly directory: string;
+    readonly title: string;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.attention.command({
+        payload: { kind: "ask-inbox", ...payload },
+      }),
+    ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(runsKey))),
+);
+
 /** Start a group of work with the items given in it. */
 export const createGroup = UpkeepApi.runtime.fn(
   (payload: { readonly name: string; readonly items: ReadonlyArray<string> }) =>

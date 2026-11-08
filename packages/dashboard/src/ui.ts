@@ -9,6 +9,7 @@ import { css, html, render, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
 import {
   phArrowSquareOut,
+  phChatCircle,
   phCheck,
   phCheckCircle,
   phCopy,
@@ -22,7 +23,7 @@ import {
   phWarningCircle,
   phXCircle,
 } from "./icons.ts";
-import { openSession, token } from "./upkeep.ts";
+import { askInbox, openSession, token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-badge.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
@@ -354,7 +355,8 @@ export const attentionBadge = html`<gw-badge
 /**
  * An agent's OpenCode session: the command that resumes it, with a button to
  * copy it, and one to open it in Herdr on each worker in `on`, the one it ran
- * on first.
+ * on first. With `ask`, for a session that left work for you, one more has it
+ * ask you in the Plannotator Inbox, resumed in the background where it ran.
  */
 export const agentSession = (
   open: {
@@ -364,6 +366,7 @@ export const agentSession = (
     readonly title: string;
   },
   on: ReadonlyArray<string> = [open.worker],
+  ask = false,
 ) => {
   const resume = `opencode2 --session ${open.session}`;
 
@@ -401,6 +404,25 @@ export const agentSession = (
           >Resume in Herdr on ${worker}</gw-button
         >`,
     )}
+    ${
+      ask
+        ? html`<gw-button
+            size="xs"
+            appearance="outlined"
+            variant="neutral"
+            icon=${phChatCircle}
+            @click=${(event: Event) => {
+              const button = event.currentTarget;
+
+              registry.set(askInbox, open);
+
+              if (button instanceof HTMLElement)
+                button.setAttribute("icon", phCheck);
+            }}
+            >Ask me in the Inbox</gw-button
+          >`
+        : null
+    }
     <gw-button
       size="xs"
       appearance="plain"

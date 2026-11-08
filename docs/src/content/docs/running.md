@@ -446,6 +446,13 @@ session that needs you, the worker shares it with the server
 button too; one that doesn't have the session imports it first. A session
 that couldn't be shared only opens on the worker that ran it.
 
+When the heal left something for you, the page also has **Ask me in the
+Inbox**. It resumes the session in the background on the worker that ran it,
+with `opencode run --auto`, telling the agent to load the `plannotator` skill
+and put where the work stands and what it needs from you in the Plannotator
+Inbox, then end its turn. Your answer there goes back to the session. The
+agent gets ten minutes to send it.
+
 Every session the dashboard shows, a heal's or a skill change's, also has **Open here**, an `upkeep://open/<session>` link that opens
 it on the machine the browser is on. The `upkeep-git` package registers the
 link with `upkeep open`, which opens the session through that machine's

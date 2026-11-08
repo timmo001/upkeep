@@ -141,6 +141,7 @@ const healFacts = (
   heal: Domain.Heal,
   worker: string | null,
   resumers: ReadonlyArray<string>,
+  attention: boolean,
 ) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
@@ -195,6 +196,7 @@ const healFacts = (
                 },
                 // A shared session opens on any worker that can open one
                 heal.shared ? resumers : [worker],
+                attention,
               ),
         )
   }
@@ -419,7 +421,7 @@ export class UpkeepRun extends LitElement {
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
-          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers())}
+          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers(), current.attention)}
           ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${

@@ -581,27 +581,17 @@ const imported = Effect.fnUntraced(function* (
 });
 
 /**
- * Open an agent's OpenCode session through `attention.resume`, such as in a
- * terminal pane: in the directory it worked in when OpenCode here has it, or
- * else imported, from what `lookup` finds shared on the server, into this
- * machine's checkout of its repository. Returns where it opened. The worker
- * runs it for the dashboard's Resume buttons, and `upkeep open` for an
- * `upkeep://` link.
+ * Where a session is on this worker, its title and the OpenCode command: the
+ * directory it worked in when OpenCode here has it, or else imported, from
+ * what `lookup` finds shared on the server, into this machine's checkout of
+ * its repository.
  */
-export const openSession = Effect.fnUntraced(function* (
+const locate = Effect.fnUntraced(function* (
   command: Session,
+  settings: Settings.Settings,
   lookup: Lookup,
 ) {
-  const settings = yield* Settings.load();
-  const setup = settings.attention?.resume;
-
-  if (setup === undefined)
-    return yield* new LaunchFailed({
-      message: "There's no attention.resume in Upkeep's settings here",
-    });
-
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const { session } = command;
   const opencode = settings.heal?.opencode ?? "opencode2";
   const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
@@ -629,6 +619,33 @@ export const openSession = Effect.fnUntraced(function* (
 
   const title = command.title ?? here?.title ?? session;
 
+  return { directory, title, opencode };
+});
+
+/**
+ * Open an agent's OpenCode session through `attention.resume`, such as in a
+ * terminal pane: in the directory it worked in when OpenCode here has it, or
+ * else imported, from what `lookup` finds shared on the server, into this
+ * machine's checkout of its repository. Returns where it opened. The worker
+ * runs it for the dashboard's Resume buttons, and `upkeep open` for an
+ * `upkeep://` link.
+ */
+export const openSession = Effect.fnUntraced(function* (
+  command: Session,
+  lookup: Lookup,
+) {
+  const settings = yield* Settings.load();
+  const setup = settings.attention?.resume;
+
+  if (setup === undefined)
+    return yield* new LaunchFailed({
+      message: "There's no attention.resume in Upkeep's settings here",
+    });
+
+  const path = yield* Path.Path;
+  const { session } = command;
+  const { directory, title } = yield* locate(command, settings, lookup);
+
   const fill = (arg: string) =>
     arg
       .replaceAll("{session}", session)
@@ -652,4 +669,55 @@ export const resume = Effect.fnUntraced(function* (
 
   yield* openSession(command, reporter.session);
   yield* summary(`Opened session ${command.session} for ${command.title}`);
+});
+
+/** What an agent is told when you ask it to put its questions in the Inbox. */
+const askInboxPrompt = [
+  "This work was left for a person, and they've asked you to put what you need from them in the Plannotator Inbox.",
+  "Load the `plannotator` skill first, and any other skill it points you to for asking questions.",
+  "Then send one message with the `plannotator_inbox` tool: where the work stands, what you tried, and each decision only they can make as a `:::question` block with your recommendation.",
+  "End your turn once it's sent. Their answer comes back to this session, and you carry on from there.",
+].join(" ");
+
+/** How long the agent has to send its message. */
+const askInboxMinutes = 10;
+
+/**
+ * The ask-inbox command: resume the session in the background on this
+ * worker, telling the agent to ask you in the Plannotator Inbox.
+ */
+export const askInbox = Effect.fnUntraced(function* (
+  command: Extract<Domain.Command, { readonly kind: "ask-inbox" }>,
+) {
+  const reporter = yield* Reporter;
+  const settings = yield* Settings.load();
+
+  const { directory, opencode } = yield* locate(
+    command,
+    settings,
+    reporter.session,
+  );
+
+  yield* RunLog.info(
+    `Asking session ${command.session} in ${directory} to ask you in the Inbox`,
+  );
+
+  yield* run(
+    opencode,
+    // Nobody is there to answer a permission prompt; denied ones stay denied
+    ["run", "--auto", "--session", command.session, askInboxPrompt],
+    { cwd: directory, trusted: "" },
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: `${askInboxMinutes} minutes`,
+      orElse: () =>
+        Effect.fail(
+          new LaunchFailed({
+            message: `The agent didn't finish within ${askInboxMinutes} minutes`,
+          }),
+        ),
+    }),
+  );
+
+  yield* summary(`Asked ${command.title} to ask you in the Inbox`);
 });

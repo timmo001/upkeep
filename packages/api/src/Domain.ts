@@ -634,8 +634,9 @@ export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
 /**
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read,
- * `start-agent` opens an agent on one worker, which only that one claims, and
- * `open-session` opens an agent's OpenCode session on the worker named.
+ * `start-agent` opens an agent on one worker, which only that one claims,
+ * `open-session` opens an agent's OpenCode session on the worker named, and
+ * `ask-inbox` has that session ask you in the Plannotator Inbox there.
  * The `skill-*` commands run as the `skill-change` job instead, `change` as
  * the `change` job, and `machine` names the worker a machine job's run is
  * for.
@@ -667,6 +668,18 @@ export const Command = Schema.Union([
    */
   Schema.Struct({
     kind: Schema.Literal("open-session"),
+    worker: Schema.String,
+    session: Schema.String,
+    directory: Schema.String,
+    title: Schema.String,
+  }),
+  /**
+   * Resume an agent's session that left work for you in the background, on
+   * the worker named, telling it to ask you what it needs in the Plannotator
+   * Inbox. The session is found as for `open-session`.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("ask-inbox"),
     worker: Schema.String,
     session: Schema.String,
     directory: Schema.String,
