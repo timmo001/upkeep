@@ -711,8 +711,8 @@ logs that it would hold the update.
 
 In the repositories listed in `deps.apply` in the worker's config file, the
 `deps` job also applies each group of updates Upkeep owns, one at a time: it
-edits the `package.json`, mise config, workflow, or custom regex or jsonata
-match the
+edits the `package.json`, mise config, workflow, Dockerfile, Compose file, or
+custom regex or jsonata match the
 update was read from, or moves its lockfile alone for an update within its
 range, installs where a `package.json` changed, runs
 `mise lock` where a mise config with a `mise.lock` changed, and runs the
@@ -734,6 +734,24 @@ manager. Each submodule follows its `.gitmodules` branch, or its remote's
 default branch, and an update checks out the new commit. A config's
 `customDatasources` are fetched in their format (`json`, `plain`, `yaml` or
 `toml`) and run through their JSONata transforms, as Renovate does.
+
+Docker images are read from Dockerfiles' `FROM` lines (past earlier stages,
+`scratch`, and any with a build argument in them, which are noted and left
+out), Compose files' `image:`, and workflows' job containers, services and
+`docker://` steps, as well as any custom manager with `datasource=docker`.
+Their tags come from the registry: Docker Hub, ghcr.io, or any other that
+hands out anonymous Bearer tokens. With no `versioning` set they follow
+Renovate's docker versioning, so a tag only moves to one with the same suffix
+and the same number of parts, such as `22-alpine` to `24-alpine`, and a tag
+that isn't a version, such as `latest`, only has its digest moved or pinned.
+`versionCompatibility` splits a tag into the version compared and the part
+every new tag must share, as `workarounds:nodeDockerVersioning` does. With
+`pinDigests` on, an image with no digest gets a `pinDigest` update; a pinned
+image keeps a digest through a new tag, and gets a `digest` update when its
+own tag moves. Dates, needed for `minimumReleaseAge`, are only read for the
+newest few candidate tags, from Docker Hub's API for images there, so the
+lookups stay clear of its pull limit. A custom regex match can move a digest
+but not pin a new one.
 
 To hand a repository over to Upkeep entirely, set `"enabled": false` at the
 top of its Renovate config. Renovate then stops, and Upkeep keeps reading the
