@@ -226,6 +226,54 @@ test("submodules are read from .gitmodules with the commits the tree pins", () =
   ]);
 });
 
+test("package.json dependencies take the version their nearest lockfile locks", () => {
+  const extraction = Effect.runSync(
+    Managers.extract(
+      toPolicy({}, "renovate.json", []),
+      new Map([
+        [
+          "packages/a/package.json",
+          JSON.stringify({
+            dependencies: { semver: "^7.5.0", old: "npm:semver@^6.0.0" },
+            peerDependencies: { semver: "^7.0.0" },
+          }),
+        ],
+        [
+          "package-lock.json",
+          JSON.stringify({
+            lockfileVersion: 3,
+            packages: {
+              "node_modules/semver": { version: "7.6.0" },
+              "node_modules/old": { version: "6.3.1" },
+            },
+          }),
+        ],
+        ["tools/package.json", JSON.stringify({ dependencies: { a: "^1" } })],
+        ["tools/bun.lock", "{ not json"],
+      ]),
+    ),
+  );
+
+  expect(
+    extraction.dependencies.map((dependency) => [
+      dependency.manager,
+      dependency.depName,
+      dependency.depType,
+      dependency.lockFiles,
+      dependency.lockedVersion,
+    ]),
+  ).toEqual([
+    ["npm", "semver", "dependencies", ["package-lock.json"], "7.6.0"],
+    ["npm", "old", "dependencies", ["package-lock.json"], undefined],
+    ["npm", "semver", "peerDependencies", ["package-lock.json"], undefined],
+    ["bun", "a", "dependencies", ["tools/bun.lock"], undefined],
+  ]);
+  expect(extraction.notes).toHaveLength(1);
+  expect(extraction.notes[0]).toStartWith(
+    "tools/bun.lock couldn't be read, so its locked versions aren't known",
+  );
+});
+
 test("mergeable arrays concatenate and objects merge, other keys replace", () => {
   const merged = mergeChildConfig(
     {

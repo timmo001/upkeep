@@ -1,14 +1,15 @@
 /**
  * The managers: find the dependencies in a repository's files, read from
  * their text without running a package manager. npm and Bun read
- * package.json beside a bun.lock, mise reads its TOML configs, GitHub
- * Actions reads workflows and actions, git submodules read .gitmodules and
- * the commits the tree pins, and custom regex and jsonata managers
- * read whatever files a policy points them at.
+ * package.json with the versions its lockfile pins, mise reads its TOML
+ * configs, GitHub Actions reads workflows and actions, git submodules read
+ * .gitmodules and the commits the tree pins, and custom regex and jsonata
+ * managers read whatever files a policy points them at.
  */
 import jsonata from "jsonata";
 import { Cause, Effect, Match, Option, Predicate, Schema } from "effect";
 import { Yaml } from "effect/encoding";
+import * as Lockfiles from "./Lockfiles";
 import type { CustomManager, Dependency, Policy } from "./Policy";
 import { matchesPattern } from "./Rules";
 
@@ -56,6 +57,9 @@ export const wanted = (policy: Policy, tree: ReadonlyArray<string>) =>
     (file) =>
       !ignored(policy, file) &&
       (/(^|\/)bun\.lockb?$/.test(file) ||
+        Lockfiles.names.some(
+          (name) => file === name || file.endsWith(`/${name}`),
+        ) ||
         Object.values(filePatterns).some((patterns) =>
           matchesFiles(file, patterns),
         ) ||
@@ -66,17 +70,6 @@ export const wanted = (policy: Policy, tree: ReadonlyArray<string>) =>
 
 const dirname = (file: string) =>
   file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
-
-/** The nearest bun.lock at or above a package.json, which pins its workspace. */
-const bunLock = (file: string, files: ReadonlyMap<string, string>) => {
-  for (let directory = dirname(file); ; directory = dirname(directory)) {
-    const lock = directory === "" ? "bun.lock" : `${directory}/bun.lock`;
-
-    if (files.has(lock)) return lock;
-
-    if (directory === "") return undefined;
-  }
-};
 
 const dependencyTypes = [
   "dependencies",
@@ -150,6 +143,7 @@ const extractPackage = (
   file: string,
   text: string,
   files: ReadonlyMap<string, string>,
+  read: (lockfile: string) => Lockfiles.Locked | undefined,
 ): Extraction => {
   const decoded = decodePackageJson(JSON.parse(text));
 
@@ -157,8 +151,10 @@ const extractPackage = (
     return { dependencies: [], notes: [`${file} couldn't be read`] };
 
   const manifest = decoded.value;
-  const lock = bunLock(file, files);
-  const manager = lock === undefined ? "npm" : "bun";
+  const lock = Lockfiles.nearest(file, files);
+  const manager = lock?.split("/").at(-1) === "bun.lock" ? "bun" : "npm";
+  const locked = lock === undefined ? undefined : read(lock);
+  const directory = lock === undefined ? "" : Lockfiles.relative(file, lock);
 
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
@@ -186,11 +182,18 @@ const extractPackage = (
         depType,
       );
 
-      // Renovate's bun manager doesn't read versions from bun.lock, so a
-      // range in bun's hands has no locked version, and no in-range branch
+      // An alias moves under its own name, which the lockfile doesn't key
+      const lockedVersion =
+        dependency.datasource === "npm" &&
+        dependency.packageName === depName &&
+        Lockfiles.lockedTypes.has(depType)
+          ? locked?.(directory, depType, depName, value)
+          : undefined;
+
       dependencies.push({
         ...dependency,
         lockFiles: lock === undefined ? undefined : [lock],
+        lockedVersion,
       });
     }
   }
@@ -776,6 +779,27 @@ export const extract = Effect.fnUntraced(function* (
     }
   };
 
+  // Each lockfile read once, however many package.json files it pins
+  const lockfiles = new Map<string, Lockfiles.Locked | undefined>();
+
+  const readLockfile = (lockfile: string) => {
+    if (!lockfiles.has(lockfile)) {
+      try {
+        lockfiles.set(
+          lockfile,
+          Lockfiles.read(lockfile, files.get(lockfile) ?? ""),
+        );
+      } catch (cause) {
+        lockfiles.set(lockfile, undefined);
+        notes.push(
+          `${lockfile} couldn't be read, so its locked versions aren't known: ${String(cause)}`,
+        );
+      }
+    }
+
+    return lockfiles.get(lockfile);
+  };
+
   for (const [file, text] of files) {
     if (ignored(policy, file)) continue;
 
@@ -783,7 +807,7 @@ export const extract = Effect.fnUntraced(function* (
       matchesFiles(file, filePatterns.npm) &&
       (enabled(policy, "npm") || enabled(policy, "bun"))
     )
-      attempt(file, () => extractPackage(file, text, files));
+      attempt(file, () => extractPackage(file, text, files, readLockfile));
 
     if (matchesFiles(file, filePatterns.mise) && enabled(policy, "mise"))
       attempt(file, () => extractMise(file, text));
