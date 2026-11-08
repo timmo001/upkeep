@@ -7,29 +7,15 @@
  * retried and anything else is left for you.
  */
 import {
-  CloudflareClient,
-  CloudflareDecisionModel,
-} from "@effect/ai-cloudflare";
-import { TypeSafeClient, TypeSafeDecisionModel } from "@effect/ai-typesafe";
-import {
   GhCommandError,
   GhTimeoutError,
   isRateLimited,
   isTransient,
 } from "@timmo001/effect-gh";
 import { Catalogue, Domain } from "@upkeep/api";
-import { tmpdir } from "node:os";
-import {
-  Cause,
-  Clock,
-  Config,
-  Duration,
-  Effect,
-  Layer,
-  Option,
-  Schema,
-} from "effect";
+import { Cause, Clock, Duration, Effect, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
+import * as Decisions from "../Decisions";
 import { reason as failureReason } from "../Failure";
 import * as RateLimits from "../RateLimits";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
@@ -37,12 +23,6 @@ import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { run as exec } from "./bump";
 import { fix, handedTo } from "./fix";
-
-/** The longest log line or error the model reads. */
-const maxMessage = 300;
-
-/** How many of the run's last log lines the model reads. */
-const maxLines = 40;
 
 const Failure = Schema.Struct({
   failed: Schema.Struct({
@@ -87,27 +67,6 @@ interface Chosen {
 const label = (agent: Settings.Agent) =>
   agent.variant === undefined ? agent.model : `${agent.model}#${agent.variant}`;
 
-type ModelDecisions = Exclude<
-  Settings.DecisionModel,
-  { readonly provider: "opencode" }
->;
-
-const decisionLayer = (options: ModelDecisions) =>
-  options.provider === "cloudflare"
-    ? CloudflareDecisionModel.layer({ model: options.model }).pipe(
-        Layer.provide(CloudflareClient.layerConfig()),
-      )
-    : TypeSafeDecisionModel.layer({ model: options.model }).pipe(
-        Layer.provide(
-          TypeSafeClient.layerConfig({
-            apiUrl: Config.succeed(options.url),
-            apiKey: Config.Redacted("UPKEEP_DECISION_API_KEY").pipe(
-              Config.withDefault(undefined),
-            ),
-          }),
-        ),
-      );
-
 /**
  * The log lines about the heal's target: for consumers, the ones naming their
  * repositories, so a run over many repositories reads as their failure.
@@ -145,14 +104,17 @@ export const describe = (
       heal.target.kind === "upkeep"
         ? "upkeep"
         : Domain.targetRepos(heal.target).join(", "),
-    error: (run.error ?? "").slice(0, maxMessage),
+    error: (run.error ?? "").slice(0, Decisions.maxMessage),
     log: relevant(heal, log)
-      .slice(-maxLines)
-      .map((line) => `${line.level}: ${line.message.slice(0, maxMessage)}`),
+      .slice(-Decisions.maxLines)
+      .map(
+        (line) =>
+          `${line.level}: ${line.message.slice(0, Decisions.maxMessage)}`,
+      ),
     before: precedents.flatMap((precedent) =>
       precedent.notes.map(
         (note) =>
-          `${precedent.title} (${precedent.state}): ${note.slice(0, maxMessage)}`,
+          `${precedent.title} (${precedent.state}): ${note.slice(0, Decisions.maxMessage)}`,
       ),
     ),
   },
@@ -217,10 +179,6 @@ const reviewing = (
   });
 };
 
-/** How a heal's reason names the model that chose it, to count its use. */
-const by = (model: Settings.DecisionModel) =>
-  `by ${Settings.deciderName(model)}`;
-
 /** Ask the model, picking an agent too when it chooses a fix. */
 const decide = Effect.fnUntraced(function* (
   failure: Failure,
@@ -231,7 +189,7 @@ const decide = Effect.fnUntraced(function* (
   const { answers } = yield* decisions.decide(Action, { input: failure });
   const { label: decision, probabilities } = answers.action;
   const sure = Math.round(probabilities[decision] * 100);
-  const reason = `${actions[decision]} (${sure}% sure, ${by(model)})`;
+  const reason = `${actions[decision]} (${sure}% sure, ${Decisions.by(model)})`;
 
   if (decision !== "fix" || agents.length < 2) {
     return {
@@ -295,21 +253,17 @@ const decideByAgent = Effect.fnUntraced(function* (
     JSON.stringify(failure.failed, null, 2),
   ].join("\n");
 
-  const output = yield* exec(
+  const answer = yield* Decisions.decideByAgent({
+    answer: Answer,
+    prompt,
+    title: "Upkeep heal decision",
+    model,
     opencode,
-    ["run", "--model", model.model, "--title", "Upkeep heal decision", prompt],
-    { cwd: tmpdir(), trusted: tmpdir() },
-  );
-
-  const line = output.match(/\{[^\n]*\}/g)?.at(-1) ?? output;
-
-  const answer = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(Answer),
-  )(line);
+  });
 
   return {
     decision: answer.action,
-    reason: `${actions[answer.action]} (${by(model)})`,
+    reason: `${actions[answer.action]} (${Decisions.by(model)})`,
     agent: Option.fromNullishOr(
       answer.action === "fix"
         ? (agents.find((agent) => label(agent) === answer.agent) ?? agents[0])
@@ -625,7 +579,9 @@ export const heal = Effect.fnUntraced(function* () {
 
             const used = (yield* reporter.heals(
               now - Duration.toMillis("1 day"),
-            )).filter(({ heal }) => heal?.reason?.includes(by(model))).length;
+            )).filter(({ heal }) =>
+              heal?.reason?.includes(Decisions.by(model)),
+            ).length;
 
             if (used >= limit) {
               yield* RunLog.info(
@@ -668,7 +624,7 @@ export const heal = Effect.fnUntraced(function* () {
 
             return yield* orFallback(
               decide(failure, agents, model).pipe(
-                Effect.provide(decisionLayer(model)),
+                Effect.provide(Decisions.layer(model)),
               ),
             );
           }),
