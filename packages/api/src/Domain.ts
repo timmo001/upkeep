@@ -157,13 +157,16 @@ export type Trigger = typeof Trigger.Type;
  * Where a run is: waiting for a worker, on one, or done. A run cancelled
  * while it was running is `cancelled`; one cancelled while queued is dropped.
  * A run that found nothing to do, such as a bump of a release with no
- * consumers, is `skipped`.
+ * consumers, is `skipped`. One that found work only an agent can do, such as
+ * a drift review, and handed it to a heal without anything failing, is
+ * `handed-off`.
  */
 export const RunState = Schema.Literals([
   "queued",
   "running",
   "succeeded",
   "skipped",
+  "handed-off",
   "failed",
   "cancelled",
 ]);
@@ -171,7 +174,12 @@ export const RunState = Schema.Literals([
 export type RunState = typeof RunState.Type;
 
 /** How a run can end. */
-export const Outcome = Schema.Literals(["succeeded", "skipped", "failed"]);
+export const Outcome = Schema.Literals([
+  "succeeded",
+  "skipped",
+  "handed-off",
+  "failed",
+]);
 
 export type Outcome = typeof Outcome.Type;
 
@@ -779,6 +787,8 @@ export const Activity = Schema.Struct({
   runs: Schema.Struct({
     succeeded: Schema.Int,
     skipped: Schema.Int,
+    /** Missing from older servers. */
+    handedOff: Schema.optionalKey(Schema.Int),
     failed: Schema.Int,
     cancelled: Schema.Int,
     heals: Schema.Int,

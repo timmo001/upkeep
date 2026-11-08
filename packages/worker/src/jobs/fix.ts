@@ -61,11 +61,14 @@ const prompt = (
           `You may push a fix straight to ${repo}'s default branch once its own checks pass. Never open a pull request.`,
         ];
 
+  const handedOff = run.state === "handed-off";
+
   return [
-    `Upkeep's ${run.job} run ${run.id} failed${heal.target.kind === "upkeep" ? "" : ` for ${Domain.targetName(heal.target)}`}:`,
+    handedOff
+      ? `Upkeep's ${run.job} run ${run.id} handed work to you${heal.target.kind === "upkeep" ? "" : ` for ${Domain.targetName(heal.target)}`}, with nothing failing.`
+      : `Upkeep's ${run.job} run ${run.id} failed${heal.target.kind === "upkeep" ? "" : ` for ${Domain.targetName(heal.target)}`}:`,
     "",
-    run.error ?? "(no error)",
-    "",
+    ...(handedOff ? [] : [run.error ?? "(no error)", ""]),
     "The end of its log:",
     "",
     ...log.slice(-60).map((line) => `${line.level}: ${line.message}`),
@@ -85,16 +88,24 @@ const prompt = (
         ]),
     ...(several
       ? [
-          "It failed the same way in several repositories, checked out side by side here:",
+          handedOff
+            ? "It handed off several repositories, checked out side by side here:"
+            : "It failed the same way in several repositories, checked out side by side here:",
           "",
           ...checkouts.map(
             (checkout) =>
               `- ${checkout.repo} in ${checkout.directory} (${checkout.branch})`,
           ),
           "",
-          "Find the cause once and make the same fix in each, adapting it where they differ. Run each repository's own checks in its own checkout and push each on its own, so one that can't be fixed doesn't hold up the rest.",
+          handedOff
+            ? "Do what the log asks of each. Run each repository's own checks in its own checkout and push each on its own, so one that can't be done doesn't hold up the rest."
+            : "Find the cause once and make the same fix in each, adapting it where they differ. Run each repository's own checks in its own checkout and push each on its own, so one that can't be fixed doesn't hold up the rest.",
         ]
-      : [`Find the cause and fix it in this checkout of ${repo}.`]),
+      : [
+          handedOff
+            ? `Do what the log asks of ${repo} in this checkout.`
+            : `Find the cause and fix it in this checkout of ${repo}.`,
+        ]),
     ...(run.job === "stalled-updates"
       ? [
           "The run was taking over the dependency update pull request named in the log. Apply its update here, migrate whatever the new version needs until the checks pass, push it, then close the pull request with a comment linking the commit. If it can't land because another dependency pins the old version exactly, even in its newest release, push nothing: close the pull request with a comment naming that pin, and that's `Outcome: fixed`.",

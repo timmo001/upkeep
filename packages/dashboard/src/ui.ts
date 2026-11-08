@@ -16,6 +16,7 @@ import {
   phMinusCircle,
   phPlayCircle,
   phProhibit,
+  phRobot,
   phSignOut,
   phTerminalWindow,
   phWarningCircle,
@@ -202,12 +203,17 @@ export const duration = (run: Domain.Run) => {
 
 const states: Record<
   Domain.RunState,
-  { readonly path: string; readonly tone: string }
+  {
+    readonly path: string;
+    readonly tone: string;
+    readonly label?: string;
+  }
 > = {
   queued: { path: phHourglass, tone: "neutral" },
   running: { path: phPlayCircle, tone: "info" },
   succeeded: { path: phCheckCircle, tone: "success" },
   skipped: { path: phMinusCircle, tone: "neutral" },
+  "handed-off": { path: phRobot, tone: "info", label: "Handed off" },
   failed: { path: phXCircle, tone: "danger" },
   cancelled: { path: phProhibit, tone: "warning" },
 };
@@ -243,7 +249,7 @@ export const stateBadge = (state: Domain.RunState) =>
     size="small"
     icon=${states[state].path}
     tone=${states[state].tone}
-    >${capitalise(state)}</gw-badge
+    >${states[state].label ?? capitalise(state)}</gw-badge
   >`;
 
 const signOut = () => registry.set(token, "");

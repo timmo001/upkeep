@@ -648,6 +648,13 @@ const applyRepository = Effect.fnUntraced(function* (
         root: yield* Drift.cacheRoot,
         dryRun: false,
       }).pipe(
+        // A release to review goes to the heal with the rest, as drift's
+        // review in a deps run is part of landing the update
+        Effect.tap((outcome) =>
+          outcome === "review"
+            ? Effect.sync(() => failed.push("drift"))
+            : Effect.void,
+        ),
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: drift: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push("drift"))),

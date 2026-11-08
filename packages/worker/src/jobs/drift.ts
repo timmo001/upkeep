@@ -19,7 +19,7 @@ import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
-import { ConsumersFailed, skipped } from "../Worker";
+import { ConsumersFailed, HandedOff, skipped } from "../Worker";
 import { checkout, run, watch } from "./bump";
 
 /**
@@ -331,7 +331,7 @@ const repositories = Effect.fnUntraced(function* () {
   ].toSorted();
 });
 
-type Outcome = "updated" | "current" | "skipped";
+type Outcome = "updated" | "current" | "review" | "skipped";
 
 interface DriftContext {
   readonly root: string;
@@ -368,6 +368,7 @@ export const driftRepository = Effect.fnUntraced(function* (
 
   const { tools } = yield* decode(yield* fs.readFileString(file));
   const problems: Array<string> = [];
+  const reviews: Array<string> = [];
   const moved: Array<string> = [];
 
   for (const tool of tools) {
@@ -384,7 +385,7 @@ export const driftRepository = Effect.fnUntraced(function* (
     if (tag === undefined || tag === tool.reviewed) continue;
 
     if (tool.update === undefined) {
-      problems.push(needsReview(tool, tag, []));
+      reviews.push(needsReview(tool, tag, []));
 
       continue;
     }
@@ -407,7 +408,7 @@ export const driftRepository = Effect.fnUntraced(function* (
     const derived = derivedFiles(tool, changed);
 
     if (derived.length > 0) {
-      problems.push(needsReview(tool, tag, derived));
+      reviews.push(needsReview(tool, tag, derived));
 
       yield* run("git", ["reset", "--quiet", "--hard"], options);
       yield* run("git", ["clean", "--quiet", "-fd"], options);
@@ -427,7 +428,8 @@ export const driftRepository = Effect.fnUntraced(function* (
     moved.push(`${tool.repo} to ${tag}`);
   }
 
-  for (const problem of problems) yield* RunLog.warn(`${repo}: ${problem}`);
+  for (const problem of [...problems, ...reviews])
+    yield* RunLog.warn(`${repo}: ${problem}`);
 
   if (moved.length > 0) {
     if (context.dryRun) {
@@ -480,8 +482,11 @@ export const driftRepository = Effect.fnUntraced(function* (
 
   if (problems.length > 0)
     return yield* new DriftError({
-      message: `${problems.length} ${problems.length === 1 ? "tool needs" : "tools need"} attention`,
+      message: `${problems.length + reviews.length} ${problems.length + reviews.length === 1 ? "tool needs" : "tools need"} attention`,
     });
+
+  // Releases to review aren't a failure: they're handed to an agent
+  if (reviews.length > 0) return "review" satisfies Outcome;
 
   return moved.length > 0 ? "updated" : ("current" satisfies Outcome);
 });
@@ -497,11 +502,13 @@ export const drift = Effect.fnUntraced(function* () {
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
   const failed: Array<string> = [];
+  const reviewing: Array<string> = [];
   const updated: Array<string> = [];
 
   const counts: Record<Outcome, number> = {
     updated: 0,
     current: 0,
+    review: 0,
     skipped: 0,
   };
 
@@ -518,6 +525,8 @@ export const drift = Effect.fnUntraced(function* () {
             counts[outcome] += 1;
 
             if (outcome === "updated") updated.push(repo);
+
+            if (outcome === "review") reviewing.push(repo);
           }),
         ),
         Effect.catchCause((cause) =>
@@ -530,14 +539,19 @@ export const drift = Effect.fnUntraced(function* () {
   );
 
   yield* summary(
-    `${dryRun ? "Would update" : "Updated"} ${listed(updated)}, ${counts.current} reviewed, ${counts.skipped} skipped, ${listed(failed)} need attention`,
+    `${dryRun ? "Would update" : "Updated"} ${listed(updated)}, ${counts.current} reviewed, ${counts.skipped} skipped, ${listed(reviewing)} to review, ${listed(failed)} need attention`,
   );
 
+  // A heal over the failures takes the reviews with it, so one agent
+  // session sees them all
   if (failed.length > 0 && !dryRun)
     return yield* new ConsumersFailed({
       action: "drift",
-      repos: failed.toSorted(),
+      repos: [...failed, ...reviewing].toSorted(),
     });
+
+  if (reviewing.length > 0 && !dryRun)
+    return HandedOff.make({ repos: reviewing.toSorted() });
 
   // Nothing moved, as after drift's own push comes back as an event
   if (updated.length === 0) return skipped;
@@ -545,9 +559,9 @@ export const drift = Effect.fnUntraced(function* () {
 
 /**
  * List what an agent should review one repository for: each tool in its
- * tooling.yml against its current release, as a whole. Fails with the list,
- * so the heal hands it to an agent, or returns `skipped` for an archived or
- * forked repository or one with no tools.
+ * tooling.yml against its current release, as a whole. Returns `review` when
+ * it listed any, so the run hands it to an agent, or `skipped` for an
+ * archived or forked repository or one with no tools.
  */
 export const reviewRepository = Effect.fnUntraced(function* (
   repo: string,
@@ -592,9 +606,11 @@ export const reviewRepository = Effect.fnUntraced(function* (
     yield* RunLog.warn(`${repo}: ${needsFullReview(tool, tag)}`);
   }
 
-  return yield* new DriftError({
-    message: `${tools.length} ${tools.length === 1 ? "tool" : "tools"} to review as a whole`,
-  });
+  yield* RunLog.info(
+    `${repo}: ${tools.length} ${tools.length === 1 ? "tool" : "tools"} to review as a whole`,
+  );
+
+  return "review" satisfies Outcome;
 });
 
 /**
@@ -608,6 +624,7 @@ export const driftReview = Effect.fnUntraced(function* () {
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
   const failed: Array<string> = [];
+  const reviewing: Array<string> = [];
 
   yield* RunLog.info(`Reviewing ${repos.length} repositories as a whole`);
 
@@ -615,6 +632,11 @@ export const driftReview = Effect.fnUntraced(function* () {
     repos,
     (repo) =>
       reviewRepository(repo, root).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome === "review") reviewing.push(repo);
+          }),
+        ),
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push(repo))),
@@ -625,16 +647,24 @@ export const driftReview = Effect.fnUntraced(function* () {
   );
 
   yield* summary(
-    failed.length === 0
-      ? "Nothing to review"
-      : `Handed ${listed(failed)} to an agent to review as a whole`,
+    [
+      reviewing.length === 0
+        ? "Nothing to review"
+        : `Handed ${listed(reviewing)} to an agent to review as a whole`,
+      ...(failed.length === 0 ? [] : [`${listed(failed)} failed`]),
+    ].join(", "),
   );
 
+  // A heal over the failures takes the reviews with it, so one agent
+  // session sees them all
   if (failed.length > 0)
     return yield* new ConsumersFailed({
       action: "review",
-      repos: failed.toSorted(),
+      repos: [...failed, ...reviewing].toSorted(),
     });
+
+  if (reviewing.length > 0)
+    return HandedOff.make({ repos: reviewing.toSorted() });
 
   // A lone literal return would widen to string, which no handler returns
   const nothing: typeof skipped = skipped;

@@ -39,15 +39,26 @@ import * as Theme from "./Theme";
 export const skipped = "skipped";
 
 /**
+ * What a handler ends with when it found work only an agent can do, such as
+ * a drift review, with nothing failing: the server heals each repository as
+ * it would a failed consumer, and the run ends `handed-off`.
+ */
+export const HandedOff = Schema.TaggedStruct("HandedOff", {
+  repos: Schema.Array(Schema.String),
+});
+
+export interface HandedOff extends Schema.Schema.Type<typeof HandedOff> {}
+
+/**
  * What a job does when it runs, given the release it's for and, for a command
  * run, what it's asked to do. It ends with `skipped` when it found nothing to
- * do.
+ * do, or `HandedOff` when it handed work to an agent.
  */
 export type Handler = (
   release: Domain.Release | null,
   command: Domain.Command | null,
 ) => Effect.Effect<
-  void | typeof skipped,
+  void | typeof skipped | HandedOff,
   unknown,
   | RunLog
   | Reporter
@@ -98,6 +109,13 @@ export class ConsumersFailed extends Schema.TaggedError<ConsumersFailed>()(
 /** How a run ended, for the server. The cause of a failure is its error. */
 const outcome = (exit: Exit.Exit<unknown, unknown>) => {
   if (Exit.isSuccess(exit)) {
+    if (Schema.is(HandedOff)(exit.value)) {
+      return {
+        outcome: "handed-off" as const,
+        consumers: exit.value.repos,
+      };
+    }
+
     return {
       outcome:
         exit.value === skipped ? ("skipped" as const) : ("succeeded" as const),

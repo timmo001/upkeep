@@ -178,21 +178,22 @@ export const fallback = (
       };
 
 /**
- * A drift review fails on purpose to hand its list to an agent, so there's
- * nothing for a decision model to choose: it goes to the last agent, the one
- * for hard fixes, or is left for you without one.
+ * A handed-off run, such as a drift review, ends that way on purpose to hand
+ * its list to an agent, so there's nothing for a decision model to choose: it
+ * goes to the last agent, the one for hard fixes, or is left for you without
+ * one.
  */
 const reviewing = (agents: ReadonlyArray<Settings.Agent>): Chosen =>
   Option.match(Option.fromNullishOr(agents.at(-1)), {
     onNone: () => ({
       decision: "ask",
-      reason: "A drift review is for an agent, and there's none set up",
+      reason: "This was handed off for an agent, and there's none set up",
       agent: Option.none(),
       decided: false,
     }),
     onSome: (agent) => ({
       decision: "fix",
-      reason: "A drift review always goes to an agent",
+      reason: "A handed-off run always goes to an agent",
       agent: Option.some(agent),
       decided: false,
     }),
@@ -576,10 +577,14 @@ export const heal = Effect.fnUntraced(function* () {
   const healing = yield* reporter.healing();
   const { heal: record, run, log, precedents } = healing;
 
-  yield* RunLog.info(`Healing ${run.job} run ${run.id}: ${run.error ?? ""}`);
+  yield* RunLog.info(
+    run.state === "handed-off"
+      ? `Taking over ${run.job} run ${run.id}, handed off for an agent`
+      : `Healing ${run.job} run ${run.id}: ${run.error ?? ""}`,
+  );
 
   const chosen: Chosen =
-    run.job === Catalogue.driftReview.id
+    run.state === "handed-off" || run.job === Catalogue.driftReview.id
       ? reviewing(settings.agents ?? [])
       : yield* Option.match(Option.fromNullishOr(settings.decisions), {
           onNone: () => Effect.succeed(fallback(run)),

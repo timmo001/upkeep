@@ -365,6 +365,11 @@ several consumers is fixed once in one agent session rather than again in
 each. Any other failure gets one heal with Upkeep itself as the target. A
 failed heal never queues another.
 
+A run that found work only an agent can do, with nothing failing, such as a
+`drift-review`, ends `handed-off` instead of `failed`. It gets a heal for its
+repositories in the same way, which goes straight to an agent without a
+decision, but raises no triage issue, since nothing broke.
+
 Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
 OpenCode session. `upkeep runs --job heal` lists heals with what they heal.
@@ -841,9 +846,11 @@ as reviewed. If only the pins changed, that's committed as
 
 If the update changed anything else, or the tool has no `update` command,
 the release needs a review, so nothing is pushed for it. The repository is
-logged with what to review, its `review` note and the release links, and the
-run fails naming it, so a heal hands the review to an agent, which records
-the tag once it's done.
+logged with what to review, its `review` note and the release links, and a
+heal hands the review to an agent, which records the tag once it's done.
+Nothing failed, so a run where every repository was either current or needs
+a review ends `handed-off` rather than `failed`; one where a repository also
+failed fails, and its heal takes the reviews with it.
 
 `drift` only sees what changed since the release last reviewed, so a
 repository can still be behind on what its tools already had. Run
@@ -857,8 +864,8 @@ upkeep run drift-review --repo timmo001/system-bridge
 For each tool, it logs a review of the whole repository against the tool's
 current release, with the tool's `review` note: features, commands, flags and
 config options it doesn't cover yet, and snapshots or derived files that no
-longer match. The repository's run then fails, and a heal hands it to an
-agent, which adds what's missing or says nothing is. Without `--repo` it
+longer match. The run then ends `handed-off`, and a heal hands the
+repositories to an agent, which adds what's missing or says nothing is. Without `--repo` it
 reviews every repository tracked for `drift`; it has no opt-in of its own.
 
 Clones are kept in `upkeep/drift` in the XDG cache directory. Set

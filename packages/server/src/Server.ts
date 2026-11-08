@@ -299,12 +299,12 @@ const queueMachine = Effect.fn("queueMachine")(function* (
 });
 
 /**
- * Queue the heals of a failed or lost run: one for Upkeep itself, or for the
- * consumers of a bump that failed, one heal over all of them, so a single
- * agent session makes the same fix everywhere. A failed heal never queues
- * another. A target past its heals for the day gets no more for now: a
+ * Queue the heals of a failed, lost or handed-off run: one for Upkeep itself,
+ * or for the consumers of a bump that failed, one heal over all of them, so a
+ * single agent session makes the same fix everywhere. A failed heal never
+ * queues another. A target past its heals for the day gets no more for now: a
  * consumer's heal waits until its heals free up, and a job failing in itself
- * is parked.
+ * is parked. A handed-off run broke nothing, so it raises no triage issue.
  */
 const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
@@ -318,7 +318,7 @@ const heal = Effect.fn("heal")(function* (
     run.job === Catalogue.command.id ||
     run.job === Catalogue.change.id ||
     run.command?.kind === "machine" ||
-    run.state !== "failed"
+    (run.state !== "failed" && run.state !== "handed-off")
   )
     return;
 
@@ -335,9 +335,10 @@ const heal = Effect.fn("heal")(function* (
 
   const triage = yield* Triage;
 
-  const issues = yield* Effect.forEach(targets, (target) =>
-    triage.report(run, target),
-  );
+  const issues =
+    run.state === "handed-off"
+      ? []
+      : yield* Effect.forEach(targets, (target) => triage.report(run, target));
 
   const healing: Array<{
     readonly repo: string;
@@ -466,7 +467,10 @@ const settleWaiting = Effect.fn("settleWaiting")(function* (
 
   if (
     run.state !== "succeeded" &&
-    !(run.state === "failed" && consumers.length > 0)
+    !(
+      (run.state === "failed" || run.state === "handed-off") &&
+      consumers.length > 0
+    )
   )
     return;
 
@@ -499,7 +503,7 @@ const settleWaiting = Effect.fn("settleWaiting")(function* (
  * Settle the heals a finished run shows are no longer needed: ones of the
  * same job, for the same released repository, raised before it was queued,
  * whose consumers it reached without failing. A heal of Upkeep itself is
- * settled by a run that succeeded. Fixes made outside Upkeep then stop
+ * settled by a run that succeeded or handed off. Fixes made outside Upkeep then stop
  * asking for a person.
  */
 const settleHeals = Effect.fn("settleHeals")(function* (
@@ -510,7 +514,10 @@ const settleHeals = Effect.fn("settleHeals")(function* (
 
   if (
     run.state !== "succeeded" &&
-    !(run.state === "failed" && consumers.length > 0)
+    !(
+      (run.state === "failed" || run.state === "handed-off") &&
+      consumers.length > 0
+    )
   )
     return;
 
@@ -528,7 +535,7 @@ const settleHeals = Effect.fn("settleHeals")(function* (
       queuedAt < run.queuedAt &&
       release?.repo === run.release?.repo &&
       (heal.target.kind === "upkeep"
-        ? run.state === "succeeded"
+        ? run.state !== "failed"
         : Domain.targetRepos(heal.target).every(reached)),
   );
 

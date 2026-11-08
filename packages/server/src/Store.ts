@@ -1888,6 +1888,7 @@ export class Store extends Context.Service<
         runs: {
           succeeded: total("succeeded"),
           skipped: total("skipped"),
+          handedOff: total("handed-off"),
           failed: total("failed"),
           cancelled: total("cancelled"),
           heals: counts
@@ -3155,7 +3156,7 @@ export class Store extends Context.Service<
               PARTITION BY job ORDER BY queued_at DESC, id DESC
             ) AS rank
             FROM runs
-            WHERE state IN ('succeeded', 'skipped', 'failed', 'cancelled')
+            WHERE state IN ('succeeded', 'skipped', 'handed-off', 'failed', 'cancelled')
           )
           WHERE rank > ${keep} AND queued_at < ${before}
         `;
