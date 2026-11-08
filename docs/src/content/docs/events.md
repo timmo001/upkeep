@@ -109,9 +109,10 @@ that use a release, since GitHub's code search returns only some of its
 matches to an installation token.
 
 1. Give the App read and write access to Contents, Pull requests, Issues,
-   Workflows and Actions, and approve the new permissions on its
-   installation. Workflows is needed because bumps and drift edit
-   `.github/workflows`.
+   Workflows and Actions, and read access to Dependabot alerts, and approve
+   the new permissions on its installation. Workflows is needed because bumps
+   and drift edit `.github/workflows`, and Dependabot alerts because the
+   dependencies job plans fixes for them.
 2. Generate a private key on the App's page, keep it in 1Password, and delete
    the downloaded file.
 3. Set the Home Assistant app's `github_app_id` and `github_app_key`, the key

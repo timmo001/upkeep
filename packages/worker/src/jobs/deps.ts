@@ -36,6 +36,9 @@ const OwnedRepository = Schema.Struct({
 const missing = (cause: unknown) =>
   cause instanceof GhCommandError && /\b404\b|Not Found/.test(cause.stderr);
 
+const forbidden = (cause: unknown) =>
+  cause instanceof GhCommandError && /\b403\b|Forbidden/.test(cause.stderr);
+
 /** What went wrong in a GitHub call, in one line. */
 const ghMessage = (cause: unknown) =>
   cause instanceof GhCommandError
@@ -59,6 +62,54 @@ const readFile = (repo: string, path: string, ref?: string) =>
         : Effect.fail(
             new DepsError({
               message: `couldn't read ${repo}/${path}: ${ghMessage(cause)}`,
+            }),
+          ),
+    ),
+  );
+
+const DependabotAlerts = Schema.Array(
+  Schema.Struct({
+    security_vulnerability: Schema.Struct({
+      package: Schema.Struct({ ecosystem: Schema.String, name: Schema.String }),
+      first_patched_version: Schema.NullOr(
+        Schema.Struct({ identifier: Schema.String }),
+      ),
+    }),
+  }),
+);
+
+/**
+ * A repository's open Dependabot alerts, which Renovate fixes on GitHub. A
+ * 403, from alerts being off or a token without the permission, leaves it
+ * with none and a warning.
+ */
+const openAlerts = (repo: string) =>
+  Api.pages(
+    {
+      endpoint: `repos/${repo}/dependabot/alerts`,
+      method: "GET",
+      query: { state: "open", per_page: 100 },
+    },
+    DependabotAlerts,
+  ).pipe(
+    Effect.map((pages) =>
+      pages
+        .flat()
+        .map(({ security_vulnerability: vulnerability }): Planner.Alert => ({
+          ecosystem: vulnerability.package.ecosystem,
+          packageName: vulnerability.package.name,
+          firstPatchedVersion:
+            vulnerability.first_patched_version?.identifier ?? undefined,
+        })),
+    ),
+    Effect.catch((cause) =>
+      forbidden(cause)
+        ? RunLog.warn(
+            `${repo}: couldn't read Dependabot alerts, so no vulnerability fixes: ${ghMessage(cause)}. Turn them on, and give the GitHub App read access to Dependabot alerts when the job runs as it`,
+          ).pipe(Effect.as<ReadonlyArray<Planner.Alert>>([]))
+        : Effect.fail(
+            new DepsError({
+              message: `couldn't read ${repo}'s Dependabot alerts: ${ghMessage(cause)}`,
             }),
           ),
     ),
@@ -108,7 +159,7 @@ const repositories = Effect.fnUntraced(function* () {
 const describe = (update: Planner.Update) =>
   update.updateType === "replacement"
     ? `${update.dependency.depName} ${update.from} → ${update.newName ?? update.dependency.depName} ${update.to} (replacement)`
-    : `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""})`;
+    : `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""}${update.vulnerable === true ? ", vulnerability fix" : ""})`;
 
 /** Renovate's branch topic and commit message for lock file maintenance. */
 const maintenanceBranch = "lock-file-maintenance";
@@ -173,9 +224,15 @@ const planRepository = Effect.fnUntraced(function* (
 
   const updaterPolicy = yield* updaters.read(repo, detected.value, read);
 
+  const alerts =
+    updaterPolicy.vulnerabilityAlerts === undefined
+      ? []
+      : yield* openAlerts(repo);
+
   const policy: Policy = {
     ...updaterPolicy,
     rules: [...updaterPolicy.rules, ...(extras?.rules ?? [])],
+    vulnerabilities: Planner.vulnerabilities(alerts),
   };
 
   const files = new Map<string, string>();
@@ -267,16 +324,22 @@ const subject = (group: Planner.Group) => {
     group.updates.map((update) => update.dependency.depName),
   );
 
+  // Renovate's commitMessageSuffix for vulnerabilityAlerts
+  const suffix = group.updates.some((update) => update.vulnerable === true)
+    ? " [SECURITY]"
+    : "";
+
   const [first] = group.updates;
 
-  if (names.size !== 1 || first === undefined) return `Update ${group.name}`;
+  if (names.size !== 1 || first === undefined)
+    return `Update ${group.name}${suffix}`;
 
   if (first.updateType === "replacement")
     return `Replace ${first.dependency.depName} with ${first.newName ?? first.dependency.depName} ${first.to}`;
 
   return first.updateType === "digest"
     ? `Update ${first.dependency.depName} digest to ${first.to}`
-    : `Update ${first.dependency.depName} to ${first.to}`;
+    : `Update ${first.dependency.depName} to ${first.to}${suffix}`;
 };
 
 interface ApplyContext {

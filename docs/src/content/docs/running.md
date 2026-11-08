@@ -734,6 +734,20 @@ and applying it renames the `package.json` entry or workflow action and moves
 its version, keeping the range operator. A pinned action, an npm alias, and
 any other manager's renames are left to Renovate.
 
+Vulnerability alerts are planned as Renovate plans them on GitHub, unless the
+config turns `vulnerabilityAlerts` off. The `deps` job reads the repository's
+open Dependabot alerts and, for each dependency below its package's first
+patched version, plans a fix to that version (or the newest release, with
+`vulnerabilityFixStrategy: "highest"`), bumping a range's lower bound. The
+fix takes the `vulnerabilityAlerts` settings over every rule, so by default
+it's on its own `renovate/<datasource>-<name>-vulnerability` branch, out of
+any group, and no `minimumReleaseAge` holds it back. Its commit ends in
+`[SECURITY]`. Alerts on dependencies that aren't listed directly, such as
+those only in a lockfile, are left to Renovate. Reading the alerts needs them
+turned on in the repository and, when the job runs as the GitHub App, the
+App's read access to Dependabot alerts; without either, the job logs a
+warning and plans no fixes.
+
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:
 

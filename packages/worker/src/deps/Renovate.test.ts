@@ -80,6 +80,37 @@ test("lock file maintenance is off by default, weekly once on, and its schedule 
   expect(every(["every weekday", "on the first day of the month"])).toBe(1);
 });
 
+test("vulnerability alerts are on by default, force Renovate's settings, and note a schedule", () => {
+  const translate = (config: Schema.JsonObject) =>
+    toPolicy(config, "renovate.json", []);
+
+  expect(translate({}).vulnerabilityAlerts).toEqual({
+    settings: {
+      groupName: null,
+      minimumReleaseAge: null,
+      rangeStrategy: "update-lockfile",
+    },
+    fixStrategy: "lowest",
+  });
+  expect(translate({}).notes).toEqual([]);
+
+  expect(
+    translate({ vulnerabilityAlerts: { enabled: false } }).vulnerabilityAlerts,
+  ).toBeUndefined();
+
+  const own = translate({
+    vulnerabilityAlerts: {
+      automerge: true,
+      vulnerabilityFixStrategy: "highest",
+      schedule: ["before 4am"],
+    },
+  });
+
+  expect(own.vulnerabilityAlerts?.settings.automerge).toBe(true);
+  expect(own.vulnerabilityAlerts?.fixStrategy).toBe("highest");
+  expect(own.notes).toEqual(["not modelled: vulnerabilityAlerts.schedule"]);
+});
+
 test("a rule on the lockFileMaintenance update type alone turns it on or automerges it", () => {
   const policy = toPolicy(
     {

@@ -146,6 +146,26 @@ export interface Maintenance {
   readonly everyDays: number;
 }
 
+/**
+ * Renovate's vulnerability alerts: a fix for each open alert, with settings
+ * forced over every rule, so no schedule or release age holds it back.
+ */
+export interface VulnerabilityAlerts {
+  /** Forced on a vulnerable dependency's updates, after every rule. */
+  readonly settings: Settings;
+  /** `lowest` moves to the first release with the fix, `highest` to the newest. */
+  readonly fixStrategy: "lowest" | "highest";
+}
+
+/** An open vulnerability alert on a package, from the repository's host. */
+export interface Vulnerability {
+  /** The datasources its ecosystem's packages come from. */
+  readonly datasources: ReadonlyArray<string>;
+  readonly packageName: string;
+  /** The first version that fixes every open alert on it. */
+  readonly fixVersion: string;
+}
+
 export interface Policy {
   /** The updater whose config this came from, which owns automerged groups. */
   readonly updater: string;
@@ -169,6 +189,10 @@ export interface Policy {
   readonly customDatasources: Readonly<Record<string, CustomDatasource>>;
   /** Lock file maintenance, when the config turns it on. */
   readonly maintenance?: Maintenance | undefined;
+  /** Vulnerability alerts, unless the config turns them off. */
+  readonly vulnerabilityAlerts?: VulnerabilityAlerts | undefined;
+  /** The repository's open alerts, read once alerts are on. */
+  readonly vulnerabilities?: ReadonlyArray<Vulnerability> | undefined;
   /** What the adapter read but couldn't model, for the run's log. */
   readonly notes: ReadonlyArray<string>;
 }

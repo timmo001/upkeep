@@ -1,6 +1,6 @@
 /** Which updates the planner finds for a dependency, as Renovate would. */
 import { expect, test } from "bun:test";
-import { updatesFor } from "./Planner";
+import { updatesFor, vulnerabilities } from "./Planner";
 import type { Dependency, Policy, Releases } from "./Policy";
 
 const policy: Policy = {
@@ -137,4 +137,80 @@ test("a replacement that changes nothing isn't planned", () => {
       ({ updateType }) => updateType === "replacement",
     ),
   ).toEqual([]);
+});
+
+test("open alerts on a package combine into its highest first patched version", () => {
+  expect(
+    vulnerabilities([
+      { ecosystem: "npm", packageName: "astro", firstPatchedVersion: "7.3.0" },
+      { ecosystem: "npm", packageName: "astro", firstPatchedVersion: "7.4.0" },
+      { ecosystem: "npm", packageName: "astro", firstPatchedVersion: "7.2.12" },
+      { ecosystem: "npm", packageName: "vite", firstPatchedVersion: undefined },
+      { ecosystem: "swift", packageName: "x", firstPatchedVersion: "1.0.0" },
+    ]),
+  ).toEqual([
+    { datasources: ["npm"], packageName: "astro", fixVersion: "7.4.0" },
+  ]);
+});
+
+const alerted = (fixStrategy: "lowest" | "highest"): Policy => ({
+  ...policy,
+  rules: [
+    { match: {}, set: { minimumReleaseAge: "14 days", groupName: "all" } },
+  ],
+  vulnerabilityAlerts: {
+    settings: { groupName: null, minimumReleaseAge: null },
+    fixStrategy,
+  },
+  vulnerabilities: [
+    { datasources: ["npm"], packageName: "astro", fixVersion: "7.3.0" },
+  ],
+});
+
+const fixReleases: Releases = {
+  releases: ["7.2.10", "7.3.0", "7.3.1", "7.4.5", "8.0.0"].map((version) => ({
+    version,
+    date: "2026-11-07T00:00:00Z",
+  })),
+};
+
+test("an alert bumps the range to its first fix on its own branch, past rules' release age and groups", () => {
+  const updates = updatesFor(
+    alerted("lowest"),
+    astro,
+    fixReleases,
+    Date.parse("2026-11-08T00:00:00Z"),
+  ).updates.map(({ updateType, from, to, branch, vulnerable }) => [
+    updateType,
+    from,
+    to,
+    branch,
+    vulnerable,
+  ]);
+
+  expect(updates).toEqual([
+    ["minor", "7.2.10", "7.3.0", "npm-astro-vulnerability", true],
+  ]);
+});
+
+test("the highest fix strategy moves to the newest release", () => {
+  const updates = updatesFor(
+    alerted("highest"),
+    astro,
+    fixReleases,
+    Date.parse("2026-11-08T00:00:00Z"),
+  ).updates.map(({ to }) => to);
+
+  expect(updates).toEqual(["8.0.0"]);
+});
+
+test("a range already starting at the fix isn't a vulnerability fix", () => {
+  const updates = updatesFor(
+    alerted("lowest"),
+    { ...astro, currentValue: "^7.3.0" },
+    fixReleases,
+    Date.parse("2026-11-08T00:00:00Z"),
+  ).updates;
+
+  expect(updates.some(({ vulnerable }) => vulnerable === true)).toBe(false);
 });

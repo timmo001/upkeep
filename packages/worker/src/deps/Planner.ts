@@ -13,6 +13,7 @@ import type {
   Releases,
   Settings,
   UpdateType,
+  Vulnerability,
 } from "./Policy";
 import { type Context, matchesPattern, settingsFor } from "./Rules";
 
@@ -115,6 +116,8 @@ export interface Update {
   readonly digest?: string | undefined;
   /** The package a replacement moves to. */
   readonly newName?: string | undefined;
+  /** Fixes an open vulnerability alert. */
+  readonly vulnerable?: boolean | undefined;
 }
 
 /** Why a dependency has no update, when it's worth saying. */
@@ -210,6 +213,123 @@ export interface Plan {
   readonly skipped?: string;
 }
 
+/** The datasources each GitHub advisory ecosystem's packages come from. */
+const ecosystems = new Map<string, ReadonlyArray<string>>([
+  ["actions", ["github-tags"]],
+  ["composer", ["packagist"]],
+  ["go", ["go"]],
+  ["maven", ["maven", "clojure"]],
+  ["npm", ["npm"]],
+  ["nuget", ["nuget"]],
+  ["pip", ["pypi"]],
+  ["rubygems", ["rubygems"]],
+  ["rust", ["crate"]],
+]);
+
+/** An open Dependabot alert, as far as a fix needs it. */
+export interface Alert {
+  readonly ecosystem: string;
+  readonly packageName: string;
+  readonly firstPatchedVersion: string | undefined;
+}
+
+/**
+ * Combine a repository's open alerts as Renovate does: one fix per package,
+ * the highest of their first patched versions, leaving out alerts with no
+ * patch yet and ecosystems with no datasource.
+ */
+export const vulnerabilities = (
+  alerts: ReadonlyArray<Alert>,
+): ReadonlyArray<Vulnerability> => {
+  const fixes = new Map<
+    string,
+    Vulnerability & { readonly version: Version }
+  >();
+
+  for (const alert of alerts) {
+    const datasources = ecosystems.get(alert.ecosystem);
+    const fixVersion = alert.firstPatchedVersion;
+
+    if (datasources === undefined || fixVersion === undefined) continue;
+
+    const version = parseVersion(fixVersion, undefined);
+
+    if (version === undefined) continue;
+
+    const key = `${alert.ecosystem}:${alert.packageName}`;
+    const previous = fixes.get(key);
+
+    if (
+      previous !== undefined &&
+      compareVersions(previous.version, version) >= 0
+    )
+      continue;
+
+    fixes.set(key, {
+      datasources,
+      packageName: alert.packageName,
+      fixVersion,
+      version,
+    });
+  }
+
+  return [...fixes.values()].map(
+    ({ datasources, packageName, fixVersion }) => ({
+      datasources,
+      packageName,
+      fixVersion,
+    }),
+  );
+};
+
+/** The fix for an open alert a dependency's updates are cut down to. */
+interface Fix {
+  readonly version: Version;
+  readonly strategy: "lowest" | "highest";
+  /** The alerts' settings, forced over the dependency's own. */
+  readonly settings: Settings;
+}
+
+/** The fix for the open alert on a dependency's package, when alerts are on. */
+const fixFor = (
+  policy: Policy,
+  dependency: Dependency,
+  versioning: string | null | undefined,
+): Fix | undefined => {
+  const alerts = policy.vulnerabilityAlerts;
+
+  if (alerts === undefined) return undefined;
+
+  const alert = policy.vulnerabilities?.find(
+    (candidate) =>
+      candidate.datasources.includes(dependency.datasource) &&
+      candidate.packageName.toLowerCase() ===
+        dependency.packageName.toLowerCase(),
+  );
+
+  const version =
+    alert === undefined
+      ? undefined
+      : parseVersion(alert.fixVersion, versioning);
+
+  return version === undefined
+    ? undefined
+    : { version, strategy: alerts.fixStrategy, settings: alerts.settings };
+};
+
+/** Renovate's branch for a vulnerability fix, unless its settings group it. */
+const vulnerabilityBranch = (
+  dependency: Dependency,
+  settings: Settings,
+  updateType: UpdateType,
+  next: Version,
+) =>
+  settings.groupName !== undefined &&
+  settings.groupName !== null &&
+  settings.groupName !== ""
+    ? branchFor(dependency, settings, updateType, next, false)
+    : `${dependency.datasource}-${sanitize(dependency.depName)}-vulnerability`;
+
 /**
  * The replacement a dependency's settings name, as Renovate makes it: the new
  * package, or the same one, at the version given or the current value, as
@@ -262,6 +382,7 @@ const versionUpdates = (
   now: number,
   base: Settings,
   context: Context,
+  fix: Fix | undefined,
 ): Plan => {
   const versioning = base.versioning;
 
@@ -316,8 +437,9 @@ const versionUpdates = (
       : undefined;
 
   // With no locked version, Renovate takes the highest release in the range
-  // that isn't past latest, so nothing inside the range is an update
-  const inRange = (range: string) => {
+  // that isn't past latest, so nothing inside the range is an update. A fix
+  // bumps the range instead, so it reads from the lowest
+  const inRange = (range: string, lowest: boolean) => {
     const versions = metadata.releases.flatMap((release) => {
       const text = extract(release);
 
@@ -332,20 +454,40 @@ const versionUpdates = (
         : versions;
 
     return (
-      semver.maxSatisfying(capped, range) ?? semver.minVersion(range)?.version
+      (lowest
+        ? semver.minSatisfying(capped, range)
+        : semver.maxSatisfying(capped, range)) ??
+      semver.minVersion(range)?.version
     );
   };
 
-  const currentText =
-    withSource.lockedVersion ??
-    (precision === undefined && isRange(withSource.currentValue)
-      ? inRange(withSource.currentValue)
-      : withSource.currentValue);
+  const currentFor = (lowest: boolean) => {
+    const text =
+      withSource.lockedVersion ??
+      (precision === undefined && isRange(withSource.currentValue)
+        ? inRange(withSource.currentValue, lowest)
+        : withSource.currentValue);
 
-  const current =
-    currentText === undefined
-      ? undefined
-      : parseVersion(currentText, versioning);
+    return {
+      text,
+      version: text === undefined ? undefined : parseVersion(text, versioning),
+    };
+  };
+
+  const vulnerable = fix === undefined ? undefined : currentFor(true);
+
+  // Renovate's alert rule only matches a dependency still below the fix
+  const fixing =
+    vulnerable?.version !== undefined &&
+    fix !== undefined &&
+    compareVersions(vulnerable.version, fix.version) < 0
+      ? fix
+      : undefined;
+
+  const { text: currentText, version: current } =
+    fixing === undefined || vulnerable === undefined
+      ? currentFor(false)
+      : vulnerable;
 
   if (current === undefined)
     return {
@@ -376,7 +518,7 @@ const versionUpdates = (
 
     // The version in use, which can still need its digest pinned or moved
     if (order === 0) {
-      if (release.digest === undefined) continue;
+      if (release.digest === undefined || fixing !== undefined) continue;
 
       const updateType: UpdateType | undefined =
         withSource.currentDigest === undefined
@@ -413,6 +555,9 @@ const versionUpdates = (
 
     if (order < 0) continue;
 
+    if (fixing !== undefined && compareVersions(next, fixing.version) < 0)
+      continue;
+
     const updateType: UpdateType =
       next.parts[0] !== current.parts[0]
         ? "major"
@@ -420,10 +565,13 @@ const versionUpdates = (
           ? "minor"
           : "patch";
 
-    const settings = settingsFor(policy, withSource, {
+    const own = settingsFor(policy, withSource, {
       ...context,
       updateType,
     });
+
+    const settings =
+      fixing === undefined ? own : { ...own, ...fixing.settings };
 
     if (settings.enabled === false) continue;
 
@@ -478,10 +626,18 @@ const versionUpdates = (
       isRange(withSource.currentValue) &&
       semver.satisfies(text, withSource.currentValue);
 
-    const key = bucket(settings, updateType, next);
+    const key =
+      fixing === undefined ? bucket(settings, updateType, next) : "fix";
+
     const previous = best.get(key);
 
-    if (previous !== undefined && compareVersions(previous.version, next) >= 0)
+    // A fix keeps one release: the first with it, or the newest
+    if (
+      previous !== undefined &&
+      (fixing?.strategy === "lowest"
+        ? compareVersions(previous.version, next) <= 0
+        : compareVersions(previous.version, next) >= 0)
+    )
       continue;
 
     best.set(key, {
@@ -490,10 +646,14 @@ const versionUpdates = (
       from: currentText ?? withSource.currentValue,
       to: text,
       settings,
-      branch: branchFor(withSource, settings, updateType, next, lockfile),
+      branch:
+        fixing === undefined
+          ? branchFor(withSource, settings, updateType, next, lockfile)
+          : vulnerabilityBranch(withSource, settings, updateType, next),
       lockfile,
       digest:
         withSource.currentDigest === undefined ? undefined : release.digest,
+      vulnerable: fixing === undefined ? undefined : true,
       version: next,
     });
   }
@@ -526,7 +686,16 @@ export const updatesFor = (
 
   if (base.enabled === false) return { updates: [], skipped: "disabled" };
 
-  const plan = versionUpdates(policy, withSource, metadata, now, base, context);
+  const plan = versionUpdates(
+    policy,
+    withSource,
+    metadata,
+    now,
+    base,
+    context,
+    fixFor(policy, withSource, base.versioning),
+  );
+
   const replacement = replacementFor(policy, withSource, base, context);
 
   // Renovate adds the replacement beside the version updates, on its own branch

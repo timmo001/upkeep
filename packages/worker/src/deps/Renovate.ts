@@ -18,6 +18,7 @@ import {
   type Rule,
   Settings,
   UpdateType,
+  type VulnerabilityAlerts,
 } from "./Policy";
 
 /** A Renovate config or preset, as the JSON it's written in. */
@@ -729,6 +730,54 @@ const translateMaintenance = (
   };
 };
 
+/** Renovate's `vulnerabilityAlerts` defaults, which a config merges over. */
+const vulnerabilityDefaults = {
+  groupName: null,
+  schedule: [],
+  dependencyDashboardApproval: false,
+  minimumReleaseAge: null,
+  rangeStrategy: "update-lockfile",
+  commitMessageSuffix: "[SECURITY]",
+  branchTopic: "{{{datasource}}}-{{{depNameSanitized}}}-vulnerability",
+  prCreation: "immediate",
+  vulnerabilityFixStrategy: "lowest",
+  prConcurrentLimit: 0,
+} satisfies Config;
+
+/**
+ * Vulnerability alerts as the config sets them, on by default as Renovate
+ * has them on GitHub, with the keys they set that Upkeep doesn't model. A
+ * schedule or branch topic other than Renovate's would change when or where
+ * a fix lands, so those are noted.
+ */
+const translateVulnerabilityAlerts = (config: Config) => {
+  const own = mergeChildConfig(
+    vulnerabilityDefaults,
+    isConfig(config.vulnerabilityAlerts) ? config.vulnerabilityAlerts : {},
+  );
+
+  if (own.enabled === false) return { alerts: undefined, ignored: [] };
+
+  const { set, ignored } = translateSettings(own);
+
+  return {
+    alerts: {
+      settings: set,
+      fixStrategy:
+        own.vulnerabilityFixStrategy === "highest" ? "highest" : "lowest",
+    } satisfies VulnerabilityAlerts,
+    ignored: ignored.filter(
+      (key) =>
+        key !== "vulnerabilityFixStrategy" &&
+        !(key === "schedule" && strings(own.schedule).length === 0) &&
+        !(
+          key === "branchTopic" &&
+          own.branchTopic === vulnerabilityDefaults.branchTopic
+        ),
+    ),
+  };
+};
+
 /** Translate a resolved Renovate config into Upkeep's Policy. */
 export const toPolicy = (
   config: Config,
@@ -817,7 +866,14 @@ export const toPolicy = (
     "customManagers",
     "customDatasources",
     "lockFileMaintenance",
+    "vulnerabilityAlerts",
   ]);
+
+  const vulnerabilityAlerts = translateVulnerabilityAlerts(config);
+
+  ignore(
+    vulnerabilityAlerts.ignored.map((key) => `vulnerabilityAlerts.${key}`),
+  );
 
   for (const key of Object.keys(config))
     if (!known.has(key) && !presentation.has(key)) ignore([key]);
@@ -854,6 +910,7 @@ export const toPolicy = (
     customManagers,
     customDatasources: datasources.datasources,
     maintenance: translateMaintenance(config, rules, settings.automerge),
+    vulnerabilityAlerts: vulnerabilityAlerts.alerts,
     notes,
   };
 };
