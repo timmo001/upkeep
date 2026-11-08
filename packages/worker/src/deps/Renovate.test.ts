@@ -226,6 +226,68 @@ test("submodules are read from .gitmodules with the commits the tree pins", () =
   ]);
 });
 
+test("Dockerfiles, Compose files and workflow containers give their images", () => {
+  const extraction = Effect.runSync(
+    Managers.extract(
+      toPolicy({}, "renovate.json", []),
+      new Map([
+        [
+          "Dockerfile",
+          [
+            "# syntax=docker/dockerfile:1",
+            "FROM --platform=$BUILDPLATFORM node:22-alpine AS build",
+            "FROM build AS test",
+            "FROM ${BASE}",
+            "FROM ghcr.io/owner/tool:1.2.3@sha256:abc AS tool",
+            "FROM scratch",
+            "FROM localhost:5000/app",
+          ].join("\n"),
+        ],
+        [
+          "compose.yaml",
+          "services:\n  db:\n    image: postgres:16.4\n  app:\n    build: .\n",
+        ],
+        [
+          ".github/workflows/ci.yml",
+          [
+            "jobs:",
+            "  build:",
+            "    runs-on: ubuntu-latest",
+            "    container: archlinux:latest@sha256:def",
+            "    services:",
+            "      redis:",
+            "        image: redis:7",
+            "    steps:",
+            "      - uses: docker://alpine:3.20",
+          ].join("\n"),
+        ],
+      ]),
+    ),
+  );
+
+  expect(
+    extraction.dependencies.map((dependency) => [
+      dependency.manager,
+      dependency.depType,
+      dependency.depName,
+      dependency.currentValue,
+      dependency.currentDigest,
+    ]),
+  ).toEqual([
+    ["dockerfile", "stage", "node", "22-alpine", undefined],
+    ["dockerfile", "stage", "ghcr.io/owner/tool", "1.2.3", "sha256:abc"],
+    ["dockerfile", "final", "localhost:5000/app", "", undefined],
+    ["docker-compose", "image", "postgres", "16.4", undefined],
+    ["github-actions", "container", "archlinux", "latest", "sha256:def"],
+    ["github-actions", "service", "redis", "7", undefined],
+    ["github-actions", "docker", "alpine", "3.20", undefined],
+  ]);
+
+  expect(extraction.notes).toEqual([
+    "Dockerfile: image ${BASE} uses a variable",
+  ]);
+});
+
 test("package.json dependencies take the version their nearest lockfile locks", () => {
   const extraction = Effect.runSync(
     Managers.extract(

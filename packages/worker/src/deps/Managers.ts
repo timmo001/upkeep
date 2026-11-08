@@ -3,8 +3,9 @@
  * their text without running a package manager. npm and Bun read
  * package.json with the versions its lockfile pins, mise reads its TOML
  * configs, GitHub Actions reads workflows and actions, git submodules read
- * .gitmodules and the commits the tree pins, and custom regex and jsonata
- * managers read whatever files a policy points them at.
+ * .gitmodules and the commits the tree pins, Dockerfiles and Compose files
+ * give their images, and custom regex and jsonata managers read whatever
+ * files a policy points them at.
  */
 import jsonata from "jsonata";
 import { Cause, Effect, Match, Option, Predicate, Schema } from "effect";
@@ -28,6 +29,11 @@ const filePatterns = {
     "/(^|/)action\\.ya?ml$/",
   ],
   "git-submodules": ["/(^|/)\\.gitmodules$/"],
+  dockerfile: [
+    "/(^|/|\\.)([Dd]ocker|[Cc]ontainer)file$/",
+    "/(^|/)([Dd]ocker|[Cc]ontainer)file[^/]*$/",
+  ],
+  "docker-compose": ["/(^|/)(?:docker-)?compose[^/]*\\.ya?ml$/"],
 };
 
 /** What extraction found, with what it couldn't read. */
@@ -368,16 +374,147 @@ const extractMise = (file: string, text: string): Extraction => {
   return { dependencies, notes };
 };
 
+/**
+ * An image reference as a dependency: the name without its tag or digest,
+ * the tag, and any `@sha256:` digest. A reference with a variable in it, or
+ * a digest with no tag, isn't read, as there's no tag to follow.
+ */
+export const imageDependency = (
+  manager: string,
+  file: string,
+  depType: string,
+  image: string,
+): Dependency | string => {
+  if (image.includes("$")) return `${file}: image ${image} uses a variable`;
+
+  const [named = "", digest] = image.split("@");
+  const slash = named.lastIndexOf("/");
+  const colon = named.lastIndexOf(":");
+  const tagged = colon > slash;
+  const depName = tagged ? named.slice(0, colon) : named;
+
+  if (depName === "" || (digest !== undefined && !digest.startsWith("sha256:")))
+    return `${file}: image ${image} isn't read`;
+
+  if (!tagged && digest !== undefined)
+    return `${file}: image ${image} has a digest but no tag to follow`;
+
+  return {
+    manager,
+    file,
+    depName,
+    packageName: depName,
+    datasource: "docker",
+    depType,
+    currentValue: tagged ? named.slice(colon + 1) : "",
+    currentDigest: digest,
+  };
+};
+
+/** Each extracted image or note into an extraction. */
+const images = (results: ReadonlyArray<Dependency | string>): Extraction => ({
+  dependencies: results.filter(
+    (result): result is Dependency => !Predicate.isString(result),
+  ),
+  notes: results.filter(Predicate.isString),
+});
+
+/**
+ * The images a Dockerfile's `FROM` lines build on, past any `--platform`
+ * flag, leaving out `scratch` and earlier stages it names. The last is the
+ * `final` stage, as Renovate types it.
+ */
+const extractDockerfile = (file: string, text: string): Extraction => {
+  const stages = new Set<string>();
+  const found: Array<Dependency | string> = [];
+
+  for (const line of text.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    const from =
+      /^\s*FROM\s+(?:--\w[\w-]*=\S+\s+)*(?<image>\S+)(?:\s+AS\s+(?<stage>\S+))?/i.exec(
+        line,
+      )?.groups;
+
+    if (from?.image === undefined) continue;
+
+    if (from.image !== "scratch" && !stages.has(from.image.toLowerCase()))
+      found.push(imageDependency("dockerfile", file, "stage", from.image));
+
+    if (from.stage !== undefined) stages.add(from.stage.toLowerCase());
+  }
+
+  const last = found.findLastIndex((result) => !Predicate.isString(result));
+  const final = found[last];
+
+  if (final !== undefined && !Predicate.isString(final))
+    found[last] = { ...final, depType: "final" };
+
+  return images(found);
+};
+
+/** A Compose service or job container: an image, or settings with one. */
+const Container = Schema.Union([
+  Schema.String,
+  Schema.Struct({ image: Schema.optional(Schema.String) }),
+]);
+
+const decodeContainer = Schema.decodeUnknownOption(Container);
+
+/** The image a container names: the value, or its `image:`. */
+const imageOf = (container: typeof Container.Type) =>
+  Predicate.isString(container) ? container : container.image;
+
+/** Containers by name, each read on its own so an odd one skips only itself. */
+const Containers = Schema.Record(Schema.String, Schema.Unknown);
+
+const decodeContainers = Schema.decodeUnknownOption(Containers);
+
+/** The images of the containers that name one, by name. */
+const containerImages = (containers: Option.Option<typeof Containers.Type>) =>
+  Object.values(Option.getOrElse(containers, () => ({}))).flatMap(
+    (container) => {
+      const image = Option.getOrUndefined(
+        Option.map(decodeContainer(container), imageOf),
+      );
+
+      return image === undefined ? [] : [image];
+    },
+  );
+
+const Compose = Schema.Struct({
+  services: Schema.optional(Schema.Unknown),
+});
+
+const decodeCompose = Schema.decodeUnknownOption(Compose);
+
+/** The `image:` of each service in a Compose file. */
+const extractCompose = (file: string, text: string): Extraction => {
+  const decoded = decodeCompose(Yaml.parse(text));
+
+  if (Option.isNone(decoded))
+    return { dependencies: [], notes: [`${file} couldn't be read`] };
+
+  return images(
+    containerImages(decodeContainers(decoded.value.services)).map((image) =>
+      imageDependency("docker-compose", file, "image", image),
+    ),
+  );
+};
+
 const Steps = Schema.optional(
   Schema.Array(Schema.Struct({ uses: Schema.optional(Schema.String) })),
 );
 
-/** The parts of a workflow or action that use other actions. */
+/** The parts of a workflow or action that use other actions and images. */
 const Workflow = Schema.Struct({
   jobs: Schema.optional(
     Schema.Record(
       Schema.String,
-      Schema.Struct({ uses: Schema.optional(Schema.String), steps: Steps }),
+      Schema.Struct({
+        uses: Schema.optional(Schema.String),
+        steps: Steps,
+        container: Schema.optional(Schema.Unknown),
+        services: Schema.optional(Schema.Unknown),
+      }),
     ),
   ),
   runs: Schema.optional(Schema.Struct({ steps: Steps })),
@@ -392,16 +529,42 @@ const extractActions = (file: string, text: string): Extraction => {
     return { dependencies: [], notes: [`${file} couldn't be read`] };
 
   const workflow = decoded.value;
+  const jobs = Object.values(workflow.jobs ?? {});
   const dependencies: Array<Dependency> = [];
   const notes: Array<string> = [];
 
   const references = [
-    ...Object.values(workflow.jobs ?? {}).flatMap((job) => [
+    ...jobs.flatMap((job) => [
       job.uses,
       ...(job.steps ?? []).map((step) => step.uses),
     ]),
     ...(workflow.runs?.steps ?? []).map((step) => step.uses),
   ].filter(Predicate.isString);
+
+  // Job containers and services, and `docker://` steps, are images
+  const containers = images(
+    [
+      ...jobs.flatMap((job) => [
+        ...containerImages(decodeContainers({ container: job.container })).map(
+          (image) => ({ image, depType: "container" }),
+        ),
+        ...containerImages(decodeContainers(job.services)).map((image) => ({
+          image,
+          depType: "service",
+        })),
+      ]),
+      ...references.flatMap((reference) =>
+        reference.startsWith("docker://")
+          ? [{ image: reference.slice("docker://".length), depType: "docker" }]
+          : [],
+      ),
+    ].map(({ image, depType }) =>
+      imageDependency("github-actions", file, depType, image),
+    ),
+  );
+
+  dependencies.push(...containers.dependencies);
+  notes.push(...containers.notes);
 
   // The version comment after a pinned SHA, such as `# v4.2.0`
   const comments = new Map(
@@ -823,6 +986,18 @@ export const extract = Effect.fnUntraced(function* (
       enabled(policy, "git-submodules")
     )
       attempt(file, () => extractSubmodules(file, text, gitlinks));
+
+    if (
+      matchesFiles(file, filePatterns.dockerfile) &&
+      enabled(policy, "dockerfile")
+    )
+      attempt(file, () => extractDockerfile(file, text));
+
+    if (
+      matchesFiles(file, filePatterns["docker-compose"]) &&
+      enabled(policy, "docker-compose")
+    )
+      attempt(file, () => extractCompose(file, text));
 
     for (const manager of policy.customManagers) {
       if (!matchesFiles(file, manager.files)) continue;

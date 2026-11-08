@@ -217,6 +217,50 @@ const editAction = (update: Update, text: string): Edit => {
 };
 
 /**
+ * An image reference, `name:tag@sha256:…`, wherever it stands in the file:
+ * a new tag, a moved digest or a pinned one. A pinned image keeps its digest
+ * through a new tag, which needs the new tag's.
+ */
+const editImage = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+
+  if (update.updateType === "replacement")
+    return unsupported("image replacements aren't applied yet");
+
+  const digestOnly =
+    update.updateType === "digest" || update.updateType === "pinDigest";
+
+  const digest = update.digest;
+
+  if (
+    digest === undefined &&
+    (digestOnly || dependency.currentDigest !== undefined)
+  )
+    return unsupported(`no digest for ${dependency.depName}:${update.to}`);
+
+  const reference = (tag: string, at: string | undefined) =>
+    `${dependency.depName}${tag === "" ? "" : `:${tag}`}${at === undefined ? "" : `@${at}`}`;
+
+  const current = reference(dependency.currentValue, dependency.currentDigest);
+
+  // Not part of a longer name, tag or digest
+  const pattern = new RegExp(
+    `(?<![\\w./:@-])${escape(current)}(?![\\w.:@-])`,
+    "g",
+  );
+
+  if (!pattern.test(text))
+    return unsupported(`${current} isn't in the file any more`);
+
+  return edited(
+    text.replace(
+      pattern,
+      reference(digestOnly ? dependency.currentValue : update.to, digest),
+    ),
+  );
+};
+
+/**
  * A custom regex match, rewritten in place as Renovate does: the digest and
  * the value are swapped within the matched text where they were captured.
  */
@@ -226,6 +270,9 @@ const editRegex = (update: Update, text: string): Edit => {
 
   if (matched === undefined || !text.includes(matched))
     return unsupported("the matched text isn't in the file any more");
+
+  if (update.updateType === "pinDigest")
+    return unsupported("a regex match has no digest to pin");
 
   let replacement = matched;
 
@@ -245,7 +292,9 @@ const editRegex = (update: Update, text: string): Edit => {
   )
     replacement = replacement.replaceAll(
       dependency.currentValue,
-      newValue(dependency.currentValue, update.to) ?? update.to,
+      dependency.datasource === "docker"
+        ? update.to
+        : (newValue(dependency.currentValue, update.to) ?? update.to),
     );
 
   if (replacement === matched)
@@ -262,7 +311,11 @@ const editRegex = (update: Update, text: string): Edit => {
 const editJsonata = (update: Update, text: string): Edit => {
   const { dependency } = update;
 
-  if (update.updateType === "digest" || dependency.currentValue === "")
+  if (
+    update.updateType === "digest" ||
+    update.updateType === "pinDigest" ||
+    dependency.currentValue === ""
+  )
     return unsupported("only versions are updated from a jsonata result");
 
   const pattern = new RegExp(
@@ -291,6 +344,14 @@ const editJsonata = (update: Update, text: string): Edit => {
  */
 export const apply = (update: Update, text: string): Edit => {
   if (update.lockfile) return edited(text);
+
+  if (
+    update.dependency.datasource === "docker" &&
+    (update.dependency.manager === "dockerfile" ||
+      update.dependency.manager === "docker-compose" ||
+      update.dependency.manager === "github-actions")
+  )
+    return editImage(update, text);
 
   if (
     update.updateType === "replacement" &&

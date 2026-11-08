@@ -50,6 +50,8 @@ const categories = new Map([
   ["bun", ["js"]],
   ["github-actions", ["ci"]],
   ["git-submodules", ["git"]],
+  ["dockerfile", ["docker"]],
+  ["docker-compose", ["docker"]],
 ]);
 
 export const managerCategories = (manager: string) =>

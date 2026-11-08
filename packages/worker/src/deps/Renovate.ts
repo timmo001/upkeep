@@ -635,6 +635,8 @@ export const managers = [
   "mise",
   "github-actions",
   "git-submodules",
+  "dockerfile",
+  "docker-compose",
 ];
 
 /** A custom datasource, as Renovate writes it. */

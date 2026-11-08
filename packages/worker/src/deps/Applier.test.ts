@@ -50,6 +50,60 @@ test("a package.json range moves and the rest is left alone", () => {
   );
 });
 
+test("an image moves its tag and digest, and leaves longer names alone", () => {
+  const node: Dependency = {
+    manager: "dockerfile",
+    file: "Dockerfile",
+    depName: "node",
+    packageName: "node",
+    datasource: "docker",
+    depType: "final",
+    currentValue: "22-alpine",
+  };
+
+  const dockerfile =
+    "FROM node:22-alpine AS build\nFROM node:22-alpine3.20\nFROM my/node:22-alpine\n";
+
+  expect(
+    text(
+      apply(
+        update(node, {
+          updateType: "pinDigest",
+          to: "abc1234",
+          digest: "sha256:abc",
+        }),
+        dockerfile,
+      ),
+    ),
+  ).toBe(
+    dockerfile.replace("node:22-alpine AS", "node:22-alpine@sha256:abc AS"),
+  );
+
+  const pinned = { ...node, currentDigest: "sha256:abc" };
+
+  expect(
+    text(
+      apply(
+        update(pinned, {
+          updateType: "major",
+          to: "24-alpine",
+          digest: "sha256:def",
+        }),
+        "image: node:22-alpine@sha256:abc\n",
+      ),
+    ),
+  ).toBe("image: node:24-alpine@sha256:def\n");
+
+  expect(
+    text(
+      apply(
+        update(pinned, { updateType: "major", to: "24-alpine" }),
+        "image: node:22-alpine@sha256:abc\n",
+      ),
+    ),
+  ).toBe("no digest for node:24-alpine");
+});
+
 test("a pinned action moves its commit and version comment", () => {
   const checkout: Dependency = {
     manager: "github-actions",
