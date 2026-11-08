@@ -787,8 +787,11 @@ is decided after its checks and before the push, unless it only changes
 workflows. Each update goes by its type first: a major or a minor below 1.0
 needs a check, and a patch, digest, pin or lockfile-only update doesn't. Only
 for the rest are the release notes read, from the GitHub releases of the
-package's source, and they decide as on bumps. Notes that can't be read leave
-it unclear, so it's checked, as a replacement always is. The update needing
+package's source, and they decide as on bumps, with the decision model
+settling what they don't, under the same threshold and daily cap. It's asked
+once per run for each update, so repositories moving a dependency between the
+same versions share its answer. Notes that can't be read leave it unclear, so
+it's checked, as a replacement always is. The update needing
 it most decides for the group. A check runs the commands, and the group fails
 if they do. With none, the group is held: nothing is pushed, Renovate's pull
 request stays open, the run logs what needs checking with links to the

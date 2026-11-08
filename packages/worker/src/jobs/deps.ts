@@ -10,7 +10,7 @@
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Cache, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as Applier from "../deps/Applier";
 import { Datasources } from "../deps/Datasources";
 import * as Managers from "../deps/Managers";
@@ -350,6 +350,13 @@ interface ApplyContext {
   readonly checks: ReadonlyArray<string> | undefined;
   readonly generate: ReadonlyArray<string> | undefined;
   readonly regression: Regression.Setting | undefined;
+  /**
+   * The decision model's verdict on an update the rules can't settle, asked
+   * once per run for each, as every repository moving it reads the same notes.
+   */
+  readonly decide: (
+    update: Regression.Update,
+  ) => Effect.Effect<Option.Option<Regression.Decided>>;
   readonly dryRun: boolean;
 }
 
@@ -410,13 +417,14 @@ const verdicts: ReadonlyArray<Regression.Verdict> = [
 /**
  * A group's regression check, when its repository opts in and an update in
  * it needs one. Each update goes by its type, and only one its type can't
- * settle has its release notes read; the most severe verdict across the group
- * wins. With no decision model, an unclear update is checked.
+ * settle has its release notes read, for the decision model to settle when
+ * the notes don't; the most severe verdict across the group wins. Without a
+ * model, or when it can't decide, an unclear update is checked.
  */
 const regressionFor = Effect.fnUntraced(function* (
   repo: string,
   group: Planner.Group,
-  setting: Regression.Setting | undefined,
+  context: Pick<ApplyContext, "regression" | "decide">,
   options: {
     readonly cwd: string;
     readonly trusted: string;
@@ -424,7 +432,7 @@ const regressionFor = Effect.fnUntraced(function* (
   },
 ) {
   const commands = Regression.commands(
-    setting,
+    context.regression,
     options.mise ? yield* Bump.miseTasks(options) : [],
   );
 
@@ -468,12 +476,29 @@ const regressionFor = Effect.fnUntraced(function* (
           ),
         );
 
-      return {
+      const ruled = {
         against,
         notes: notes?.url ?? links.notes,
         compare: notes?.compare ?? links.compare,
         ...Regression.decide({ ...change, notes: notes?.text }),
       } satisfies Decided;
+
+      // With no notes to read there's nothing for the model to go on
+      if (ruled.verdict !== "unclear" || notes?.text === undefined)
+        return ruled;
+
+      const asked = yield* context.decide({
+        package: update.dependency.depName,
+        from: update.from,
+        to: update.to,
+        updateType: update.updateType,
+        notes: Regression.trimNotes(notes.text),
+      });
+
+      return Option.match(asked, {
+        onNone: () => ruled,
+        onSome: (decided) => ({ ...ruled, ...decided }) satisfies Decided,
+      });
     }),
     { concurrency: 4 },
   );
@@ -684,7 +709,7 @@ const applyGroup = Effect.fnUntraced(function* (
 
   // Workflows alone only change CI, so they need no regression check
   const check = changed.some((file) => !file.startsWith(".github/"))
-    ? yield* regressionFor(repo, group, context.regression, {
+    ? yield* regressionFor(repo, group, context, {
         ...options,
         mise,
       })
@@ -1023,6 +1048,13 @@ export const deps = Effect.fnUntraced(function* () {
   let groups = 0;
   let applied = 0;
 
+  // Keyed by the update, so repositories moving a dependency the same way
+  // share one answer
+  const decisions = yield* Cache.make({
+    capacity: 256,
+    lookup: (update: Regression.Update) => Regression.ask(update, settings),
+  });
+
   yield* Effect.forEach(
     repos,
     (repo) =>
@@ -1051,6 +1083,7 @@ export const deps = Effect.fnUntraced(function* () {
             checks: settings.bump?.repos?.[repo.full_name]?.checks,
             generate: settings.bump?.repos?.[repo.full_name]?.generate,
             regression: settings.bump?.repos?.[repo.full_name]?.regression,
+            decide: (update) => Cache.get(decisions, update),
             dryRun,
           },
         );
