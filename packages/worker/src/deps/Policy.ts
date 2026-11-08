@@ -70,6 +70,12 @@ export const Settings = Schema.Struct({
   rangeStrategy: Schema.optionalKey(Schema.String),
   versioning: Schema.optionalKey(Schema.NullOr(Schema.String)),
   extractVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * A regex with `version` and `compatibility` groups: releases must share
+   * the current value's compatibility, such as `-alpine`, and are compared
+   * on their version.
+   */
+  versionCompatibility: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The package that replaces this one, such as a renamed or forked one. */
   replacementName: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The version of the replacement to move to. */

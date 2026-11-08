@@ -1,6 +1,6 @@
 /** Which updates the planner finds for a dependency, as Renovate would. */
 import { expect, test } from "bun:test";
-import { updatesFor, vulnerabilities } from "./Planner";
+import { type Update, updatesFor, vulnerabilities } from "./Planner";
 import type { Dependency, Policy, Releases } from "./Policy";
 
 const policy: Policy = {
@@ -200,6 +200,96 @@ test("a replacement that changes nothing isn't planned", () => {
       ({ updateType }) => updateType === "replacement",
     ),
   ).toEqual([]);
+});
+
+const node: Dependency = {
+  manager: "dockerfile",
+  file: "Dockerfile",
+  depName: "node",
+  packageName: "node",
+  datasource: "docker",
+  depType: "final",
+  currentValue: "22.11.0-alpine",
+};
+
+const nodeTags: Releases = {
+  releases: [
+    "22.11.0-alpine",
+    "22.12.0-alpine",
+    "22.12.0",
+    "22.13-alpine",
+    "24.1.0-alpine3.20",
+    "24.1.0-alpine",
+    "25.0.0rc1-alpine",
+    "latest",
+  ].map((version) => ({ version, digest: `sha256:${version}` })),
+};
+
+const planned = (plan: { updates: ReadonlyArray<Update> }) =>
+  plan.updates.map(({ updateType, from, to, digest }) => [
+    updateType,
+    from,
+    to,
+    digest,
+  ]);
+
+test("an image's tag only moves to tags with its suffix and its number of parts", () => {
+  expect(planned(updatesFor(policy, node, nodeTags, 0))).toEqual([
+    ["minor", "22.11.0-alpine", "22.12.0-alpine", undefined],
+    ["major", "22.11.0-alpine", "24.1.0-alpine", undefined],
+  ]);
+});
+
+test("a pinned image keeps its digest through a new tag, and moves it on its own tag", () => {
+  const pinned = { ...node, currentDigest: "sha256:old" };
+
+  expect(planned(updatesFor(policy, pinned, nodeTags, 0))).toEqual([
+    ["digest", "old", "22.11.0", "sha256:22.11.0-alpine"],
+    ["minor", "22.11.0-alpine", "22.12.0-alpine", "sha256:22.12.0-alpine"],
+    ["major", "22.11.0-alpine", "24.1.0-alpine", "sha256:24.1.0-alpine"],
+  ]);
+});
+
+test("an image on a tag that isn't a version only has its digest pinned", () => {
+  const latest = { ...node, currentValue: "latest" };
+
+  expect(planned(updatesFor(policy, latest, nodeTags, 0))).toEqual([]);
+
+  expect(
+    planned(
+      updatesFor(
+        { ...policy, settings: { pinDigests: true } },
+        latest,
+        nodeTags,
+        0,
+      ),
+    ),
+  ).toEqual([["pinDigest", "latest", "latest", "sha256:latest"]]);
+});
+
+test("versionCompatibility compares the version and keeps the compatibility", () => {
+  const compatibility: Policy = {
+    ...policy,
+    settings: {
+      versioning: "node",
+      versionCompatibility: "^(?<version>[^-]+)(?<compatibility>-.*)?$",
+    },
+  };
+
+  expect(
+    planned(
+      updatesFor(
+        compatibility,
+        { ...node, currentValue: "22-alpine" },
+        {
+          releases: ["22-alpine", "24-alpine", "24", "26-bookworm"].map(
+            (version) => ({ version }),
+          ),
+        },
+        0,
+      ),
+    ),
+  ).toEqual([["major", "22-alpine", "24-alpine", undefined]]);
 });
 
 test("open alerts on a package combine into its highest first patched version", () => {

@@ -18,19 +18,80 @@ import type {
 import { type Context, matchesPattern, settingsFor } from "./Rules";
 
 /** A version as comparable parts, with any prerelease after them. */
-interface Version {
+export interface Version {
   readonly parts: ReadonlyArray<number>;
   readonly prerelease: string | undefined;
 }
 
+/** A Docker tag as a version, with the suffix after its first `-`. */
+export interface DockerVersion extends Version {
+  readonly suffix: string;
+}
+
 /**
- * Parse a version by its versioning: semver-like by default, or Renovate's
- * `regex:` versioning with major, minor, patch, build and prerelease groups.
+ * Parse a tag as Renovate's docker versioning does: numbers, then any
+ * letters as a prerelease, such as `3.13.0rc1`, then a suffix after the first
+ * `-`, such as `alpine`. Commit hashes and words such as `latest` aren't
+ * versions.
+ */
+export const dockerVersion = (tag: string): DockerVersion | undefined => {
+  if (/^[a-f\d]{7,40}$/.test(tag) && !/^\d+$/.test(tag)) return undefined;
+
+  const [prefix = "", ...suffix] = tag.replace(/^v/, "").split("-");
+
+  const groups = /^(?<version>\d+(?:\.\d+)*)(?<prerelease>\w*)$/.exec(
+    prefix,
+  )?.groups;
+
+  if (groups?.version === undefined) return undefined;
+
+  return {
+    parts: groups.version.split(".").map(Number),
+    prerelease: groups.prerelease === "" ? undefined : groups.prerelease,
+    suffix: suffix.join("-"),
+  };
+};
+
+/**
+ * Whether a tag can replace another under docker versioning: the same suffix
+ * and the same number of version parts, so `22-alpine` only moves to tags
+ * such as `24-alpine`.
+ */
+export const dockerCompatible = (tag: string, current: string) => {
+  const a = dockerVersion(tag);
+  const b = dockerVersion(current);
+
+  return (
+    a !== undefined &&
+    b !== undefined &&
+    a.suffix === b.suffix &&
+    a.parts.length === b.parts.length
+  );
+};
+
+/**
+ * A value split by a `versionCompatibility` regex into the version compared
+ * and the compatibility every release must share, such as `22` and `-alpine`.
+ */
+export const splitCompatibility = (pattern: string, value: string) => {
+  const groups = new RegExp(pattern).exec(value)?.groups;
+
+  return groups?.version === undefined
+    ? undefined
+    : { version: groups.version, compatibility: groups.compatibility };
+};
+
+/**
+ * Parse a version by its versioning: semver-like by default, Renovate's
+ * `docker` versioning, or its `regex:` versioning with major, minor, patch,
+ * build and prerelease groups.
  */
 export const parseVersion = (
   version: string,
   versioning: string | null | undefined,
 ): Version | undefined => {
+  if (versioning === "docker") return dockerVersion(version);
+
   if (versioning?.startsWith("regex:") === true) {
     const groups = new RegExp(versioning.slice("regex:".length)).exec(
       version,
@@ -219,6 +280,10 @@ const resolveRangeStrategy = (
 const partsOf = (version: string) =>
   /^v?(?<numbers>\d+(?:\.\d+)*)/.exec(version)?.groups?.numbers?.split(".")
     .length;
+
+/** A digest as it's shown: a commit's first 7, or an image's after `sha256:`. */
+const shortDigest = (digest: string) =>
+  digest.replace(/^sha256:/, "").slice(0, 7);
 
 /** Renovate's bucket for an update, where only the newest release is kept. */
 const bucket = (settings: Settings, updateType: UpdateType, next: Version) => {
@@ -455,12 +520,51 @@ const versionUpdates = (
     };
   }
 
+  const docker = withSource.datasource === "docker";
+
+  // An image named without a tag runs `latest`
+  const tag =
+    docker && withSource.currentValue === ""
+      ? "latest"
+      : withSource.currentValue;
+
+  // `versionCompatibility` splits a value into the version compared and the
+  // part every release must share, such as `-alpine`; a value it doesn't
+  // match is read whole, as Renovate does
+  const compatibilityPattern = base.versionCompatibility ?? undefined;
+
+  const compatible =
+    compatibilityPattern === undefined
+      ? undefined
+      : splitCompatibility(compatibilityPattern, tag);
+
+  const currentValue = compatible?.version ?? tag;
+
+  const read = (release: Release) => {
+    const text = extract(release);
+
+    if (
+      text === undefined ||
+      compatible === undefined ||
+      compatibilityPattern === undefined
+    )
+      return text;
+
+    const split = splitCompatibility(compatibilityPattern, text);
+
+    return split?.compatibility === compatible.compatibility
+      ? split?.version
+      : undefined;
+  };
+
   // A tag like `v7` is a version of its own, not a range: Renovate only moves
-  // it to another tag of the same precision, such as `v8`, or to `v7`'s digest
+  // it to another tag of the same precision, such as `v8`, or to `v7`'s
+  // digest. An image's tag always is
   const precision =
-    withSource.datasource === "github-tags" &&
-    /^v?\d+(?:\.\d+)?$/.test(withSource.currentValue)
-      ? partsOf(withSource.currentValue)
+    docker ||
+    (withSource.datasource === "github-tags" &&
+      /^v?\d+(?:\.\d+)?$/.test(currentValue))
+      ? partsOf(currentValue)
       : undefined;
 
   // With no locked version, or a range strategy that moves the range rather
@@ -469,7 +573,7 @@ const versionUpdates = (
   // the range instead, so it reads from the lowest
   const inRange = (range: string, lowest: boolean) => {
     const versions = metadata.releases.flatMap((release) => {
-      const text = extract(release);
+      const text = read(release);
 
       return text !== undefined && semver.satisfies(text, range) ? [text] : [];
     });
@@ -492,9 +596,9 @@ const versionUpdates = (
   const currentFor = (lowest: boolean, locked: string | undefined) => {
     const text =
       locked ??
-      (precision === undefined && isRange(withSource.currentValue)
-        ? inRange(withSource.currentValue, lowest)
-        : withSource.currentValue);
+      (precision === undefined && !docker && isRange(currentValue)
+        ? inRange(currentValue, lowest)
+        : currentValue);
 
     return {
       text,
@@ -536,11 +640,63 @@ const versionUpdates = (
       ? currentFor(false, locked)
       : vulnerable;
 
-  if (current === undefined)
+  // The version in use, which can still need its digest pinned or moved
+  const digestUpdate = (
+    release: Release,
+    next: Version | undefined,
+  ): Update | undefined => {
+    if (release.digest === undefined || fixing !== undefined) return undefined;
+
+    const updateType: UpdateType | undefined =
+      withSource.currentDigest === undefined
+        ? base.pinDigests === true
+          ? "pinDigest"
+          : undefined
+        : release.digest.startsWith(withSource.currentDigest)
+          ? undefined
+          : "digest";
+
+    if (updateType === undefined) return undefined;
+
+    const settings = settingsFor(policy, withSource, {
+      ...context,
+      updateType,
+    });
+
+    if (settings.enabled === false) return undefined;
+
     return {
-      updates: [],
-      skipped: `can't read version ${withSource.currentValue}`,
+      dependency: withSource,
+      updateType,
+      from:
+        withSource.currentDigest === undefined
+          ? withSource.currentValue
+          : shortDigest(withSource.currentDigest),
+      to: shortDigest(release.digest),
+      settings,
+      branch: branchFor(withSource, settings, updateType, next, false),
+      lockfile: false,
+      digest: release.digest,
     };
+  };
+
+  if (current === undefined) {
+    // An image's tag that isn't a version, such as `latest`, only moves its
+    // digest
+    const release = docker
+      ? metadata.releases.find((candidate) => candidate.version === tag)
+      : undefined;
+
+    if (release === undefined)
+      return {
+        updates: [],
+        skipped: `can't read version ${withSource.currentValue}`,
+      };
+
+    const update = digestUpdate(release, undefined);
+
+    return { updates: update === undefined ? [] : [update] };
+  }
 
   const latest =
     metadata.latest === undefined
@@ -551,11 +707,15 @@ const versionUpdates = (
   let pending = 0;
 
   for (const release of metadata.releases) {
-    const text = extract(release);
+    const text = read(release);
 
     if (text === undefined) continue;
 
     if (precision !== undefined && partsOf(text) !== precision) continue;
+
+    // Docker versioning keeps to tags with the same suffix, such as `-alpine`
+    if (versioning === "docker" && !dockerCompatible(text, currentValue))
+      continue;
 
     const next = parseVersion(text, versioning);
 
@@ -563,39 +723,11 @@ const versionUpdates = (
 
     const order = compareVersions(next, current);
 
-    // The version in use, which can still need its digest pinned or moved
     if (order === 0) {
-      if (release.digest === undefined || fixing !== undefined) continue;
+      const update = digestUpdate(release, next);
 
-      const updateType: UpdateType | undefined =
-        withSource.currentDigest === undefined
-          ? base.pinDigests === true
-            ? "pinDigest"
-            : undefined
-          : release.digest.startsWith(withSource.currentDigest)
-            ? undefined
-            : "digest";
-
-      if (updateType === undefined) continue;
-
-      const settings = settingsFor(policy, withSource, {
-        ...context,
-        updateType,
-      });
-
-      if (settings.enabled === false) continue;
-
-      best.set(updateType, {
-        dependency: withSource,
-        updateType,
-        from: withSource.currentDigest?.slice(0, 7) ?? withSource.currentValue,
-        to: release.digest.slice(0, 7),
-        settings,
-        branch: branchFor(withSource, settings, updateType, next, false),
-        lockfile: false,
-        digest: release.digest,
-        version: next,
-      });
+      if (update !== undefined)
+        best.set(update.updateType, { ...update, version: next });
 
       continue;
     }
@@ -693,16 +825,26 @@ const versionUpdates = (
     best.set(key, {
       dependency: withSource,
       updateType,
-      from: currentText ?? withSource.currentValue,
-      to: text,
+      from:
+        compatible === undefined
+          ? (currentText ?? withSource.currentValue)
+          : withSource.currentValue,
+      to:
+        compatible === undefined
+          ? text
+          : `${text}${compatible.compatibility ?? ""}`,
       settings,
       branch:
         fixing === undefined
           ? branchFor(withSource, settings, updateType, next, lockfile)
           : vulnerabilityBranch(withSource, settings, updateType, next),
       lockfile,
+      // A pinned digest moves with the version, and pinDigests pins an image's
       digest:
-        withSource.currentDigest === undefined ? undefined : release.digest,
+        withSource.currentDigest !== undefined ||
+        (docker && base.pinDigests === true)
+          ? release.digest
+          : undefined,
       vulnerable: fixing === undefined ? undefined : true,
       version: next,
     });
@@ -732,7 +874,14 @@ export const updatesFor = (
       : dependency;
 
   const context = { repository };
-  const base = settingsFor(policy, withSource, context);
+  const settings = settingsFor(policy, withSource, context);
+
+  // An image's tags follow Renovate's docker versioning unless a rule says
+  const base =
+    withSource.datasource === "docker" &&
+    (settings.versioning === undefined || settings.versioning === null)
+      ? { ...settings, versioning: "docker" }
+      : settings;
 
   if (base.enabled === false) return { updates: [], skipped: "disabled" };
 
