@@ -145,6 +145,31 @@ const PackageJson = Schema.Struct({
 
 const decodePackageJson = Schema.decodeUnknownOption(PackageJson);
 
+/** One entry of a package.json dependency list. */
+interface Entry {
+  readonly depName: string;
+  readonly value: Schema.Json;
+  /** The keys of the object it sits in, for an override. */
+  readonly parents?: ReadonlyArray<string> | undefined;
+}
+
+const isNested = (value: Schema.Json): value is Schema.JsonObject =>
+  Predicate.isObject(value) && !Array.isArray(value);
+
+/**
+ * An overrides block's entries, as Renovate's npm extractor reads them:
+ * every string value under its key, however deeply it's nested.
+ */
+const overrideEntries = (
+  entries: Readonly<Record<string, Schema.Json>>,
+  parents: ReadonlyArray<string> = ["overrides"],
+): Array<Entry> =>
+  Object.entries(entries).flatMap(([depName, value]) =>
+    isNested(value)
+      ? overrideEntries(value, [...parents, depName])
+      : [{ depName, value, parents }],
+  );
+
 const extractPackage = (
   file: string,
   text: string,
@@ -170,7 +195,12 @@ const extractPackage = (
 
     if (entries === undefined) continue;
 
-    for (const [depName, value] of Object.entries(entries)) {
+    for (const { depName, value, parents } of depType === "overrides"
+      ? overrideEntries(entries)
+      : Object.entries(entries).map(([name, json]): Entry => ({
+          depName: name,
+          value: json,
+        }))) {
       if (!Predicate.isString(value)) {
         notes.push(`${file}: nested ${depType} for ${depName} aren't read`);
 
@@ -179,6 +209,16 @@ const extractPackage = (
 
       // A `$name` override follows the dependency it names
       if (value.startsWith("$")) continue;
+
+      // `"."` overrides the package it sits under, which the applier would
+      // look for by that package's name rather than the `"."` key
+      if (depName === ".") {
+        notes.push(
+          `${file}: the "." override for ${parents?.at(-1) ?? "the package"} isn't read`,
+        );
+
+        continue;
+      }
 
       const dependency = packageDependency(
         manager,
@@ -200,6 +240,7 @@ const extractPackage = (
         ...dependency,
         lockFiles: lock === undefined ? undefined : [lock],
         lockedVersion,
+        parents,
       });
     }
   }
@@ -576,7 +617,12 @@ const extractActions = (file: string, text: string): Extraction => {
   );
 
   for (const reference of new Set(references)) {
-    if (reference.startsWith("./") || reference.startsWith("docker://"))
+    // `./` and GitHub's `$/` point into this repository at the running commit
+    if (
+      reference.startsWith("./") ||
+      reference.startsWith("$/") ||
+      reference.startsWith("docker://")
+    )
       continue;
 
     const remote = /^(?<repo>[\w.-]+\/[\w.-]+)(?:\/[^@]+)?@(?<ref>.+)$/.exec(
@@ -702,14 +748,73 @@ const extractSubmodules = (
   return { dependencies, notes };
 };
 
-/** Fill `{{{name}}}` and `{{name}}` from the captures. */
+/** A Handlebars string literal, in single or double quotes. */
+const literal = String.raw`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`;
+
+/** `{{name}}`, or Renovate's `{{replace 'find' 'with' name}}` helper. */
+const placeholder = new RegExp(
+  String.raw`\{\{\{?\s*(?:replace\s+(?<find>${literal})\s+(?<with>${literal})\s+(?<field>\w+)|(?<name>\w+))\s*\}?\}\}`,
+  "g",
+);
+
+/** A literal's text, with only its own quote unescaped, as Handlebars has it. */
+const unquote = (quoted: string) =>
+  quoted.slice(1, -1).replaceAll(`\\${quoted[0]}`, quoted[0] ?? "");
+
+/**
+ * Fill `{{{name}}}` and `{{name}}` from the captures, and Renovate's
+ * `replace` helper, which replaces every match of a regex in a field. A
+ * regex that doesn't compile leaves the field as it is.
+ */
 export const render = (
   template: string,
   values: Readonly<Record<string, string>>,
 ) =>
   template.replace(
-    /\{\{\{?\s*(?<name>\w+)\s*\}?\}\}/g,
-    (_, name: string) => values[name] ?? "",
+    placeholder,
+    (
+      _,
+      find: string | undefined,
+      replacement: string | undefined,
+      field: string | undefined,
+      name: string | undefined,
+    ) => {
+      if (name !== undefined) return values[name] ?? "";
+
+      const value = values[field ?? ""] ?? "";
+
+      try {
+        return value.replace(
+          new RegExp(unquote(find ?? "''"), "g"),
+          unquote(replacement ?? "''"),
+        );
+      } catch {
+        return value;
+      }
+    },
+  );
+
+/**
+ * A dependency's fields under the names Renovate's templates give them, for
+ * templates such as replacementNameTemplate that render against it.
+ */
+export const dependencyValues = (dependency: Dependency) =>
+  Object.fromEntries(
+    Object.entries({
+      manager: dependency.manager,
+      packageFile: dependency.file,
+      depName: dependency.depName,
+      packageName: dependency.packageName,
+      datasource: dependency.datasource,
+      depType: dependency.depType,
+      currentValue: dependency.currentValue,
+      currentVersion: dependency.lockedVersion,
+      currentDigest: dependency.currentDigest,
+      sourceUrl: dependency.sourceUrl,
+      versioning: dependency.versioning,
+    }).filter((entry): entry is [string, string] =>
+      Predicate.isString(entry[1]),
+    ),
   );
 
 type RegexManager = Extract<CustomManager, { type: "regex" }>;

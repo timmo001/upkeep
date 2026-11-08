@@ -77,12 +77,105 @@ const replacePackage = (update: Update, text: string): Edit => {
     "g",
   );
 
-  return edited(
-    text.replace(
-      pattern,
-      `"${update.newName ?? dependency.depName}"$1${value}"`,
+  return within(text, dependency.parents, (part) =>
+    edited(
+      part.replace(
+        pattern,
+        `"${update.newName ?? dependency.depName}"$1${value}"`,
+      ),
     ),
   );
+};
+
+/** Where the JSON string opening at `start` closes. */
+const stringEnd = (text: string, start: number) => {
+  let index = start + 1;
+
+  while (index < text.length && text[index] !== '"')
+    index += text[index] === "\\" ? 2 : 1;
+
+  return index;
+};
+
+/** Where the JSON object or array opening at `open` closes. */
+const closing = (text: string, open: number) => {
+  let depth = 0;
+
+  for (let index = open; index < text.length; index++) {
+    const char = text[index];
+
+    if (char === '"') index = stringEnd(text, index);
+    else if (char === "{" || char === "[") depth++;
+    else if ((char === "}" || char === "]") && --depth === 0) return index;
+  }
+
+  return undefined;
+};
+
+/**
+ * The braces of the object `key` holds in the object between `open` and
+ * `close`, counting only its own keys, not ones nested deeper or in strings.
+ */
+const member = (text: string, open: number, close: number, key: string) => {
+  let depth = 0;
+
+  for (let index = open; index < close; index++) {
+    const char = text[index];
+
+    if (char === '"') {
+      const end = stringEnd(text, index);
+
+      const brace =
+        depth === 1 && text.slice(index, end + 1) === JSON.stringify(key)
+          ? /^\s*:\s*\{/.exec(text.slice(end + 1, close))
+          : null;
+
+      if (brace !== null) {
+        const start = end + brace[0].length;
+        const finish = closing(text, start);
+
+        return finish === undefined
+          ? undefined
+          : { open: start, close: finish };
+      }
+
+      index = end;
+    } else if (char === "{" || char === "[") depth++;
+    else if (char === "}" || char === "]") depth--;
+  }
+
+  return undefined;
+};
+
+/**
+ * Make an edit only inside the object at `path` in a JSON file, such as a
+ * nested override, so an entry with the same name elsewhere stays as it is.
+ */
+const within = (
+  text: string,
+  path: ReadonlyArray<string> | undefined,
+  edit: (part: string) => Edit,
+): Edit => {
+  if (path === undefined) return edit(text);
+
+  const open = text.indexOf("{");
+  const close = open === -1 ? undefined : closing(text, open);
+  let span = close === undefined ? undefined : { open, close };
+
+  for (const key of path)
+    span =
+      span === undefined ? undefined : member(text, span.open, span.close, key);
+
+  if (span === undefined)
+    return unsupported(`${path.join(".")} isn't in the file any more`);
+
+  const { open: start, close: end } = span;
+
+  return Edit.$match(edit(text.slice(start, end + 1)), {
+    Edited: (part) =>
+      edited(`${text.slice(0, start)}${part.text}${text.slice(end + 1)}`),
+    Unsupported: (left) => left,
+  });
 };
 
 /** A package.json entry or `packageManager` field. */
@@ -114,7 +207,9 @@ const editPackage = (update: Update, text: string): Edit => {
     "g",
   );
 
-  return edited(text.replace(pattern, `$1${value}"`));
+  return within(text, dependency.parents, (part) =>
+    edited(part.replace(pattern, `$1${value}"`)),
+  );
 };
 
 /** A tool's pin in a mise config, as `name = "1.2.3"` or `{ version = ... }`. */
@@ -218,14 +313,17 @@ const editAction = (update: Update, text: string): Edit => {
 
 /**
  * An image reference, `name:tag@sha256:…`, wherever it stands in the file:
- * a new tag, a moved digest or a pinned one. A pinned image keeps its digest
- * through a new tag, which needs the new tag's.
+ * a new tag, a moved digest or a pinned one, or a replacement's name and
+ * tag. A pinned image keeps its digest through a new tag or name, which
+ * needs the new one's.
  */
 const editImage = (update: Update, text: string): Edit => {
   const { dependency } = update;
 
-  if (update.updateType === "replacement")
-    return unsupported("image replacements aren't applied yet");
+  const name =
+    update.updateType === "replacement"
+      ? (update.newName ?? dependency.depName)
+      : dependency.depName;
 
   const digestOnly =
     update.updateType === "digest" || update.updateType === "pinDigest";
@@ -236,12 +334,16 @@ const editImage = (update: Update, text: string): Edit => {
     digest === undefined &&
     (digestOnly || dependency.currentDigest !== undefined)
   )
-    return unsupported(`no digest for ${dependency.depName}:${update.to}`);
+    return unsupported(`no digest for ${name}:${update.to}`);
 
-  const reference = (tag: string, at: string | undefined) =>
-    `${dependency.depName}${tag === "" ? "" : `:${tag}`}${at === undefined ? "" : `@${at}`}`;
+  const reference = (image: string, tag: string, at: string | undefined) =>
+    `${image}${tag === "" ? "" : `:${tag}`}${at === undefined ? "" : `@${at}`}`;
 
-  const current = reference(dependency.currentValue, dependency.currentDigest);
+  const current = reference(
+    dependency.depName,
+    dependency.currentValue,
+    dependency.currentDigest,
+  );
 
   // Not part of a longer name, tag or digest
   const pattern = new RegExp(
@@ -255,7 +357,7 @@ const editImage = (update: Update, text: string): Edit => {
   return edited(
     text.replace(
       pattern,
-      reference(digestOnly ? dependency.currentValue : update.to, digest),
+      reference(name, digestOnly ? dependency.currentValue : update.to, digest),
     ),
   );
 };

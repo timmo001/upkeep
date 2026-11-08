@@ -173,3 +173,59 @@ export const settingsFor = (
 
   return settings;
 };
+
+/**
+ * The policy's notes, with the ones its rules give where they could change
+ * what's updated: that a rule never matches, or the settings it has that
+ * aren't modelled, noted only when its other matchers find one of the
+ * repository's dependencies. Update types are left out, as no update has
+ * been found yet.
+ */
+export const notesFor = (
+  policy: Policy,
+  dependencies: ReadonlyArray<Dependency>,
+  context: Context = {},
+) => {
+  const relevant = policy.rules.filter(
+    (rule) =>
+      ((rule.unsupported?.length ?? 0) > 0 ||
+        (rule.unmodelled?.length ?? 0) > 0) &&
+      dependencies.some((dependency) =>
+        matchesRule(
+          { ...rule.match, updateTypes: undefined },
+          dependency,
+          context,
+        ),
+      ),
+  );
+
+  const never = relevant.flatMap((rule) =>
+    rule.unsupported === undefined ||
+    rule.unsupported.length === 0 ||
+    Object.keys(rule.set).length === 0
+      ? []
+      : [
+          `a rule${rule.description === undefined ? "" : ` (${rule.description})`} uses ${rule.unsupported.join(", ")}, so it never matches`,
+        ],
+  );
+
+  const counts = new Map<string, number>();
+
+  for (const key of [
+    ...policy.unmodelled,
+    ...relevant.flatMap((rule) => rule.unmodelled ?? []),
+  ])
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+
+  return [
+    ...policy.notes,
+    ...never,
+    ...(counts.size === 0
+      ? []
+      : [
+          `not modelled: ${[...counts]
+            .map(([key, count]) => (count > 1 ? `${key} (${count})` : key))
+            .join(", ")}`,
+        ]),
+  ];
+};

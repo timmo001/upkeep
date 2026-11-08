@@ -1,8 +1,10 @@
 /**
- * Write Renovate's built-in presets, at the release pinned below, to
- * packages/worker/src/deps/renovate-presets.json. Upkeep reads Renovate
- * configs without running Renovate, so it needs the presets they extend as
- * data. Run it with `mise run renovate-presets` after moving the pin.
+ * Write Renovate's built-in presets and its manager names, at the release
+ * pinned below, to packages/worker/src/deps/renovate-presets.json. Upkeep
+ * reads Renovate configs without running Renovate, so it needs the presets
+ * they extend as data, and the managers so config for one it doesn't read
+ * can be left out. Run it with `mise run renovate-presets` after moving the
+ * pin.
  */
 import { $ } from "bun";
 
@@ -22,8 +24,19 @@ try {
     `${checkout}/lib/config/presets/internal/index.ts`
   )) as { groups: Record<string, Record<string, unknown>> };
 
-  await Bun.write(output, `${JSON.stringify({ version, groups })}\n`);
-  console.log(`Wrote Renovate ${version}'s presets to ${output.pathname}`);
+  // Each manager has its own directory; `custom` holds the custom managers,
+  // which configs name under customManagers instead
+  const managers = (
+    await $`git -C ${checkout} ls-tree -d --name-only HEAD lib/modules/manager/`.text()
+  )
+    .split("\n")
+    .map((path) => path.replace("lib/modules/manager/", ""))
+    .filter((name) => name !== "" && name !== "custom");
+
+  await Bun.write(output, `${JSON.stringify({ version, managers, groups })}\n`);
+  console.log(
+    `Wrote Renovate ${version}'s presets and ${managers.length} managers to ${output.pathname}`,
+  );
 } finally {
   await $`rm -rf ${checkout}`;
 }

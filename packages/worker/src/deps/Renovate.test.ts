@@ -4,16 +4,28 @@
  */
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
+import { apply, Edit } from "./Applier";
 import * as Managers from "./Managers";
-import { group } from "./Planner";
+import { group, updatesFor } from "./Planner";
+import type { Dependency } from "./Policy";
 import {
   mergeChildConfig,
   parsePreset,
   resolvePresets,
   toPolicy,
 } from "./Renovate";
-import { settingsFor } from "./Rules";
+import { notesFor, settingsFor } from "./Rules";
 import type { ReadFile } from "./Updaters";
+
+const effect: Dependency = {
+  manager: "npm",
+  file: "package.json",
+  depName: "effect",
+  packageName: "effect",
+  datasource: "npm",
+  depType: "dependencies",
+  currentValue: "4.0.0",
+};
 
 test("enabled: false turns Renovate off but keeps its rules, and Upkeep owns automerged groups", () => {
   const policy = toPolicy(
@@ -28,23 +40,13 @@ test("enabled: false turns Renovate off but keeps its rules, and Upkeep owns aut
   expect(policy.updaterRuns).toBe(false);
   expect(policy.settings.enabled).toBeUndefined();
 
-  const dependency = {
-    manager: "npm",
-    file: "package.json",
-    depName: "effect",
-    packageName: "effect",
-    datasource: "npm",
-    depType: "dependencies",
-    currentValue: "4.0.0",
-  };
-
-  const settings = settingsFor(policy, dependency);
+  const settings = settingsFor(policy, effect);
 
   expect(settings.automerge).toBe(true);
 
   const [only] = group(policy, [
     {
-      dependency,
+      dependency: effect,
       updateType: "patch",
       from: "4.0.0",
       to: "4.0.1",
@@ -108,7 +110,9 @@ test("vulnerability alerts are on by default, force Renovate's settings, and not
 
   expect(own.vulnerabilityAlerts?.settings.automerge).toBe(true);
   expect(own.vulnerabilityAlerts?.fixStrategy).toBe("highest");
-  expect(own.notes).toEqual(["not modelled: vulnerabilityAlerts.schedule"]);
+  expect(notesFor(own, [])).toEqual([
+    "not modelled: vulnerabilityAlerts.schedule",
+  ]);
 });
 
 test("a rule on the lockFileMaintenance update type alone turns it on or automerges it", () => {
@@ -130,7 +134,9 @@ test("a rule on the lockFileMaintenance update type alone turns it on or automer
   );
 
   expect(policy.maintenance).toEqual({ automerge: true, everyDays: 7 });
-  expect(policy.notes.join("\n")).not.toContain("lockFileMaintenance");
+  expect(notesFor(policy, [effect]).join("\n")).not.toContain(
+    "lockFileMaintenance",
+  );
 });
 
 test("submodules stay off until the config turns them on, as in Renovate", () => {
@@ -456,7 +462,7 @@ test("replacements:all names a dependency's replacement and isn't left out", asy
   const { config } = await resolve({ extends: ["replacements:all"] });
   const policy = toPolicy(config, "renovate.json", []);
 
-  const settings = settingsFor(policy, {
+  const npmRunAll = {
     manager: "npm",
     file: "package.json",
     depName: "npm-run-all",
@@ -464,12 +470,14 @@ test("replacements:all names a dependency's replacement and isn't left out", asy
     datasource: "npm",
     depType: "devDependencies",
     currentValue: "^4.1.5",
-  });
+  };
+
+  const settings = settingsFor(policy, npmRunAll);
 
   expect(settings.replacementName).toBe("npm-run-all2");
   expect(settings.replacementVersion).toBe("5.0.0");
-  expect(policy.notes.join("\n")).not.toMatch(
-    /replacementName\b|replacementVersion\b/,
+  expect(notesFor(policy, [npmRunAll]).join("\n")).not.toMatch(
+    /replacementName|replacementVersion\b/,
   );
 });
 
@@ -503,4 +511,186 @@ test("presets inside packageRules resolve too", async () => {
     "https://github.com/Effect-TS/effect-smol",
   );
   expect(rule?.groupSlug).toBe("effect");
+});
+
+test("a rule is noted only when its other matchers find a dependency", () => {
+  const policy = toPolicy(
+    {
+      packageRules: [
+        {
+          matchDatasources: ["docker"],
+          matchPackageNames: ["php"],
+          matchJsonata: ["true"],
+          enabled: true,
+          schedule: ["at any time"],
+        },
+        {
+          matchPackageNames: ["effect"],
+          matchUpdateTypes: ["major"],
+          matchJsonata: ["true"],
+          automerge: true,
+          isVulnerabilityAlert: true,
+        },
+      ],
+    },
+    "renovate.json",
+    [],
+  );
+
+  expect(notesFor(policy, [])).toEqual([]);
+  expect(notesFor(policy, [effect])).toEqual([
+    "a rule uses matchJsonata, so it never matches",
+    "not modelled: packageRules.isVulnerabilityAlert",
+  ]);
+});
+
+test("config for a Renovate manager Upkeep doesn't read is left out", () => {
+  const policy = toPolicy(
+    {
+      nuget: { ignorePaths: ["**/tests/**"] },
+      overrideDescription: "Only describes the preset",
+      postUpgradeTasks: { commands: ["make"] },
+    },
+    "renovate.json",
+    [],
+  );
+
+  expect(notesFor(policy, [])).toEqual(["not modelled: postUpgradeTasks"]);
+});
+
+test("replacementNameTemplate renders Renovate's replace helper, and an image moves to its replacement", async () => {
+  expect(
+    Managers.render("{{{replace 'o' '0' depName}}} {{depName}}", {
+      depName: "foo",
+    }),
+  ).toBe("f00 foo");
+
+  const { config } = await resolve({ extends: ["replacements:all"] });
+  const policy = toPolicy(config, "renovate.json", []);
+
+  const pause: Dependency = {
+    manager: "dockerfile",
+    file: "Dockerfile",
+    depName: "k8s.gcr.io/pause",
+    packageName: "k8s.gcr.io/pause",
+    datasource: "docker",
+    depType: "final",
+    currentValue: "3.9",
+  };
+
+  const replace = (dependency: Dependency, text: string) => {
+    const replacement = updatesFor(
+      policy,
+      dependency,
+      { releases: [{ version: "3.9" }] },
+      Date.now(),
+    ).updates.find((update) => update.updateType === "replacement");
+
+    return {
+      newName: replacement?.newName,
+      edit: replacement === undefined ? undefined : apply(replacement, text),
+    };
+  };
+
+  expect(replace(pause, "FROM k8s.gcr.io/pause:3.9\n")).toMatchObject({
+    newName: "registry.k8s.io/pause",
+    edit: Edit.Edited({ text: "FROM registry.k8s.io/pause:3.9\n" }),
+  });
+
+  // A pinned image needs the replacement's own digest, which isn't looked up
+  expect(
+    replace(
+      { ...pause, currentDigest: "sha256:abc" },
+      "FROM k8s.gcr.io/pause:3.9@sha256:abc\n",
+    ).edit?._tag,
+  ).toBe("Unsupported");
+});
+
+test("$/ and ./ actions point into the repository, so they're skipped", () => {
+  const extraction = Effect.runSync(
+    Managers.extract(
+      toPolicy({}, "renovate.json", []),
+      new Map([
+        [
+          ".github/workflows/ci.yml",
+          [
+            "jobs:",
+            "  build:",
+            "    runs-on: ubuntu-latest",
+            "    steps:",
+            "      - uses: $/.github/actions/setup",
+            "      - uses: ./.github/actions/build",
+            "      - uses: actions/checkout@v5",
+          ].join("\n"),
+        ],
+      ]),
+    ),
+  );
+
+  expect(
+    extraction.dependencies.map((dependency) => dependency.depName),
+  ).toEqual(["actions/checkout"]);
+  expect(extraction.notes).toEqual([]);
+});
+
+test("nested overrides are read as Renovate reads them and written in place", () => {
+  const manifest = (overridden: string) =>
+    `${JSON.stringify(
+      {
+        dependencies: { effect: "4.1.2" },
+        overrides: {
+          "@timmo001/effect-herdr": {
+            effect: overridden,
+            "@effect/platform-node-shared": "4.1.2",
+          },
+          foo: { ".": "1.0.0", bar: { baz: "2.0.0" } },
+          semver: "$semver",
+        },
+      },
+      null,
+      2,
+    )}\n`;
+
+  const extraction = Effect.runSync(
+    Managers.extract(
+      toPolicy({}, "renovate.json", []),
+      new Map([["package.json", manifest("4.1.2")]]),
+    ),
+  );
+
+  expect(
+    extraction.dependencies.map((dependency) => [
+      dependency.depName,
+      dependency.depType,
+      dependency.currentValue,
+    ]),
+  ).toEqual([
+    ["effect", "dependencies", "4.1.2"],
+    ["effect", "overrides", "4.1.2"],
+    ["@effect/platform-node-shared", "overrides", "4.1.2"],
+    ["baz", "overrides", "2.0.0"],
+  ]);
+  expect(extraction.notes).toEqual([
+    `package.json: the "." override for foo isn't read`,
+  ]);
+
+  const nested = extraction.dependencies[1];
+
+  // The top-level effect at the same version stays as it is
+  expect(
+    nested === undefined
+      ? undefined
+      : apply(
+          {
+            dependency: nested,
+            updateType: "patch",
+            from: "4.1.2",
+            to: "4.1.3",
+            settings: {},
+            branch: "effect",
+            lockfile: false,
+          },
+          manifest("4.1.2"),
+        ),
+  ).toMatchObject(Edit.Edited({ text: manifest("4.1.3") }));
 });

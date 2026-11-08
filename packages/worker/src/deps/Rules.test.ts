@@ -27,6 +27,7 @@ const policy = (rules: ReadonlyArray<Rule>): Policy => ({
   customManagers: [],
   customDatasources: {},
   notes: [],
+  unmodelled: [],
 });
 
 test("patterns take exact names, globs and regexes, any positive matching", () => {

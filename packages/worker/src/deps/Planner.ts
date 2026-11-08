@@ -6,6 +6,7 @@
  */
 import semver from "semver";
 import { newValue } from "./Applier";
+import { dependencyValues, render } from "./Managers";
 import type {
   Dependency,
   Policy,
@@ -424,8 +425,8 @@ const vulnerabilityBranch = (
 
 /**
  * The replacement a dependency's settings name, as Renovate makes it: the new
- * package, or the same one, at the version given or the current value, as
- * long as one of them changes.
+ * package, given or rendered from replacementNameTemplate, or the same one,
+ * at the version given or the current value, as long as one of them changes.
  */
 const replacementFor = (
   policy: Policy,
@@ -433,7 +434,17 @@ const replacementFor = (
   base: Settings,
   context: Context,
 ): Update | undefined => {
-  const name = base.replacementName ?? "";
+  const template = base.replacementNameTemplate ?? "";
+
+  const name =
+    base.replacementName !== undefined &&
+    base.replacementName !== null &&
+    base.replacementName !== ""
+      ? base.replacementName
+      : template === ""
+        ? ""
+        : render(template, dependencyValues(dependency));
+
   const version = base.replacementVersion ?? "";
 
   if (name === "" && version === "") return undefined;

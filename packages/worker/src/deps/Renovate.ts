@@ -141,6 +141,11 @@ const builtInPresets = Schema.decodeUnknownSync(
 /** Renovate's built-in preset namespaces, such as `config:` and `group:`. */
 const namespaces = new Set(Object.keys(builtInPresets));
 
+/** Every manager Renovate has, by the name its config is keyed by. */
+const renovateManagers: ReadonlySet<string> = new Set(
+  Schema.decodeUnknownSync(Schema.Array(Schema.String))(builtIn.managers),
+);
+
 type Parsed =
   | {
       readonly source: "internal";
@@ -441,6 +446,7 @@ const settingKeys = new Set(Object.keys(Settings.fields));
 const presentation = new Set([
   "$schema",
   "description",
+  "overrideDescription",
   "dependencyDashboard",
   "dependencyDashboardApproval",
   "dependencyDashboardAutoclose",
@@ -519,8 +525,11 @@ const translateSettings = (config: Config) => {
 
 const decodeRule = Schema.decodeUnknownOption(PackageRule);
 
-/** Translate one packageRule, with the settings Upkeep doesn't model. */
-const translateRule = (config: Config) => {
+/**
+ * Translate one packageRule, keeping the settings Upkeep doesn't model on
+ * it, to be noted once its matchers find a dependency.
+ */
+const translateRule = (config: Config): Rule => {
   const unsupported = Object.keys(config).filter(
     (key) =>
       (key.startsWith("match") || key.startsWith("exclude")) &&
@@ -536,27 +545,28 @@ const translateRule = (config: Config) => {
   const { set, ignored } = translateSettings(config);
 
   return {
-    rule: {
-      description: describe(rule.description),
-      match: {
-        managers: rule.matchManagers,
-        datasources: rule.matchDatasources,
-        depTypes: rule.matchDepTypes,
-        packageNames: rule.matchPackageNames,
-        depNames: rule.matchDepNames,
-        fileNames: rule.matchFileNames,
-        sourceUrls: rule.matchSourceUrls,
-        updateTypes: rule.matchUpdateTypes,
-        categories: rule.matchCategories,
-        repositories: rule.matchRepositories,
-        baseBranches: rule.matchBaseBranches,
-        currentValue: rule.matchCurrentValue,
-        currentVersion: rule.matchCurrentVersion,
-      },
-      set,
-      unsupported: unsupported.length > 0 ? unsupported : undefined,
-    } satisfies Rule,
-    ignored,
+    description: describe(rule.description),
+    match: {
+      managers: rule.matchManagers,
+      datasources: rule.matchDatasources,
+      depTypes: rule.matchDepTypes,
+      packageNames: rule.matchPackageNames,
+      depNames: rule.matchDepNames,
+      fileNames: rule.matchFileNames,
+      sourceUrls: rule.matchSourceUrls,
+      updateTypes: rule.matchUpdateTypes,
+      categories: rule.matchCategories,
+      repositories: rule.matchRepositories,
+      baseBranches: rule.matchBaseBranches,
+      currentValue: rule.matchCurrentValue,
+      currentVersion: rule.matchCurrentVersion,
+    },
+    set,
+    unsupported: unsupported.length > 0 ? unsupported : undefined,
+    unmodelled:
+      ignored.length > 0
+        ? ignored.map((key) => `packageRules.${key}`)
+        : undefined,
   };
 };
 
@@ -780,19 +790,18 @@ const translateVulnerabilityAlerts = (config: Config) => {
   };
 };
 
-/** Translate a resolved Renovate config into Upkeep's Policy. */
+/**
+ * Translate a resolved Renovate config into Upkeep's Policy. What it doesn't
+ * model is kept, on the rules and the policy, for `notesFor` to note once
+ * the repository's dependencies are known.
+ */
 export const toPolicy = (
   config: Config,
   file: string,
   unknown: ReadonlyArray<string>,
 ): Policy => {
   const notes = unknown.map((preset) => `unknown preset ${preset}, left out`);
-  const ignoredKeys = new Map<string, number>();
-
-  const ignore = (keys: ReadonlyArray<string>) => {
-    for (const key of keys)
-      ignoredKeys.set(key, (ignoredKeys.get(key) ?? 0) + 1);
-  };
+  const unmodelled: Array<string> = [];
 
   // Renovate leaves submodules alone unless its config turns them on
   const rules: Array<Rule> = [
@@ -808,7 +817,7 @@ export const toPolicy = (
 
     const { set, ignored } = translateSettings(value);
 
-    ignore(ignored.map((key) => `${type}.${key}`));
+    unmodelled.push(...ignored.map((key) => `${type}.${key}`));
 
     if (Object.keys(set).length > 0)
       rules.push({ match: { updateTypes: [type] }, set });
@@ -821,7 +830,7 @@ export const toPolicy = (
 
     const { set, ignored } = translateSettings(value);
 
-    ignore(ignored.map((key) => `${manager}.${key}`));
+    unmodelled.push(...ignored.map((key) => `${manager}.${key}`));
 
     if (Object.keys(set).length > 0)
       rules.push({ match: { managers: [manager] }, set });
@@ -830,16 +839,14 @@ export const toPolicy = (
   for (const value of isList(config.packageRules) ? config.packageRules : []) {
     if (!isConfig(value)) continue;
 
-    const { rule, ignored } = translateRule(value);
+    const rule = translateRule(value);
 
-    ignore(ignored.map((key) => `packageRules.${key}`));
-
-    if (Object.keys(rule.set).length === 0) continue;
-
-    if (rule.unsupported !== undefined)
-      notes.push(
-        `a rule${rule.description === undefined ? "" : ` (${rule.description})`} uses ${rule.unsupported.join(", ")}, so it never matches`,
-      );
+    // A rule that sets nothing Upkeep reads is kept only to be noted
+    if (
+      Object.keys(rule.set).length === 0 &&
+      (rule.unmodelled === undefined || rule.unmodelled.length === 0)
+    )
+      continue;
 
     rules.push(rule);
   }
@@ -873,19 +880,14 @@ export const toPolicy = (
 
   const vulnerabilityAlerts = translateVulnerabilityAlerts(config);
 
-  ignore(
-    vulnerabilityAlerts.ignored.map((key) => `vulnerabilityAlerts.${key}`),
+  unmodelled.push(
+    ...vulnerabilityAlerts.ignored.map((key) => `vulnerabilityAlerts.${key}`),
   );
 
+  // Config for a Renovate manager Upkeep doesn't read can't change anything
   for (const key of Object.keys(config))
-    if (!known.has(key) && !presentation.has(key)) ignore([key]);
-
-  if (ignoredKeys.size > 0)
-    notes.push(
-      `not modelled: ${[...ignoredKeys]
-        .map(([key, count]) => (count > 1 ? `${key} (${count})` : key))
-        .join(", ")}`,
-    );
+    if (!known.has(key) && !presentation.has(key) && !renovateManagers.has(key))
+      unmodelled.push(key);
 
   const datasources = translateDatasources(config.customDatasources);
 
@@ -914,6 +916,7 @@ export const toPolicy = (
     maintenance: translateMaintenance(config, rules, settings.automerge),
     vulnerabilityAlerts: vulnerabilityAlerts.alerts,
     notes,
+    unmodelled,
   };
 };
 

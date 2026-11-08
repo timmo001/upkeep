@@ -78,6 +78,12 @@ export const Settings = Schema.Struct({
   versionCompatibility: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The package that replaces this one, such as a renamed or forked one. */
   replacementName: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * The replacement's name made from the dependency's, such as
+   * `{{{replace 'k8s\\.gcr\\.io/' 'registry.k8s.io/' packageName}}}`, when
+   * no replacementName is given.
+   */
+  replacementNameTemplate: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The version of the replacement to move to. */
   replacementVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
@@ -93,6 +99,11 @@ export const Rule = Schema.Struct({
    * since what it was meant to cover is unknown.
    */
   unsupported: Schema.optional(Patterns),
+  /**
+   * Settings the adapter read but doesn't model, as the updater names them,
+   * noted only when the rule's matchers find one of the dependencies.
+   */
+  unmodelled: Schema.optional(Patterns),
 });
 
 export type Rule = typeof Rule.Type;
@@ -201,6 +212,11 @@ export interface Policy {
   readonly vulnerabilities?: ReadonlyArray<Vulnerability> | undefined;
   /** What the adapter read but couldn't model, for the run's log. */
   readonly notes: ReadonlyArray<string>;
+  /**
+   * Settings outside the rules the adapter read but doesn't model, once for
+   * each place they're set, noted with the rules' own.
+   */
+  readonly unmodelled: ReadonlyArray<string>;
 }
 
 /** One dependency as a manager found it. */
@@ -226,6 +242,11 @@ export interface Dependency {
   readonly extractVersion?: string | undefined;
   /** The text a custom regex matched, which an update rewrites in place. */
   readonly replaceString?: string | undefined;
+  /**
+   * The keys of the JSON object an entry sits in, from the root, such as
+   * `["overrides", "foo"]`, so an update edits only there.
+   */
+  readonly parents?: ReadonlyArray<string> | undefined;
 }
 
 export interface Release {

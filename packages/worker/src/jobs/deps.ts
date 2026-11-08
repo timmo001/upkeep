@@ -16,6 +16,7 @@ import { Datasources } from "../deps/Datasources";
 import * as Managers from "../deps/Managers";
 import * as Planner from "../deps/Planner";
 import { type Dependency, DepsError, type Policy } from "../deps/Policy";
+import * as Rules from "../deps/Rules";
 import { type ReadFile, Updaters } from "../deps/Updaters";
 import { ghReason, reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
@@ -262,10 +263,10 @@ const planRepository = Effect.fnUntraced(function* (
 
   const extraction = yield* Managers.extract(policy, files, gitlinks);
 
-  const notes = [...policy.notes, ...extraction.notes];
-
   const now = Date.now();
   const updates: Array<Planner.Update> = [];
+  // Each dependency with the source URL its lookup found, which rules match
+  const found: Array<Dependency> = [];
   // Dependencies left out, by why
   const unread = new Map<string, Set<string>>();
 
@@ -276,20 +277,34 @@ const planRepository = Effect.fnUntraced(function* (
     extraction.dependencies,
     (dependency) =>
       dependency.datasource === "local"
-        ? Effect.void
+        ? Effect.sync(() => found.push(dependency))
         : datasources.lookup(dependency, policy.customDatasources).pipe(
             Effect.map((releases) => {
+              found.push(
+                dependency.sourceUrl === undefined &&
+                  releases.sourceUrl !== undefined
+                  ? { ...dependency, sourceUrl: releases.sourceUrl }
+                  : dependency,
+              );
               updates.push(
                 ...Planner.updatesFor(policy, dependency, releases, now, repo)
                   .updates,
               );
             }),
             Effect.catch((error) =>
-              Effect.sync(() => leaveOut(error.message, dependency)),
+              Effect.sync(() => {
+                found.push(dependency);
+                leaveOut(error.message, dependency);
+              }),
             ),
           ),
     { concurrency: 8, discard: true },
   );
+
+  const notes = [
+    ...Rules.notesFor(policy, found, { repository: repo, branch }),
+    ...extraction.notes,
+  ];
 
   const groups = Planner.group(policy, updates);
 
