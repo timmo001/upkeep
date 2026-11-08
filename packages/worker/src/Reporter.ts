@@ -390,4 +390,6 @@ export interface Healing {
   readonly run: Domain.Run;
   readonly log: ReadonlyArray<Domain.LogLine>;
   readonly precedents: ReadonlyArray<Domain.Precedent>;
+  /** The last heals of the same job and target, newest first. */
+  readonly earlier: ReadonlyArray<Domain.Run>;
 }

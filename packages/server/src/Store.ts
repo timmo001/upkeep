@@ -1110,6 +1110,16 @@ export class Store extends Context.Service<
     /** Every heal queued since `since`, newest first. */
     heals(since: number): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     /**
+     * The last `limit` finished heals of a job's runs for one target before
+     * the heal `id`, newest first.
+     */
+    earlierHeals(
+      id: string,
+      job: string,
+      target: Domain.Target,
+      limit: number,
+    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /**
      * Park a job, replacing the reason and issue when it's already parked.
      * `issue` is its triage issue, which unparks it once resolved.
      */
@@ -1966,6 +1976,27 @@ export class Store extends Context.Service<
         SELECT * FROM runs
         WHERE heal_of IS NOT NULL AND queued_at >= ${since}
         ORDER BY queued_at DESC, id DESC
+      `);
+    }, Effect.mapError(storeError));
+
+    const earlierHeals = Effect.fn("Store.earlierHeals")(function* (
+      id: string,
+      job: string,
+      target: Domain.Target,
+      limit: number,
+    ) {
+      return yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE heal_job = ${job}
+          AND (
+            heal_target = ${targetColumn(target)}
+            OR instr(',' || heal_target || ',', ',' || ${targetColumn(target)} || ',') > 0
+          )
+          AND id != ${id}
+          AND finished_at IS NOT NULL
+          AND queued_at <= (SELECT queued_at FROM runs WHERE id = ${id})
+        ORDER BY queued_at DESC, id DESC
+        LIMIT ${limit}
       `);
     }, Effect.mapError(storeError));
 
@@ -4056,6 +4087,7 @@ export class Store extends Context.Service<
       activity,
       healsSince,
       heals,
+      earlierHeals,
       park: announce(touches("runs"), park),
       unpark: announce(touches("runs"), unpark),
       parked,

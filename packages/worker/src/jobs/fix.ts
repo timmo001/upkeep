@@ -64,12 +64,38 @@ type Recorder = (update: {
   readonly commit?: string;
 }) => Effect.Effect<void, unknown>;
 
+// How much of an earlier heal's summary the agent reads
+const maxSaid = 2000;
+
+/**
+ * An earlier heal as the agent and the decision model read it: when it ran,
+ * what was chosen, how it ended, what it pushed and what it said, cut to
+ * `max` characters.
+ */
+export const earlierHeal = (heal: Domain.Run, max: number) => {
+  const commits = heal.changes.map(
+    (change) => `${change.repo}@${change.sha.slice(0, 7)}`,
+  );
+
+  return [
+    new Date(heal.queuedAt).toISOString().slice(0, 10),
+    heal.heal?.decision ?? "nothing chosen",
+    heal.attention ? `${heal.state}, left for a person` : heal.state,
+    ...(commits.length === 0 ? [] : [`pushed ${commits.join(", ")}`]),
+  ]
+    .join(", ")
+    .concat(
+      `: ${(heal.summary ?? heal.error ?? "(nothing said)").slice(0, max)}`,
+    );
+};
+
 /** What the agent is told: the failure, how it went before, and how far it may go. */
 const prompt = (
   heal: Domain.Heal,
   run: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
   precedents: ReadonlyArray<Domain.Precedent>,
+  earlier: ReadonlyArray<Domain.Run>,
   checkouts: ReadonlyArray<Checkout>,
   minutes: number,
 ) => {
@@ -109,6 +135,17 @@ const prompt = (
               (note) => `  ${note.replaceAll("\n", "\n  ")}`,
             ),
           ]),
+          "",
+        ]),
+    ...(earlier.length === 0
+      ? []
+      : [
+          "Earlier heals of this job for the same target, newest first, with what each found and did. Don't repeat what didn't work:",
+          "",
+          ...earlier.map(
+            (before) =>
+              `- ${earlierHeal(before, maxSaid).replaceAll("\n", "\n  ")}`,
+          ),
           "",
         ]),
     ...(several
@@ -368,6 +405,7 @@ export const fix = (
   failed: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
   precedents: ReadonlyArray<Domain.Precedent>,
+  earlier: ReadonlyArray<Domain.Run>,
   agent: Settings.Agent,
   record: Recorder,
 ) =>
@@ -381,6 +419,7 @@ export const fix = (
         failed,
         handedTo(heal, failed, log),
         precedents,
+        earlier,
         checkouts,
         minutes,
       ),

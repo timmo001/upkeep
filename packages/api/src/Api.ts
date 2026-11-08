@@ -4,7 +4,7 @@
  * runs and manage tracked repositories and tokens; workers take runs and
  * report on them.
  */
-import { Context, Schema, Struct } from "effect";
+import { Context, Effect, Schema, Struct } from "effect";
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -395,6 +395,9 @@ export const maxLogLines = 1000;
 
 /** How many of a failed run's last log lines a heal reads. */
 export const healLogLines = 200;
+
+/** How many earlier heals of the same job and target a heal reads. */
+export const earlierHeals = 5;
 
 /** The most releases one report carries. */
 export const maxReleases = 1000;
@@ -959,8 +962,10 @@ export class WorkGroup extends HttpApiGroup.make("work")
       error: [RunNotFound, RunNotClaimed],
     }),
     /**
-     * A heal's record, the run it's healing with the end of its log, and the
-     * same or similar failures triage has seen before.
+     * A heal's record, the run it's healing with the end of its log, the
+     * same or similar failures triage has seen before, and the last heals of
+     * the same job and target, newest first. Older servers send no earlier
+     * heals.
      */
     HttpApiEndpoint.get("healing", "/runs/:id/healing", {
       params: { id: Schema.String },
@@ -969,6 +974,9 @@ export class WorkGroup extends HttpApiGroup.make("work")
         run: Run,
         log: Schema.Array(LogLine),
         precedents: Schema.Array(Precedent),
+        earlier: Schema.Array(Run).pipe(
+          Schema.withDecodingDefaultKey(Effect.succeed([])),
+        ),
       }),
       error: [RunNotFound, RunNotClaimed],
     }),

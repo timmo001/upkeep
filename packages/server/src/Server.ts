@@ -1192,6 +1192,12 @@ const WorkHandlers = HttpApiBuilder.group(
             log: yield* store.logTail(run.id, Api.healLogLines),
             precedents:
               heal.issue === null ? [] : yield* triage.precedents(heal.issue),
+            earlier: yield* store.earlierHeals(
+              params.id,
+              heal.job,
+              heal.target,
+              Api.earlierHeals,
+            ),
           };
         }).pipe(
           Effect.provideService(Store, store),

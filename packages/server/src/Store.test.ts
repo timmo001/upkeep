@@ -811,6 +811,56 @@ test("a heal of several consumers reads back and counts for each of them", () =>
     }),
   ));
 
+test("a heal reads the finished heals of its job and target before it", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const healed = Effect.fnUntraced(function* (of: string, repo: string) {
+        yield* store.queueRun({
+          job: "heal",
+          trigger: "heal",
+          release: null,
+          heal: { of, job: "bump", target: { kind: "consumer", repo } },
+        });
+
+        const id = Option.getOrThrow(
+          yield* store.claim(["heal"], "desktop"),
+        ).id;
+
+        yield* store.report(id, "desktop", { summary: `Healed ${of}` });
+        yield* store.finish(id, "desktop", "succeeded", null);
+
+        return id;
+      });
+
+      const first = yield* healed("run-1", "timmo001/a");
+
+      yield* healed("run-2", "timmo001/b");
+
+      const current = yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: {
+          of: "run-3",
+          job: "bump",
+          target: { kind: "consumer", repo: "timmo001/a" },
+        },
+      });
+
+      const a = { kind: "consumer" as const, repo: "timmo001/a" };
+
+      const earlier = yield* store.earlierHeals(current.id, "bump", a, 5);
+
+      expect(earlier.map(({ id, summary }) => [id, summary])).toEqual([
+        [first, "Healed run-1"],
+      ]);
+      expect(yield* store.earlierHeals(first, "bump", a, 5)).toEqual([]);
+      expect(yield* store.earlierHeals(current.id, "deps", a, 5)).toEqual([]);
+    }),
+  ));
+
 test("a heal's shared session can be read back by its ID", () =>
   run(
     Effect.gen(function* () {

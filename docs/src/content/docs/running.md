@@ -510,6 +510,11 @@ Without a decision model, a lost run is retried and anything else is left for
 you: the run is marked as needing attention on the dashboard, and its
 repository's items on the Attention page show it.
 
+A heal also reads the last five heals of the same job and target: when each
+ran, what was chosen, how it ended, what it pushed and what it said. Both the
+decision model and the agent see them, so a fix that didn't hold isn't tried
+again blind.
+
 ### Triage
 
 With the three `UPKEEP_TRIAGE_*` settings on the server, each failure that's
@@ -518,7 +523,8 @@ issue there. A heal reads the notes on that issue and on similar ones, and
 both the decision model and the agent see how those went. When a fix is
 pushed, the server resolves the issue with a note on what fixed it. A job
 parked for a failure unparks once its triage issue is resolved, checked every
-minute. Without triage, heals work the same with no memory.
+minute. Without triage, heals work the same, remembering only their own
+earlier heals.
 
 In the Home Assistant app, only the two tokens are needed when the triage
 app from the same repository is installed and running: the server asks the

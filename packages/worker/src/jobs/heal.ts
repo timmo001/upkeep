@@ -22,7 +22,7 @@ import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { run as exec } from "./bump";
-import { fix, handedTo } from "./fix";
+import { earlierHeal, fix, handedTo } from "./fix";
 
 const Failure = Schema.Struct({
   failed: Schema.Struct({
@@ -33,6 +33,8 @@ const Failure = Schema.Struct({
     log: Schema.Array(Schema.String),
     /** How the same or similar failures went before, from triage's notes. */
     before: Schema.Array(Schema.String),
+    /** How the last heals of this job and target went, newest first. */
+    earlier: Schema.Array(Schema.String),
   }),
 });
 
@@ -90,12 +92,16 @@ export const relevant = (
   return about.length === 0 ? log : about;
 };
 
-/** What the model reads: the run, its error, the end of its log and precedents. */
+/**
+ * What the model reads: the run, its error, the end of its log, precedents
+ * and earlier heals.
+ */
 export const describe = (
   heal: Domain.Heal,
   run: Domain.Run,
   log: ReadonlyArray<Domain.LogLine>,
   precedents: ReadonlyArray<Domain.Precedent> = [],
+  earlier: ReadonlyArray<Domain.Run> = [],
 ): Failure => ({
   failed: {
     job: run.job,
@@ -117,6 +123,7 @@ export const describe = (
           `${precedent.title} (${precedent.state}): ${note.slice(0, Decisions.maxMessage)}`,
       ),
     ),
+    earlier: earlier.map((before) => earlierHeal(before, Decisions.maxMessage)),
   },
 });
 
@@ -352,6 +359,7 @@ const handOff = Effect.fnUntraced(function* (
       run,
       relevant(healing.heal, healing.log),
       healing.precedents,
+      healing.earlier,
       agent,
       (update) => {
         if (update.session !== undefined) started = true;
@@ -547,7 +555,7 @@ export const heal = Effect.fnUntraced(function* () {
   const reporter = yield* Reporter;
   const settings = (yield* Settings.load()).heal ?? {};
   const healing = yield* reporter.healing();
-  const { heal: record, run, log, precedents } = healing;
+  const { heal: record, run, log, precedents, earlier } = healing;
 
   yield* RunLog.info(
     run.state === "handed-off"
@@ -594,7 +602,7 @@ export const heal = Effect.fnUntraced(function* () {
               );
             }
 
-            const failure = describe(record, run, log, precedents);
+            const failure = describe(record, run, log, precedents, earlier);
             const agents = settings.agents ?? [];
 
             const orFallback = <R>(
