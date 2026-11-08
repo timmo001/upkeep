@@ -229,6 +229,9 @@ export interface Release {
   readonly date?: string | undefined;
   /** The datasource marks it a prerelease, whatever its version says. */
   readonly prerelease?: boolean | undefined;
+  /** Its release notes and their page, for a GitHub release. */
+  readonly notes?: string | undefined;
+  readonly url?: string | undefined;
 }
 
 export interface Releases {

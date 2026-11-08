@@ -5,7 +5,8 @@
  * read once, and GitHub responses are kept between runs and asked for again
  * conditionally, so what hasn't changed costs no rate limit. Release and tag
  * lists stop at the page that reaches the version in use. A config's custom
- * datasources are fetched and run through their JSONata transforms.
+ * datasources are fetched and run through their JSONata transforms. An
+ * update's release notes come from its source's GitHub releases.
  */
 import { Gh, GhCommandError } from "@timmo001/effect-gh";
 import jsonata from "jsonata";
@@ -59,6 +60,8 @@ const GithubRelease = Schema.Struct({
   published_at: Schema.NullOr(Schema.String),
   draft: Schema.Boolean,
   prerelease: Schema.Boolean,
+  body: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  html_url: Schema.optionalKey(Schema.String),
 });
 
 const Tag = Schema.Struct({
@@ -146,6 +149,63 @@ const olderThan = (name: string, floor: string | undefined) => {
 /** The tags newer than this many get their commit dates read. */
 const datedTags = 10;
 
+/** An update's release notes, and where they and its changes are. */
+export interface Notes {
+  /** The notes of each release it takes in, newest first, empty when none have any. */
+  readonly text: string;
+  readonly url?: string | undefined;
+  readonly compare?: string | undefined;
+}
+
+/**
+ * An update's release notes from its source's GitHub releases: those after
+ * `from` up to `to`, tagged with the version, `v` and the version, or the
+ * package's name, `@` and the version, as monorepos tag them. `undefined`
+ * when there's no release for `to`.
+ */
+export const notesBetween = (
+  repository: string,
+  releases: ReadonlyArray<Release>,
+  name: string,
+  from: string,
+  to: string,
+): Notes | undefined => {
+  const versionOf = (tag: string) =>
+    semver.valid(tag.startsWith(`${name}@`) ? tag.slice(name.length + 1) : tag);
+
+  const low = semver.coerce(from)?.version;
+  const high = versionOf(to);
+
+  if (low === undefined || high === null) return undefined;
+
+  const target = releases.find(
+    (release) => versionOf(release.version) === high,
+  );
+
+  if (target === undefined) return undefined;
+
+  const text = releases
+    .filter((release) => {
+      const version = versionOf(release.version);
+
+      return (
+        version !== null && semver.gt(version, low) && semver.lte(version, high)
+      );
+    })
+    .flatMap((release) => {
+      const notes = release.notes?.trim() ?? "";
+
+      return notes === "" ? [] : [notes];
+    })
+    .join("\n\n");
+
+  return {
+    text,
+    url: target.url,
+    compare: `https://github.com/${repository}/compare/${target.version.replace(high, low)}...${target.version}`,
+  };
+};
+
 export class Datasources extends Context.Service<
   Datasources,
   {
@@ -154,6 +214,16 @@ export class Datasources extends Context.Service<
       dependency: Dependency,
       custom?: Readonly<Record<string, CustomDatasource>>,
     ) => Effect.Effect<Releases, DepsError>;
+    /**
+     * An update's release notes from its source's GitHub releases, read with
+     * the same list as a `github-releases` lookup. `undefined` when its source
+     * isn't on GitHub or has no release for `to`.
+     */
+    readonly notes: (
+      dependency: Dependency,
+      from: string,
+      to: string,
+    ) => Effect.Effect<Notes | undefined, DepsError>;
   }
 >()("@upkeep/worker/deps/Datasources") {
   static readonly layer = Layer.effect(
@@ -379,6 +449,8 @@ export class Datasources extends Context.Service<
                     version: release.tag_name,
                     date: release.published_at ?? undefined,
                     prerelease: release.prerelease,
+                    notes: release.body ?? "",
+                    url: release.html_url,
                   }),
                 ),
                 sourceUrl: url,
@@ -539,6 +611,28 @@ export class Datasources extends Context.Service<
                 ? dependency.currentValue
                 : "",
             ].join("\u0000"),
+          );
+        },
+        notes: (dependency, from, to) => {
+          const repository = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)/.exec(
+            dependency.sourceUrl ?? "",
+          )?.[1];
+
+          if (repository === undefined) return Effect.succeed(undefined);
+
+          return Cache.get(
+            cache,
+            ["github-releases", repository, from].join("\u0000"),
+          ).pipe(
+            Effect.map((found) =>
+              notesBetween(
+                repository,
+                found.releases,
+                dependency.packageName,
+                from,
+                to,
+              ),
+            ),
           );
         },
       });
