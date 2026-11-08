@@ -301,7 +301,8 @@ const queueMachine = Effect.fn("queueMachine")(function* (
 /**
  * Queue the heals of a failed, lost or handed-off run: one for Upkeep itself,
  * or for the consumers of a bump that failed, one heal over all of them, so a
- * single agent session makes the same fix everywhere. A failed heal never
+ * single agent session makes the same fix everywhere. A handed-off run gets a
+ * heal for each repository instead. A failed heal never
  * queues another. A target past its heals for the day gets no more for now: a
  * consumer's heal waits until its heals free up, and a job failing in itself
  * is parked. A handed-off run broke nothing, so it raises no triage issue.
@@ -386,6 +387,27 @@ const heal = Effect.fn("heal")(function* (
       yield* store.stopWaiting(run.job, repo);
       healing.push({ repo, issue });
     }
+  }
+
+  // A handed-off run's work isn't one fix made everywhere but a review of each
+  // repository, so each gets its own heal and the worker's heal lanes can take
+  // them side by side
+  if (run.state === "handed-off") {
+    for (const { repo, issue } of healing) {
+      yield* queue({
+        job: Catalogue.heal.id,
+        trigger: "heal",
+        release: run.release,
+        heal: {
+          of: run.id,
+          job: run.job,
+          target: { kind: "consumer", repo },
+          issue,
+        },
+      });
+    }
+
+    return;
   }
 
   const [first, ...more] = healing;

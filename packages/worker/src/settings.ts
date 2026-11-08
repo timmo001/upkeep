@@ -179,6 +179,11 @@ export const Settings = Schema.Struct({
       /** The OpenCode command an agent runs in, `opencode2` by default. */
       opencode: Schema.optionalKey(Schema.String),
       /**
+       * How many heals this worker runs at once, 3 by default. Two never work
+       * on the same repository at the same time.
+       */
+      sessions: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+      /**
        * How many heals a day, across every worker, the decision model is
        * asked about. Unlimited by default, or 300 for the `opencode`
        * provider; set it for a cloud model on a shared or metered plan.

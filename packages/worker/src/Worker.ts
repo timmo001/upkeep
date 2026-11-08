@@ -447,6 +447,15 @@ export const work = Effect.fn("Worker.work")(function* (
     .map((name) => [name, jobs.filter((job) => laneOf(job) === name)] as const)
     .filter(([, jobsInLane]) => jobsInLane.length > 0);
 
+  // Heals run side by side, as many as the settings allow, so a drift review
+  // handed off for several repositories isn't worked through one at a time
+  const healSessions = yield* Settings.load().pipe(
+    Effect.map((settings) => settings.heal?.sessions ?? 3),
+    Effect.orElseSucceed(() => 3),
+  );
+
+  const copies = (name: Domain.Lane) => (name === "heal" ? healSessions : 1);
+
   // Telling you what's new that needs you runs beside the lanes, once a minute,
   // and so does following the desktop's Omarchy theme
   const notify = (yield* Notify.make).pipe(
@@ -455,7 +464,9 @@ export const work = Effect.fn("Worker.work")(function* (
 
   return yield* Effect.all(
     [
-      ...lanes.map(([name, laneJobs]) => lane(name, laneJobs)),
+      ...lanes.flatMap(([name, laneJobs]) =>
+        Array.from({ length: copies(name) }, () => lane(name, laneJobs)),
+      ),
       notify,
       Theme.follow,
     ],
