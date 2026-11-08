@@ -278,6 +278,7 @@ interface ApplyContext {
   /** Where clones live, which mise is told to trust. */
   readonly root: string;
   readonly checks: ReadonlyArray<string> | undefined;
+  readonly generate: ReadonlyArray<string> | undefined;
   readonly dryRun: boolean;
 }
 
@@ -398,20 +399,28 @@ const applyGroup = Effect.fnUntraced(function* (
 });
 
 /**
- * Check what a checkout changed, then push it as one commit, watch its CI and
- * close the updater's pull request on `renovate/<topic>`. Returns true, as
- * something was applied, or would be in a dry run.
+ * Rebuild the repository's generated files, check what a checkout changed,
+ * then push it as one commit, watch its CI and close the updater's pull
+ * request on `renovate/<topic>`. Returns true, as something was applied, or
+ * would be in a dry run.
  */
 const land = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   topic: string,
   message: string,
-  changed: ReadonlyArray<string>,
+  edited: ReadonlyArray<string>,
   context: ApplyContext & { readonly mise: boolean },
 ) {
   const path = yield* Path.Path;
   const options = { cwd: path.join(context.root, repo), trusted: context.root };
+
+  const changed = [
+    ...new Set([
+      ...edited,
+      ...(yield* Bump.generate(repo, context.generate, options)),
+    ]),
+  ];
 
   // Workflows alone are checked by CI once they're pushed
   if (changed.some((file) => !file.startsWith(".github/"))) {
@@ -723,6 +732,7 @@ export const deps = Effect.fnUntraced(function* () {
           {
             root,
             checks: settings.bump?.repos?.[repo.full_name]?.checks,
+            generate: settings.bump?.repos?.[repo.full_name]?.generate,
             dryRun,
           },
         );

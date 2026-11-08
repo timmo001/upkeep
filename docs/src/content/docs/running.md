@@ -631,13 +631,20 @@ be pushed.
 
 A repository that doesn't follow groundwork's tasks can have its own checks
 in the worker's config file, `$UPKEEP_CONFIG` or `upkeep/config.json` in the
-XDG config directory:
+XDG config directory. One that commits files built from its dependencies,
+such as bundles, can set `generate` too: when a `package.json` changed,
+those commands run after the install and before the checks, and the tracked
+files they change go in the same commit as the update, so they never fall
+behind it. New untracked files they write are left out.
 
 ```json
 {
   "bump": {
     "repos": {
-      "owner/name": { "checks": ["npm test", "npm run build"] }
+      "owner/name": {
+        "generate": ["mise run bundle"],
+        "checks": ["npm test", "npm run build"]
+      }
     }
   }
 }
@@ -650,8 +657,9 @@ In the repositories listed in `deps.apply` in the worker's config file, the
 edits the `package.json`, mise config, workflow, or custom regex or jsonata
 match the
 update was read from, installs where a `package.json` changed, runs
-`mise lock` where a mise config with a `mise.lock` changed, and checks the
-result as a bump does (with the same per-repository checks). The checked
+`mise lock` where a mise config with a `mise.lock` changed, and runs the
+repository's `generate` commands and checks the result as a bump does (with
+the same per-repository settings). The checked
 commit is pushed to the default branch and its CI watched, and once CI
 passes Renovate's open pull request for the group is closed with a link to
 the commit. Groups Renovate automerges are left to it, and so is a group with

@@ -697,6 +697,30 @@ export const miseTasks = (options: {
   );
 
 /**
+ * Run the commands set to rebuild a repository's committed files, such as
+ * bundles built from its dependencies, and log them. Returns every tracked
+ * file the checkout now changes, so what they wrote goes in the commit; new
+ * untracked files are left out.
+ */
+export const generate = Effect.fnUntraced(function* (
+  repo: string,
+  commands: ReadonlyArray<string> | undefined,
+  options: { readonly cwd: string; readonly trusted: string },
+) {
+  if (commands === undefined || commands.length === 0) return [];
+
+  for (const command of commands) yield* run("sh", ["-c", command], options);
+
+  const changed = (yield* run("git", ["diff", "--name-only"], options))
+    .split("\n")
+    .filter((file) => file !== "");
+
+  yield* RunLog.info(`${repo}: ${commands.join(", ")} ran`);
+
+  return changed;
+});
+
+/**
  * The checks before a push: the commands set for the repository, or else
  * its mise `check` and `build` tasks where it has them. Returns what ran.
  */
@@ -1009,9 +1033,15 @@ const prepare = Effect.fnUntraced(function* (
     changed.add(lockfile);
   }
 
-  // Pins only change workflows, which CI checks once they're pushed
+  const repoSettings = context.settings.bump?.repos?.[repo];
+
+  // Pins only change workflows, which CI checks once they're pushed, and
+  // nothing generated from the dependencies
   if (manifests.length > 0) {
-    const ran = yield* check(context.settings.bump?.repos?.[repo]?.checks, {
+    for (const file of yield* generate(repo, repoSettings?.generate, options))
+      changed.add(file);
+
+    const ran = yield* check(repoSettings?.checks, {
       ...options,
       mise,
     });

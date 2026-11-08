@@ -12,6 +12,12 @@ import { Rule } from "./deps/Policy";
 const BumpRepo = Schema.Struct({
   /** Shell commands run before a push, in place of `mise run check` and `build`. */
   checks: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Shell commands that rebuild committed files from the dependencies, such
+   * as `mise run bundle`, run after an install and before the checks. The
+   * tracked files they change go in the update's commit.
+   */
+  generate: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 /**
