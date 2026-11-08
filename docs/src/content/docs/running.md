@@ -256,8 +256,8 @@ A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
 `updated`. The summary says what's running, how the last run ended, which
 jobs are parked and how many heals in the last day asked for a person, so a
 service monitor can show more than that the process is up. It's `warning`
-while anything needs a person and `degraded` while the server can't be
-reached.
+while the OpenCode command its heals need, `opencode2` by default, isn't on
+its `PATH`, and `degraded` while the server can't be reached.
 
 ## Repositories
 

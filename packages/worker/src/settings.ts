@@ -250,6 +250,16 @@ const path = Config.String("UPKEEP_CONFIG").pipe(
 export const deciderName = (model: DecisionModel) =>
   `${model.provider}/${model.model}`;
 
+/**
+ * The OpenCode command these settings run decisions or agents in, or null
+ * when they need none.
+ */
+export const openCodeCommand = (settings: Settings) =>
+  settings.heal?.decisions?.provider === "opencode" ||
+  (settings.heal?.agents ?? []).length > 0
+    ? (settings.heal?.opencode ?? "opencode2")
+    : null;
+
 /** An agent as the server keeps it. */
 export const agentModel = (agent: Agent): Domain.AgentModel => ({
   model: agent.model,

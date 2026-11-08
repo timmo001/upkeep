@@ -16,6 +16,8 @@ export interface State {
   readonly parked: ReadonlyArray<string>;
   /** Heals in the last day that were left for a person. */
   readonly asking: number;
+  /** Commands the settings need that aren't on the worker's PATH. */
+  readonly missing: ReadonlyArray<string>;
 }
 
 export const initial: State = {
@@ -24,6 +26,7 @@ export const initial: State = {
   reachable: true,
   parked: [],
   asking: 0,
+  missing: [],
 };
 
 /** The status a monitor reads: its health and one line saying why. */
@@ -45,11 +48,19 @@ export const report = (state: State) => {
     ...(state.asking === 0
       ? []
       : [`${state.asking} heal${state.asking === 1 ? "" : "s"} asking`]),
+    ...(state.missing.length === 0
+      ? []
+      : [`${state.missing.join(", ")} not on PATH`]),
   ];
 
   // Parked jobs, asking heals and failed runs are the dashboard's to show;
-  // the worker itself is only unwell when it can't reach the server.
-  const health: "ok" | "degraded" = state.reachable ? "ok" : "degraded";
+  // the worker itself is only unwell when it can't reach the server, or
+  // can't find a command its heals need.
+  const health: "ok" | "warning" | "degraded" = !state.reachable
+    ? "degraded"
+    : state.missing.length > 0
+      ? "warning"
+      : "ok";
 
   return { health, summary: parts.join(" · ") };
 };

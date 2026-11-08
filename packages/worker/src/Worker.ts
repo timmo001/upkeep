@@ -328,8 +328,18 @@ export const work = Effect.fn("Worker.work")(function* (
   );
 
   // How the worker is set up to heal, read each time so the dashboard follows
-  // its settings. Settings that can't be read leave the last ones shown.
+  // its settings. Settings that can't be read leave the last ones shown. A
+  // service's PATH can leave out the OpenCode command its heals need, which
+  // would fail every decision and agent, so the status says when it's missing.
   const agents = Settings.load().pipe(
+    Effect.tap((settings) => {
+      const command = Settings.openCodeCommand(settings);
+
+      return status.update({
+        missing:
+          command === null || Bun.which(command) !== null ? [] : [command],
+      });
+    }),
     Effect.map((settings) => ({ agents: Settings.agentSetup(settings) })),
     Effect.catchCause((cause) =>
       Effect.logDebug("Couldn't read the agents to report", cause).pipe(
