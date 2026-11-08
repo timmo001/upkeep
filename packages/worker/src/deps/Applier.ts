@@ -285,10 +285,12 @@ const editJsonata = (update: Update, text: string): Edit => {
   );
 };
 
-/** Write an update into its dependency's file. */
+/**
+ * Write an update into its dependency's file. A lockfile-only update leaves
+ * the file as it is, for its package manager to move the lockfile.
+ */
 export const apply = (update: Update, text: string): Edit => {
-  if (update.lockfile)
-    return unsupported("lockfile-only updates aren't applied yet");
+  if (update.lockfile) return edited(text);
 
   if (
     update.updateType === "replacement" &&

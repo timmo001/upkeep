@@ -707,14 +707,15 @@ In the repositories listed in `deps.apply` in the worker's config file, the
 `deps` job also applies each group of updates Upkeep owns, one at a time: it
 edits the `package.json`, mise config, workflow, or custom regex or jsonata
 match the
-update was read from, installs where a `package.json` changed, runs
+update was read from, or moves its lockfile alone for an update within its
+range, installs where a `package.json` changed, runs
 `mise lock` where a mise config with a `mise.lock` changed, and runs the
 repository's `generate` commands and checks the result as a bump does (with
 the same per-repository settings). The checked
 commit is pushed to the default branch and its CI watched, and once CI
 passes Renovate's open pull request for the group is closed with a link to
 the commit. Groups Renovate automerges are left to it, and so is a group with
-an update Upkeep can't apply yet, such as a lockfile-only one, with a
+an update Upkeep can't apply yet, with a
 warning. A group that fails is logged and left while the rest go on. After a
 repository's updates land, its `tooling.yml`, if it has one, is checked as
 `drift` would, so a tool bump and its review go out together. The run fails
@@ -732,6 +733,21 @@ To hand a repository over to Upkeep entirely, set `"enabled": false` at the
 top of its Renovate config. Renovate then stops, and Upkeep keeps reading the
 rest of the config and owns every group, including the ones Renovate would
 have automerged.
+
+npm dependencies are read with the version their nearest lockfile
+(`bun.lock`, `pnpm-lock.yaml`, `package-lock.json` or `yarn.lock`) locks, and
+`rangeStrategy` is followed as Renovate's npm manager follows it. With
+`update-lockfile`, or `auto` for anything but a peer dependency or a range of
+several parts, a newer release within the range moves the lockfile alone, on
+a `renovate/<name>-<major>.x-lockfile` branch, while one past the range still
+moves the range. Its update type is classed from the locked version.
+`in-range-only` does the same but drops anything past the range. Applying it
+leaves `package.json` as it is: pnpm runs `pnpm update --no-save`, Bun and
+npm update to the version and have `package.json` put back, and Yarn runs
+`yarn upgrade` (Yarn 1) or `yarn up -R` (Berry), which move to the newest
+release in the range, as Renovate's do. Renovate's bun manager reads no
+locked versions, so in a Bun repository these are updates Renovate wouldn't
+make.
 
 When the config turns on Renovate's `lockFileMaintenance`, Upkeep owns that
 too unless Renovate runs and automerges it. After the groups, it deletes each
@@ -754,7 +770,9 @@ Vulnerability alerts are planned as Renovate plans them on GitHub, unless the
 config turns `vulnerabilityAlerts` off. The `deps` job reads the repository's
 open Dependabot alerts and, for each dependency below its package's first
 patched version, plans a fix to that version (or the newest release, with
-`vulnerabilityFixStrategy: "highest"`), bumping a range's lower bound. The
+`vulnerabilityFixStrategy: "highest"`), moving the lockfile to it when the
+fix is within a locked range and otherwise bumping the range's lower bound.
+The
 fix takes the `vulnerabilityAlerts` settings over every rule, so by default
 it's on its own `renovate/<datasource>-<name>-vulnerability` branch, out of
 any group, and no `minimumReleaseAge` holds it back. Its commit ends in

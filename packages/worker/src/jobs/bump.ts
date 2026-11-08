@@ -20,6 +20,7 @@ import {
   Data,
   Effect,
   FileSystem,
+  Match,
   Option,
   Path,
   Schedule,
@@ -556,6 +557,62 @@ export const install = Effect.fnUntraced(function* (
   }
 
   return [...done];
+});
+
+/**
+ * Move one dependency to a version within its range in the lockfile beside
+ * its manifest, as Renovate's update-lockfile does: pnpm updates without
+ * saving, Yarn upgrades to the newest release in the range, and Bun and npm,
+ * which save the version to the manifest too, have it put back and install
+ * again to keep the range.
+ */
+export const updateLocked = Effect.fnUntraced(function* (
+  directory: string,
+  manifest: string,
+  lockfile: string,
+  dependency: { readonly name: string; readonly version: string },
+  options: { readonly trusted: string; readonly mise: boolean },
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entry = lockfiles.find(([name]) => name === path.basename(lockfile));
+
+  if (entry === undefined) return;
+
+  const [, manager, reinstall] = entry;
+  const pinned = `${dependency.name}@${dependency.version}`;
+  const file = path.join(directory, manifest);
+  const before = yield* fs.readFileString(file);
+
+  // Berry's lockfile has its metadata at the top level, Yarn 1's doesn't
+  const berry =
+    manager === "yarn" &&
+    /^__metadata:/m.test(
+      yield* fs.readFileString(path.join(directory, lockfile)),
+    );
+
+  const args = Match.value(manager).pipe(
+    Match.when("pnpm", () => ["update", "--no-save", pinned]),
+    Match.when("yarn", () =>
+      berry ? ["up", "-R", dependency.name] : ["upgrade", dependency.name],
+    ),
+    Match.when("npm", () => ["install", "--no-audit", pinned]),
+    Match.orElse(() => ["update", pinned]),
+  );
+
+  yield* tool(options.mise, manager, args, {
+    cwd: path.dirname(file),
+    trusted: options.trusted,
+  });
+
+  if ((yield* fs.readFileString(file)) === before) return;
+
+  yield* fs.writeFileString(file, before);
+
+  yield* tool(options.mise, manager, reinstall, {
+    cwd: path.join(directory, path.dirname(lockfile)),
+    trusted: options.trusted,
+  });
 });
 
 /**

@@ -639,6 +639,23 @@ const applyGroup = Effect.fnUntraced(function* (
   for (const [file, text] of edits)
     yield* fs.writeFileString(path.join(directory, file), text);
 
+  const mise = yield* Bump.usesMise(directory);
+
+  // An update within its range moves the lockfile alone
+  for (const update of textual) {
+    const lockfile = update.dependency.lockFiles?.[0];
+
+    if (!update.lockfile || lockfile === undefined) continue;
+
+    yield* Bump.updateLocked(
+      directory,
+      update.dependency.file,
+      lockfile,
+      { name: update.dependency.packageName, version: update.to },
+      { trusted: context.root, mise },
+    );
+  }
+
   const edited = (yield* Bump.run("git", ["diff", "--name-only"], options))
     .split("\n")
     .filter((file) => file !== "");
@@ -648,8 +665,6 @@ const applyGroup = Effect.fnUntraced(function* (
 
     return false;
   }
-
-  const mise = yield* Bump.usesMise(directory);
 
   yield* Bump.install(
     directory,
