@@ -4,18 +4,20 @@
  * change and the release notes: a major, a minor below 1.0 or a breaking
  * change in the notes needs a check, a patch, digest, pin or lockfile-only
  * update doesn't, and anything else is unclear. The decision model settles an
- * unclear one from its notes when there is one; without it, or when it fails,
- * an unclear update is checked. Only repositories that opt in are checked;
- * one with no commands to run has the update held for an agent.
+ * unclear one from its notes when there is one, up to a daily limit counted on
+ * the server; without it, past the limit or when it fails, an unclear update
+ * is checked. Only repositories that opt in are checked; one with no commands
+ * to run has the update held for an agent.
  */
-import { Effect, Option, Schema } from "effect";
+import { Clock, Duration, Effect, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import semver from "semver";
 import * as Decisions from "./Decisions";
 import type { UpdateType } from "./deps/Policy";
 import { reason } from "./Failure";
+import { Reporter } from "./Reporter";
 import * as RunLog from "./RunLog";
-import type * as Settings from "./settings";
+import * as Settings from "./settings";
 
 /** The mise task a repository opts in with. */
 export const task = "regression";
@@ -206,12 +208,30 @@ const Answer = Schema.Struct({
 });
 
 /**
- * Whether the decision model may make another regression decision today.
- * Regression decisions get a daily cap of their own, separate from the
- * heal's, but where it's counted isn't settled yet, so for now it always may.
+ * How many regression decisions the model has left for today, counted on the
+ * server across every worker over the last 24 hours, as the heal counts its
+ * own. Unlimited by default, or 100 a day through OpenCode.
  */
-export const mayDecide = (_model: Settings.DecisionModel) =>
-  Effect.succeed(true);
+const decisionsLeft = Effect.fnUntraced(function* (
+  model: Settings.DecisionModel,
+  settings: Settings.Settings,
+) {
+  const limit =
+    settings.regression?.decisionsPerDay ??
+    (model.provider === "opencode" ? 100 : Infinity);
+
+  if (limit === Infinity) return { left: Infinity, limit };
+
+  const reporter = yield* Reporter;
+  const now = yield* Clock.currentTimeMillis;
+
+  const used = yield* reporter.regressionDecisions(
+    now - Duration.toMillis("1 day"),
+    Settings.deciderName(model),
+  );
+
+  return { left: limit - used, limit };
+});
 
 /** How likely the decision model thinks an update is to change the app. */
 const likelihood = Effect.fnUntraced(function* (
@@ -250,9 +270,9 @@ const likelihood = Effect.fnUntraced(function* (
 
 /**
  * Ask the decision model whether an update the rules can't settle needs a
- * check, logging its answer once with the model's name so its use can be
- * counted. None when there's no model, it may not decide today or it fails,
- * so the rules' verdict stands.
+ * check, logging its answer once with the model's name and recording it for
+ * the daily limit. None when there's no model, its decisions for today can't
+ * be counted or are used up, or it fails, so the rules' verdict stands.
  */
 export const ask = Effect.fnUntraced(function* (
   update: Update,
@@ -264,9 +284,21 @@ export const ask = Effect.fnUntraced(function* (
 
   const about = `${update.package} ${update.from} to ${update.to}`;
 
-  if (!(yield* mayDecide(model))) {
+  // Without a count there's no knowing the limit, so the rules stand
+  const room = yield* decisionsLeft(model, settings).pipe(
+    Effect.map(Option.some),
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `Not asking the decision model about ${about}: couldn't count its regression decisions today: ${reason(cause)}`,
+      ).pipe(Effect.as(Option.none<{ left: number; limit: number }>())),
+    ),
+  );
+
+  if (Option.isNone(room)) return Option.none<Decided>();
+
+  if (room.value.left <= 0) {
     yield* RunLog.info(
-      `Not asking the decision model about ${about}: it's made its regression decisions for today`,
+      `Not asking the decision model about ${about}: it's made ${room.value.limit} regression decisions today, the limit`,
     );
 
     return Option.none<Decided>();
@@ -294,6 +326,24 @@ export const ask = Effect.fnUntraced(function* (
 
   yield* RunLog.info(
     `Decided ${about} ${verdict === "check" ? "needs" : "doesn't need"} a regression check: ${percent}% likely to change how an app looks or behaves, against a ${limit}% threshold (${Decisions.by(model)})`,
+  );
+
+  // The decision stands whether or not it's counted
+  yield* Reporter.use((reporter) =>
+    reporter.regressionDecision({
+      package: update.package,
+      from: update.from,
+      to: update.to,
+      model: Settings.deciderName(model),
+      probability: answer.value,
+      verdict,
+    }),
+  ).pipe(
+    Effect.catchCause((cause) =>
+      RunLog.warn(
+        `Couldn't record the decision on ${about} for the daily limit: ${reason(cause)}`,
+      ),
+    ),
   );
 
   return Option.some<Decided>({

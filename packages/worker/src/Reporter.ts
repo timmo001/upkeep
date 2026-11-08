@@ -44,6 +44,15 @@ export class Reporter extends Context.Service<
     readonly heals: (
       since: number,
     ) => Effect.Effect<ReadonlyArray<Domain.Run>, unknown>;
+    /** Record a decision the decision model made on a regression check. */
+    readonly regressionDecision: (
+      decision: Api.RegressionDecision,
+    ) => Effect.Effect<void, unknown>;
+    /** How many regression decisions `model` made since `since`, across every worker. */
+    readonly regressionDecisions: (
+      since: number,
+      model: string,
+    ) => Effect.Effect<number, unknown>;
     /**
      * The repositories the server tracks for a job, the only ones it works
      * on, or every tracked repository without one.
@@ -159,6 +168,12 @@ export class Reporter extends Context.Service<
                 Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
               ),
           heals: (since) => client.work.heals({ query: { since } }),
+          regressionDecision: (decision) =>
+            client.work.regressionDecision({ params, payload: decision }),
+          regressionDecisions: (since, model) =>
+            client.work
+              .regressionDecisions({ query: { since, model } })
+              .pipe(Effect.map(({ count }) => count)),
           repos: narrowTo(repo, (job) =>
             client.work.repos({ query: job === undefined ? {} : { job } }),
           ),
@@ -248,6 +263,8 @@ export class Reporter extends Context.Service<
         shareSession: () => Effect.void,
         session: () => Effect.succeed(null),
         heals: () => Effect.succeed([]),
+        regressionDecision: () => Effect.void,
+        regressionDecisions: () => Effect.succeed(0),
         repos,
         inbox: () => Effect.fail("The summary reads the inbox on a worker"),
         known: () => Effect.succeed([]),

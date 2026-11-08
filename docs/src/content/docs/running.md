@@ -670,6 +670,12 @@ checks pass and before the push:
   under it, it isn't. Without a model, or when it can't answer, it's checked.
   Each answer is logged with how likely it was and `by` the model, as
   `provider/model`.
+- `regression.decisionsPerDay` caps how many of these the model decides in
+  any 24 hours, across every worker, apart from the heal's
+  `decisionsPerDay`: unlimited by default, 100 for `opencode`. Each decision
+  is recorded on the server, which counts them for the model in use and
+  prunes them with old runs. Past the cap, or when the server can't be
+  asked, an unclear update is checked without asking the model.
 
 The notes are read once per run, and the model is asked once per run for each
 version change, so consumers moving between the same versions share its
@@ -691,7 +697,7 @@ logs that it would hold the update.
       "owner/dashboard": { "regression": {} }
     }
   },
-  "regression": { "threshold": 0.5 }
+  "regression": { "threshold": 0.5, "decisionsPerDay": 50 }
 }
 ```
 

@@ -212,6 +212,16 @@ export const Settings = Schema.Struct({
       threshold: Schema.optionalKey(
         Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
       ),
+      /**
+       * How many updates a day, across every worker, the decision model is
+       * asked about, counted apart from `heal.decisionsPerDay`. Unlimited by
+       * default, or 100 for the `opencode` provider; set it for a cloud
+       * model on a shared or metered plan. Past it, an unclear update is
+       * checked.
+       */
+      decisionsPerDay: Schema.optionalKey(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      ),
     }),
   ),
   heal: Schema.optionalKey(
