@@ -167,3 +167,64 @@ test("a jsonata result is only swapped when its value appears once", () => {
     )._tag,
   ).toBe("Unsupported");
 });
+
+test("a replacement renames the package.json entry and moves its range", () => {
+  const npmRunAll: Dependency = {
+    manager: "npm",
+    file: "package.json",
+    depName: "npm-run-all",
+    packageName: "npm-run-all",
+    datasource: "npm",
+    depType: "devDependencies",
+    currentValue: "^4.1.5",
+  };
+
+  const manifest = `{\n  "devDependencies": {\n    "npm-run-all": "^4.1.5",\n    "npm-run-all-extra": "^4.1.5"\n  }\n}\n`;
+
+  expect(
+    text(
+      apply(
+        update(npmRunAll, {
+          updateType: "replacement",
+          to: "5.0.0",
+          newName: "npm-run-all2",
+        }),
+        manifest,
+      ),
+    ),
+  ).toBe(
+    manifest.replace(`"npm-run-all": "^4.1.5"`, `"npm-run-all2": "^5.0.0"`),
+  );
+});
+
+test("a replacement renames an action and keeps its tag", () => {
+  const provenance: Dependency = {
+    manager: "github-actions",
+    file: ".github/workflows/release.yml",
+    depName: "actions/attest-build-provenance",
+    packageName: "actions/attest-build-provenance",
+    datasource: "github-tags",
+    depType: "action",
+    currentValue: "v4",
+  };
+
+  const replace = update(provenance, {
+    updateType: "replacement",
+    to: "v4",
+    newName: "actions/attest",
+  });
+
+  expect(
+    text(apply(replace, `      - uses: actions/attest-build-provenance@v4\n`)),
+  ).toBe(`      - uses: actions/attest@v4\n`);
+
+  expect(
+    apply(
+      update(
+        { ...provenance, currentDigest: "a".repeat(40) },
+        { updateType: "replacement", to: "v4", newName: "actions/attest" },
+      ),
+      `      - uses: actions/attest-build-provenance@${"a".repeat(40)} # v4\n`,
+    )._tag,
+  ).toBe("Unsupported");
+});

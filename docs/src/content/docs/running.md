@@ -726,6 +726,14 @@ Renovate's pull request for it. It's due when no lock file maintenance commit,
 Renovate's or Upkeep's, has landed within its `schedule`'s period: a day, a
 week (Renovate's default, before 4am on Mondays) or a month.
 
+Replacements are planned as Renovate plans them, from `replacementName` and
+`replacementVersion` in package rules, including the `replacements:*` presets
+`config:recommended` brings in. Each goes on its own
+`renovate/<name>-replacement` branch beside the dependency's version updates,
+and applying it renames the `package.json` entry or workflow action and moves
+its version, keeping the range operator. A pinned action, an npm alias, and
+any other manager's renames are left to Renovate.
+
 Applying is a dry run by default, logging what would be pushed. Set
 `deps.dryRun` to `false` to push:
 

@@ -14,6 +14,7 @@ export const UpdateType = Schema.Literals([
   "pin",
   "digest",
   "pinDigest",
+  "replacement",
 ]);
 
 export type UpdateType = typeof UpdateType.Type;
@@ -69,6 +70,10 @@ export const Settings = Schema.Struct({
   rangeStrategy: Schema.optionalKey(Schema.String),
   versioning: Schema.optionalKey(Schema.NullOr(Schema.String)),
   extractVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The package that replaces this one, such as a renamed or forked one. */
+  replacementName: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The version of the replacement to move to. */
+  replacementVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 export type Settings = typeof Settings.Type;

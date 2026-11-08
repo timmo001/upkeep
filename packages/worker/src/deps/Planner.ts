@@ -5,6 +5,7 @@
  * in it automerges, otherwise Upkeep.
  */
 import semver from "semver";
+import { newValue } from "./Applier";
 import type {
   Dependency,
   Policy,
@@ -13,7 +14,7 @@ import type {
   Settings,
   UpdateType,
 } from "./Policy";
-import { matchesPattern, settingsFor } from "./Rules";
+import { type Context, matchesPattern, settingsFor } from "./Rules";
 
 /** A version as comparable parts, with any prerelease after them. */
 interface Version {
@@ -112,6 +113,8 @@ export interface Update {
   readonly lockfile: boolean;
   /** The full commit it moves to, when the dependency is pinned to one. */
   readonly digest?: string | undefined;
+  /** The package a replacement moves to. */
+  readonly newName?: string | undefined;
 }
 
 /** Why a dependency has no update, when it's worth saying. */
@@ -169,6 +172,8 @@ export const branchFor = (
 
   if (updateType === "digest") return `${name}-digest`;
 
+  if (updateType === "replacement") return `${name}-replacement`;
+
   const minor =
     settings.separateMinorPatch === true && updateType === "patch"
       ? `.${next?.parts[1] ?? 0}`
@@ -205,24 +210,59 @@ export interface Plan {
   readonly skipped?: string;
 }
 
-/** The updates a dependency gets, or why it gets none. */
-export const updatesFor = (
+/**
+ * The replacement a dependency's settings name, as Renovate makes it: the new
+ * package, or the same one, at the version given or the current value, as
+ * long as one of them changes.
+ */
+const replacementFor = (
   policy: Policy,
   dependency: Dependency,
+  base: Settings,
+  context: Context,
+): Update | undefined => {
+  const name = base.replacementName ?? "";
+  const version = base.replacementVersion ?? "";
+
+  if (name === "" && version === "") return undefined;
+
+  const newName = name === "" ? dependency.packageName : name;
+  const to = version === "" ? dependency.currentValue : version;
+
+  if (
+    newName === dependency.packageName &&
+    (newValue(dependency.currentValue, to) ?? to) === dependency.currentValue
+  )
+    return undefined;
+
+  const settings = settingsFor(policy, dependency, {
+    ...context,
+    updateType: "replacement",
+  });
+
+  if (settings.enabled === false) return undefined;
+
+  return {
+    dependency,
+    updateType: "replacement",
+    from: dependency.currentValue,
+    to,
+    settings,
+    branch: branchFor(dependency, settings, "replacement", undefined, false),
+    lockfile: false,
+    newName,
+  };
+};
+
+/** The version and digest updates a dependency gets, or why it gets none. */
+const versionUpdates = (
+  policy: Policy,
+  withSource: Dependency,
   metadata: Releases,
   now: number,
-  repository?: string,
+  base: Settings,
+  context: Context,
 ): Plan => {
-  const withSource: Dependency =
-    dependency.sourceUrl === undefined && metadata.sourceUrl !== undefined
-      ? { ...dependency, sourceUrl: metadata.sourceUrl }
-      : dependency;
-
-  const context = { repository };
-  const base = settingsFor(policy, withSource, context);
-
-  if (base.enabled === false) return { updates: [], skipped: "disabled" };
-
   const versioning = base.versioning;
 
   const extract = (release: Release) => {
@@ -466,6 +506,33 @@ export const updatesFor = (
         skipped: `${pending} newer ${pending === 1 ? "release isn't" : "releases aren't"} old enough yet`,
       }
     : { updates };
+};
+
+/** The updates a dependency gets, or why it gets none. */
+export const updatesFor = (
+  policy: Policy,
+  dependency: Dependency,
+  metadata: Releases,
+  now: number,
+  repository?: string,
+): Plan => {
+  const withSource: Dependency =
+    dependency.sourceUrl === undefined && metadata.sourceUrl !== undefined
+      ? { ...dependency, sourceUrl: metadata.sourceUrl }
+      : dependency;
+
+  const context = { repository };
+  const base = settingsFor(policy, withSource, context);
+
+  if (base.enabled === false) return { updates: [], skipped: "disabled" };
+
+  const plan = versionUpdates(policy, withSource, metadata, now, base, context);
+  const replacement = replacementFor(policy, withSource, base, context);
+
+  // Renovate adds the replacement beside the version updates, on its own branch
+  return replacement === undefined
+    ? plan
+    : { updates: [...plan.updates, replacement] };
 };
 
 /** Updates sharing a branch, which Renovate opens as one pull request. */

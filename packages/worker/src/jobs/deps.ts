@@ -106,7 +106,9 @@ const repositories = Effect.fnUntraced(function* () {
 
 /** A dependency's identity in the log, such as `effect` or `aqua:jdx/hk`. */
 const describe = (update: Planner.Update) =>
-  `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""})`;
+  update.updateType === "replacement"
+    ? `${update.dependency.depName} ${update.from} → ${update.newName ?? update.dependency.depName} ${update.to} (replacement)`
+    : `${update.dependency.depName} ${update.from} → ${update.to} (${update.updateType}${update.lockfile ? ", lockfile" : ""})`;
 
 /** Renovate's branch topic and commit message for lock file maintenance. */
 const maintenanceBranch = "lock-file-maintenance";
@@ -268,6 +270,9 @@ const subject = (group: Planner.Group) => {
   const [first] = group.updates;
 
   if (names.size !== 1 || first === undefined) return `Update ${group.name}`;
+
+  if (first.updateType === "replacement")
+    return `Replace ${first.dependency.depName} with ${first.newName ?? first.dependency.depName} ${first.to}`;
 
   return first.updateType === "digest"
     ? `Update ${first.dependency.depName} digest to ${first.to}`

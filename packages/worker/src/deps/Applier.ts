@@ -45,9 +45,51 @@ export const newValue = (current: string, to: string) => {
   return `${operator}${parts.v ?? ""}${version}`;
 };
 
+/**
+ * The value a replacement writes: the current one when it gives no version,
+ * otherwise the new version carried over it.
+ */
+const replacementValue = (update: Update) =>
+  update.to === update.dependency.currentValue
+    ? update.to
+    : newValue(update.dependency.currentValue, update.to);
+
+/** A package.json entry renamed to its replacement, as Renovate's `replace` does. */
+const replacePackage = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+
+  if (dependency.depType === "packageManager")
+    return unsupported("a package manager isn't replaced");
+
+  if (
+    dependency.datasource !== "npm" ||
+    dependency.depName !== dependency.packageName
+  )
+    return unsupported("only plain npm entries are replaced");
+
+  const value = replacementValue(update);
+
+  if (value === undefined)
+    return unsupported(`can't carry ${dependency.currentValue} over`);
+
+  const pattern = new RegExp(
+    `"${escape(dependency.depName)}"(\\s*:\\s*")${escape(dependency.currentValue)}"`,
+    "g",
+  );
+
+  return edited(
+    text.replace(
+      pattern,
+      `"${update.newName ?? dependency.depName}"$1${value}"`,
+    ),
+  );
+};
+
 /** A package.json entry or `packageManager` field. */
 const editPackage = (update: Update, text: string): Edit => {
   const { dependency } = update;
+
+  if (update.updateType === "replacement") return replacePackage(update, text);
 
   if (dependency.depType === "packageManager") {
     const pattern = new RegExp(
@@ -116,6 +158,28 @@ const editMise = (update: Update, text: string): Edit => {
 const editAction = (update: Update, text: string): Edit => {
   const { dependency } = update;
   const pinned = dependency.currentDigest;
+
+  if (update.updateType === "replacement") {
+    if (pinned !== undefined)
+      return unsupported("a pinned action's replacement needs its own commit");
+
+    const value = replacementValue(update);
+
+    if (value === undefined)
+      return unsupported(`can't carry ${dependency.currentValue} over`);
+
+    const pattern = new RegExp(
+      `(uses:\\s*["']?)${escape(dependency.depName)}((?:/[^@\\s"']*)?@)${escape(dependency.currentValue)}(?=["']?(?:\\s|$))`,
+      "gm",
+    );
+
+    return edited(
+      text.replace(
+        pattern,
+        `$1${update.newName ?? dependency.depName}$2${value}`,
+      ),
+    );
+  }
 
   if (
     (pinned !== undefined || update.updateType === "pinDigest") &&
@@ -225,6 +289,18 @@ const editJsonata = (update: Update, text: string): Edit => {
 export const apply = (update: Update, text: string): Edit => {
   if (update.lockfile)
     return unsupported("lockfile-only updates aren't applied yet");
+
+  if (
+    update.updateType === "replacement" &&
+    update.dependency.manager !== "npm" &&
+    update.dependency.manager !== "bun" &&
+    update.dependency.manager !== "github-actions" &&
+    (update.dependency.manager !== "mise" ||
+      update.newName !== update.dependency.packageName)
+  )
+    return unsupported(
+      `${update.dependency.manager} replacements aren't applied yet`,
+    );
 
   switch (update.dependency.manager) {
     case "npm":

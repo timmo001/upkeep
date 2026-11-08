@@ -79,3 +79,62 @@ test("a range with no locked version only updates past its range", () => {
 
   expect(updates).toEqual([["major", "7.4.5", "8.0.0"]]);
 });
+
+const npmRunAll: Dependency = {
+  ...astro,
+  depName: "npm-run-all",
+  packageName: "npm-run-all",
+  currentValue: "^4.1.5",
+};
+
+const replacements: Policy = {
+  ...policy,
+  rules: [
+    {
+      match: { datasources: ["npm"], packageNames: ["npm-run-all"] },
+      set: { replacementName: "npm-run-all2", replacementVersion: "5.0.0" },
+    },
+    {
+      match: { updateTypes: ["replacement"] },
+      set: { automerge: true },
+    },
+  ],
+};
+
+test("a replacement goes on its own branch beside the version updates", () => {
+  const releases: Releases = {
+    releases: ["4.1.5", "4.1.6"].map((version) => ({ version })),
+  };
+
+  const updates = updatesFor(replacements, npmRunAll, releases, 0).updates.map(
+    ({ updateType, to, newName, branch, settings }) => [
+      updateType,
+      newName,
+      to,
+      branch,
+      settings.automerge,
+    ],
+  );
+
+  expect(updates).toEqual([
+    ["replacement", "npm-run-all2", "5.0.0", "npm-run-all-replacement", true],
+  ]);
+});
+
+test("a replacement that changes nothing isn't planned", () => {
+  const same: Policy = {
+    ...policy,
+    rules: [
+      {
+        match: { packageNames: ["npm-run-all"] },
+        set: { replacementVersion: "4.1.5" },
+      },
+    ],
+  };
+
+  expect(
+    updatesFor(same, npmRunAll, { releases: [] }, 0).updates.filter(
+      ({ updateType }) => updateType === "replacement",
+    ),
+  ).toEqual([]);
+});

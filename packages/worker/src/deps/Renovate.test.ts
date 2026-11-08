@@ -311,6 +311,27 @@ test("presets merge in order, then the config itself on top", async () => {
   expect(rules.length).toBeGreaterThan(3);
 });
 
+test("replacements:all names a dependency's replacement and isn't left out", async () => {
+  const { config } = await resolve({ extends: ["replacements:all"] });
+  const policy = toPolicy(config, "renovate.json", []);
+
+  const settings = settingsFor(policy, {
+    manager: "npm",
+    file: "package.json",
+    depName: "npm-run-all",
+    packageName: "npm-run-all",
+    datasource: "npm",
+    depType: "devDependencies",
+    currentValue: "^4.1.5",
+  });
+
+  expect(settings.replacementName).toBe("npm-run-all2");
+  expect(settings.replacementVersion).toBe("5.0.0");
+  expect(policy.notes.join("\n")).not.toMatch(
+    /replacementName\b|replacementVersion\b/,
+  );
+});
+
 test("ignorePresets leaves a preset out wherever it's extended", async () => {
   const { config } = await resolve({
     extends: ["github>timmo001/shared", "github>timmo001/shared:fast"],
