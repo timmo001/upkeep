@@ -1199,6 +1199,18 @@ const WorkHandlers = HttpApiBuilder.group(
         );
       }),
       heals: ({ query }) => store.heals(query.since).pipe(Effect.orDie),
+      regressionDecision: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .recordRegressionDecision(params.id, worker.name, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
+      regressionDecisions: ({ query }) =>
+        store.regressionDecisions(query.since, query.model).pipe(
+          Effect.map((count) => ({ count })),
+          Effect.orDie,
+        ),
       parked: () =>
         store.parked().pipe(
           Effect.map((parked) =>
@@ -2061,9 +2073,10 @@ export const pullEvents = Layer.effectDiscard(
 const entryDays = 30;
 
 /**
- * Delete finished runs and their logs past the retention window, once an
- * hour, keeping the latest runs of each job however old they are, and old
- * inbox entries that were read or dismissed.
+ * Once an hour, delete finished runs and their logs past the retention
+ * window, keeping the latest runs of each job however old they are, then old
+ * inbox entries that were read or dismissed, and GitHub events and regression
+ * decisions past the window.
  */
 export const pruneRuns = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -2094,6 +2107,13 @@ export const pruneRuns = Layer.effectDiscard(
 
       if (events > 0)
         yield* Effect.logInfo(`Pruned ${events} old GitHub events`);
+
+      const decisions = yield* store.pruneRegressionDecisions(
+        now - Duration.toMillis(Duration.days(keep.days)),
+      );
+
+      if (decisions > 0)
+        yield* Effect.logInfo(`Pruned ${decisions} old regression decisions`);
     }).pipe(
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.hours(1))),

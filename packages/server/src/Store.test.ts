@@ -453,6 +453,54 @@ test("a GitHub delivery is recorded once, and pruned once old", () =>
     }),
   ));
 
+test("a regression decision counts for its model, and is pruned once old", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "bump",
+        trigger: "manual",
+        release: null,
+      });
+
+      const id = Option.getOrThrow(yield* store.claim(["bump"], "desktop")).id;
+
+      const decision = {
+        package: "timmo001/groundwork",
+        from: "1.2.0",
+        to: "1.3.0",
+        model: "opencode/some-model",
+        probability: 0.6,
+        verdict: "check",
+      } as const;
+
+      const error = yield* store
+        .recordRegressionDecision(id, "laptop", decision)
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("RunNotClaimed");
+
+      yield* store.recordRegressionDecision(id, "desktop", decision);
+      yield* store.recordRegressionDecision(id, "desktop", {
+        ...decision,
+        model: "cloudflare/other-model",
+      });
+
+      expect(yield* store.regressionDecisions(0, decision.model)).toBe(1);
+      expect(
+        yield* store.regressionDecisions(
+          Number.MAX_SAFE_INTEGER,
+          decision.model,
+        ),
+      ).toBe(0);
+      expect(
+        yield* store.pruneRegressionDecisions(Number.MAX_SAFE_INTEGER),
+      ).toBe(2);
+      expect(yield* store.regressionDecisions(0, decision.model)).toBe(0);
+    }),
+  ));
+
 test("a run for one repository reuses a waiting run for it or for every repository", () =>
   run(
     Effect.gen(function* () {

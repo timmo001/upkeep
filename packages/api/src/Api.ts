@@ -294,6 +294,28 @@ export const HealUpdate = Schema.Struct({
 export interface HealUpdate extends Schema.Schema.Type<typeof HealUpdate> {}
 
 /**
+ * What the decision model made of an update the regression rules couldn't
+ * settle, kept for a day's count of its decisions.
+ */
+export const RegressionDecision = Schema.Struct({
+  /** The released repository or the package that moved. */
+  package: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+  /** The model that decided, as `provider/model`. */
+  model: Schema.String,
+  /** How likely it thought the update is to change an app, from 0 to 1. */
+  probability: Schema.Number.check(
+    Schema.isBetween({ minimum: 0, maximum: 1 }),
+  ),
+  verdict: Schema.Literals(["check", "skip"]),
+});
+
+export interface RegressionDecision extends Schema.Schema.Type<
+  typeof RegressionDecision
+> {}
+
+/**
  * What a run reports as it goes: `summary` replaces its summary, `change` is
  * added to its changes, `attention` marks it as needing a person, and
  * `period` and `agent` set the stretch of the inbox a summary run covers and
@@ -954,6 +976,25 @@ export class WorkGroup extends HttpApiGroup.make("work")
     HttpApiEndpoint.get("heals", "/heals", {
       query: { since: Schema.FiniteFromString },
       success: Schema.Array(Run),
+    }),
+    /** Record a decision the decision model made on a regression check. */
+    HttpApiEndpoint.post(
+      "regressionDecision",
+      "/runs/:id/regression-decisions",
+      {
+        params: { id: Schema.String },
+        payload: RegressionDecision,
+        success: HttpApiSchema.NoContent,
+        error: [RunNotFound, RunNotClaimed],
+      },
+    ),
+    /**
+     * How many regression decisions `model` made since `since`, across every
+     * worker, for their daily limit.
+     */
+    HttpApiEndpoint.get("regressionDecisions", "/regression-decisions", {
+      query: { since: Schema.FiniteFromString, model: Schema.String },
+      success: Schema.Struct({ count: Schema.Int }),
     }),
     /** The parked jobs, for a worker's own status. */
     HttpApiEndpoint.get("parked", "/parked", {

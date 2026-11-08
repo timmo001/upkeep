@@ -626,6 +626,27 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // The decision model's answers on regression checks, kept for a day's
+  // count of them and pruned with the runs
+  "0032_regression_decisions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE regression_decisions (
+        id INTEGER PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        package TEXT NOT NULL,
+        from_version TEXT NOT NULL,
+        to_version TEXT NOT NULL,
+        model TEXT NOT NULL,
+        probability REAL NOT NULL,
+        verdict TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX regression_decisions_model ON regression_decisions (model, at)`;
+    yield* sql`CREATE INDEX regression_decisions_at ON regression_decisions (at)`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -1403,6 +1424,19 @@ export class Store extends Context.Service<
     ): Effect.Effect<ReadonlyArray<Domain.GitHubEvent>, StoreError>;
     /** Delete the GitHub events received before `before`. Returns how many went. */
     pruneEvents(before: number): Effect.Effect<number, StoreError>;
+    /** Keep a regression decision from the worker running the run it was made in. */
+    recordRegressionDecision(
+      id: string,
+      worker: string,
+      decision: Api.RegressionDecision,
+    ): Effect.Effect<void, Api.RunNotFound | Api.RunNotClaimed | StoreError>;
+    /** How many regression decisions `model` made since `since`. */
+    regressionDecisions(
+      since: number,
+      model: string,
+    ): Effect.Effect<number, StoreError>;
+    /** Delete the regression decisions made before `before`. Returns how many went. */
+    pruneRegressionDecisions(before: number): Effect.Effect<number, StoreError>;
     /** Every tracked repository, by name. */
     repos(): Effect.Effect<ReadonlyArray<Domain.TrackedRepo>, StoreError>;
     /**
@@ -3756,6 +3790,48 @@ export class Store extends Context.Service<
       return rows.length;
     }, Effect.mapError(storeError));
 
+    const recordRegressionDecision = Effect.fn(
+      "Store.recordRegressionDecision",
+    )(function* (id: string, worker: string, decision: Api.RegressionDecision) {
+      yield* claimed(id, worker);
+
+      yield* sql`
+        INSERT INTO regression_decisions ${sql.insert({
+          runId: id,
+          package: decision.package,
+          fromVersion: decision.from,
+          toVersion: decision.to,
+          model: decision.model,
+          probability: decision.probability,
+          verdict: decision.verdict,
+          at: yield* Clock.currentTimeMillis,
+        })}
+      `.pipe(Effect.mapError(storeError));
+    });
+
+    const regressionDecisions = Effect.fn("Store.regressionDecisions")(
+      function* (since: number, model: string) {
+        const rows = yield* sql<{ count: number }>`
+          SELECT count(*) AS count FROM regression_decisions
+          WHERE model = ${model} AND at >= ${since}
+        `;
+
+        return rows[0]?.count ?? 0;
+      },
+      Effect.mapError(storeError),
+    );
+
+    const pruneRegressionDecisions = Effect.fn(
+      "Store.pruneRegressionDecisions",
+    )(function* (before: number) {
+      const rows = yield* sql`
+        DELETE FROM regression_decisions WHERE at < ${before}
+        RETURNING id
+      `;
+
+      return rows.length;
+    }, Effect.mapError(storeError));
+
     /**
      * Fill an empty inbox from the commits runs pushed in the last
      * `backfillHours`, so it starts with what happened lately. The watch
@@ -4070,6 +4146,9 @@ export class Store extends Context.Service<
       forgetEvent,
       events,
       pruneEvents,
+      recordRegressionDecision,
+      regressionDecisions,
+      pruneRegressionDecisions,
       repos,
       track: announce(touches("inbox"), track),
       untrack: announce(touches("inbox"), untrack),
