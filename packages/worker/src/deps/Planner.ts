@@ -188,6 +188,33 @@ export const branchFor = (
 const isRange = (value: string) =>
   semver.valid(value) === null && semver.validRange(value) !== null;
 
+/**
+ * The range strategy Renovate's npm manager resolves a dependency's to:
+ * `auto` widens a peer dependency or a range of several parts, such as
+ * `^1 || ^2`, and otherwise only updates the lockfile within the range;
+ * `in-range-only` updates the lockfile too.
+ */
+const resolveRangeStrategy = (
+  dependency: Dependency,
+  rangeStrategy: string | null | undefined,
+) => {
+  if (rangeStrategy === "in-range-only") return "update-lockfile";
+
+  if (
+    rangeStrategy !== undefined &&
+    rangeStrategy !== null &&
+    rangeStrategy !== "auto"
+  )
+    return rangeStrategy;
+
+  const complex =
+    dependency.currentValue.trim().split(/\s*\|\|\s*|\s+/).length > 1;
+
+  return dependency.depType === "peerDependencies" || complex
+    ? "widen"
+    : "update-lockfile";
+};
+
 /** How many numeric parts a version gives: 1 for `v7`, 3 for `7.0.1`. */
 const partsOf = (version: string) =>
   /^v?(?<numbers>\d+(?:\.\d+)*)/.exec(version)?.groups?.numbers?.split(".")
@@ -436,9 +463,10 @@ const versionUpdates = (
       ? partsOf(withSource.currentValue)
       : undefined;
 
-  // With no locked version, Renovate takes the highest release in the range
-  // that isn't past latest, so nothing inside the range is an update. A fix
-  // bumps the range instead, so it reads from the lowest
+  // With no locked version, or a range strategy that moves the range rather
+  // than the lockfile, Renovate takes the highest release in the range that
+  // isn't past latest, so nothing inside the range is an update. A fix bumps
+  // the range instead, so it reads from the lowest
   const inRange = (range: string, lowest: boolean) => {
     const versions = metadata.releases.flatMap((release) => {
       const text = extract(release);
@@ -461,9 +489,9 @@ const versionUpdates = (
     );
   };
 
-  const currentFor = (lowest: boolean) => {
+  const currentFor = (lowest: boolean, locked: string | undefined) => {
     const text =
-      withSource.lockedVersion ??
+      locked ??
       (precision === undefined && isRange(withSource.currentValue)
         ? inRange(withSource.currentValue, lowest)
         : withSource.currentValue);
@@ -474,7 +502,9 @@ const versionUpdates = (
     };
   };
 
-  const vulnerable = fix === undefined ? undefined : currentFor(true);
+  // Renovate's alert rule matches the locked version where there is one
+  const vulnerable =
+    fix === undefined ? undefined : currentFor(true, withSource.lockedVersion);
 
   // Renovate's alert rule only matches a dependency still below the fix
   const fixing =
@@ -484,9 +514,26 @@ const versionUpdates = (
       ? fix
       : undefined;
 
+  const rangeStrategy =
+    fixing?.settings.rangeStrategy ?? base.rangeStrategy ?? undefined;
+
+  // Updating the lockfile moves on from the locked version, so a newer
+  // release within the range is an update of its own
+  const locked =
+    resolveRangeStrategy(withSource, rangeStrategy) === "update-lockfile"
+      ? withSource.lockedVersion
+      : undefined;
+
+  // `in-range-only` keeps to releases the range already allows
+  const allowedRange =
+    rangeStrategy === "in-range-only" &&
+    semver.validRange(withSource.currentValue) !== null
+      ? withSource.currentValue
+      : undefined;
+
   const { text: currentText, version: current } =
     fixing === undefined || vulnerable === undefined
-      ? currentFor(false)
+      ? currentFor(false, locked)
       : vulnerable;
 
   if (current === undefined)
@@ -555,6 +602,9 @@ const versionUpdates = (
 
     if (order < 0) continue;
 
+    if (allowedRange !== undefined && !semver.satisfies(text, allowedRange))
+      continue;
+
     if (fixing !== undefined && compareVersions(next, fixing.version) < 0)
       continue;
 
@@ -622,7 +672,7 @@ const versionUpdates = (
     }
 
     const lockfile =
-      withSource.lockedVersion !== undefined &&
+      locked !== undefined &&
       isRange(withSource.currentValue) &&
       semver.satisfies(text, withSource.currentValue);
 

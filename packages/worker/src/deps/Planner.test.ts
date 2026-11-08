@@ -80,6 +80,69 @@ test("a range with no locked version only updates past its range", () => {
   expect(updates).toEqual([["major", "7.4.5", "8.0.0"]]);
 });
 
+const astroReleases: Releases = {
+  releases: ["7.2.10", "7.2.11", "7.4.5", "8.0.0"].map((version) => ({
+    version,
+  })),
+};
+
+test("a locked range moves its lockfile within the range, from the locked version", () => {
+  const updates = updatesFor(
+    policy,
+    { ...astro, lockedVersion: "7.2.10" },
+    astroReleases,
+    0,
+  ).updates.map(({ updateType, from, to, lockfile, branch }) => [
+    updateType,
+    from,
+    to,
+    lockfile,
+    branch,
+  ]);
+
+  expect(updates).toEqual([
+    ["minor", "7.2.10", "7.4.5", true, "astro-7.x-lockfile"],
+    ["major", "7.2.10", "8.0.0", false, "astro-8.x"],
+  ]);
+});
+
+test("a locked range with bump or a peer dependency moves the range alone", () => {
+  const bump: Policy = {
+    ...policy,
+    rules: [{ match: {}, set: { rangeStrategy: "bump" } }],
+  };
+
+  for (const [rules, dependency] of [
+    [bump, { ...astro, lockedVersion: "7.2.10" }],
+    [
+      policy,
+      { ...astro, depType: "peerDependencies", lockedVersion: "7.2.10" },
+    ],
+  ] as const)
+    expect(
+      updatesFor(rules, dependency, astroReleases, 0).updates.map(
+        ({ from, to, lockfile }) => [from, to, lockfile],
+      ),
+    ).toEqual([["7.4.5", "8.0.0", false]]);
+});
+
+test("in-range-only keeps to the lockfile, and to the range without a locked version", () => {
+  const inRangeOnly: Policy = {
+    ...policy,
+    rules: [{ match: {}, set: { rangeStrategy: "in-range-only" } }],
+  };
+
+  expect(
+    updatesFor(
+      inRangeOnly,
+      { ...astro, lockedVersion: "7.2.10" },
+      astroReleases,
+      0,
+    ).updates.map(({ from, to, lockfile }) => [from, to, lockfile]),
+  ).toEqual([["7.2.10", "7.4.5", true]]);
+  expect(updatesFor(inRangeOnly, astro, astroReleases, 0).updates).toEqual([]);
+});
+
 const npmRunAll: Dependency = {
   ...astro,
   depName: "npm-run-all",
@@ -213,4 +276,22 @@ test("a range already starting at the fix isn't a vulnerability fix", () => {
   ).updates;
 
   expect(updates.some(({ vulnerable }) => vulnerable === true)).toBe(false);
+});
+
+test("an alert on a locked range moves the lockfile to the fix", () => {
+  const updates = updatesFor(
+    alerted("lowest"),
+    { ...astro, lockedVersion: "7.2.11" },
+    fixReleases,
+    Date.parse("2026-11-08T00:00:00Z"),
+  ).updates.map(({ from, to, lockfile, branch }) => [
+    from,
+    to,
+    lockfile,
+    branch,
+  ]);
+
+  expect(updates).toEqual([
+    ["7.2.11", "7.3.0", true, "npm-astro-vulnerability"],
+  ]);
 });
