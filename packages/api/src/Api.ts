@@ -46,7 +46,11 @@ import {
   Period,
   PermissionPrompts,
   Precedent,
+  Impact,
   Release,
+  ReleaseEntry,
+  ReleaseScan,
+  ReleasesPage,
   RepoName,
   Run,
   RunState,
@@ -119,7 +123,7 @@ export class RepoNotScopable extends Schema.TaggedError<RepoNotScopable>()(
  * the server refuses older workers before handing them a run rather than
  * leaving it stranded until the lost-run sweep.
  */
-export const protocol = 4;
+export const protocol = 5;
 
 /** A worker claimed work with an older protocol than the server's. */
 export class WorkerOutdated extends Schema.TaggedError<WorkerOutdated>()(
@@ -179,6 +183,31 @@ export class SessionNotFound extends Schema.TaggedError<SessionNotFound>()(
 ) {
   override get message() {
     return `Session ${this.id} wasn't shared with the server`;
+  }
+}
+
+/** A repository with no release comparison: not tracked for it, or not read yet. */
+export class ReleaseNotFound extends Schema.TaggedError<ReleaseNotFound>()(
+  "ReleaseNotFound",
+  { repo: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no release comparison of ${this.repo}`;
+  }
+}
+
+/**
+ * An action on a release comparison the page no longer shows: it was read
+ * again, or your choices changed it, or it can't be acted on as it stands.
+ */
+export class ReleaseStale extends Schema.TaggedError<ReleaseStale>()(
+  "ReleaseStale",
+  { repo: Schema.String, reason: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  override get message() {
+    return `${this.repo}: ${this.reason}`;
   }
 }
 
@@ -1162,6 +1191,21 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: SkillsSnapshot,
       success: HttpApiSchema.NoContent,
     }),
+    /**
+     * Keep a repository's release comparison as the worker just read it. The
+     * server keeps your choices that still apply, and the last complete
+     * comparison through an incomplete or failed one.
+     */
+    HttpApiEndpoint.put("putRelease", "/releases/scan", {
+      payload: ReleaseScan,
+      success: HttpApiSchema.NoContent,
+    }),
+    /** A repository on the Releases page, for publishing or an agent's brief. */
+    HttpApiEndpoint.get("release", "/releases/:owner/:name", {
+      params: { owner: Schema.String, name: Schema.String },
+      success: ReleaseEntry,
+      error: ReleaseNotFound,
+    }),
     /** Keep the Omarchy theme the worker's desktop just switched to. */
     HttpApiEndpoint.put("putTheme", "/theme", {
       payload: OmarchyTheme,
@@ -1295,6 +1339,75 @@ export class SkillsGroup extends HttpApiGroup.make("skills")
     }),
   ) {}
 
+/** Who to act on: a repository and the comparison the page showed of it. */
+const ReleaseTarget = {
+  owner: Schema.String,
+  name: Schema.String,
+};
+
+export class ReleasesGroup extends HttpApiGroup.make("releases")
+  .add(
+    /** Each repository tracked for the unreleased job, and the workers. */
+    HttpApiEndpoint.get("get", "/", {
+      success: ReleasesPage,
+    }),
+    /**
+     * Choose an impact for some of a comparison's findings, or `overall` for
+     * all of it, or clear a choice with `auto`. Bound to the comparison the
+     * page showed, so a stale page is refused.
+     */
+    HttpApiEndpoint.post("review", "/:owner/:name/review", {
+      params: ReleaseTarget,
+      payload: Schema.Struct({
+        snapshot: Schema.String,
+        targets: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+        impact: Schema.Union([Impact, Schema.Literal("auto")]),
+      }),
+      success: ReleaseEntry,
+      error: [ReleaseNotFound, ReleaseStale],
+    }),
+    /** Read the repository again, now. */
+    HttpApiEndpoint.post("refresh", "/:owner/:name/refresh", {
+      params: ReleaseTarget,
+      success: Run,
+      error: ReleaseNotFound,
+    }),
+    /**
+     * Publish the release the page showed, at the tag it showed, on any
+     * worker. Refused when either has changed since.
+     */
+    HttpApiEndpoint.post("publish", "/:owner/:name/publish", {
+      params: ReleaseTarget,
+      payload: Schema.Struct({
+        snapshot: Schema.String,
+        tag: Schema.String,
+        notes: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20000))),
+        notesMode: Schema.Literals(["prepend", "replace"]),
+      }),
+      success: Run,
+      error: [ReleaseNotFound, ReleaseStale],
+    }),
+    /** Open an agent to prepare the release, on the worker named. */
+    HttpApiEndpoint.post("agent", "/:owner/:name/agent", {
+      params: ReleaseTarget,
+      payload: Schema.Struct({
+        snapshot: Schema.String,
+        worker: Schema.String,
+      }),
+      success: Run,
+      error: [ReleaseNotFound, ReleaseStale],
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/releases")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Releases",
+      description:
+        "What changed since each repository's last stable release, the release it needs, and publishing it",
+    }),
+  ) {}
+
 export class SessionsGroup extends HttpApiGroup.make("sessions")
   .add(
     /** A session a worker shared, for `upkeep open` to import and open. */
@@ -1379,6 +1492,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(WorkGroup)
   .add(ReposGroup)
   .add(SkillsGroup)
+  .add(ReleasesGroup)
   .add(SessionsGroup)
   .add(ThemeGroup)
   .add(TokensGroup)

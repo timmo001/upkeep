@@ -632,14 +632,243 @@ export const SkillsPage = Schema.Struct({
 export interface SkillsPage extends Schema.Schema.Type<typeof SkillsPage> {}
 
 /**
+ * How much a change matters to whoever uses a release, from nothing to a
+ * major version. A dependency's version moving is a different thing.
+ */
+export const Impact = Schema.Literals(["none", "patch", "minor", "major"]);
+
+export type Impact = typeof Impact.Type;
+
+/** What a dependency is for in what ships. */
+export const DependencyRole = Schema.Literals([
+  "runtime",
+  "peer",
+  "development",
+  "build",
+  "unknown",
+]);
+
+export type DependencyRole = typeof DependencyRole.Type;
+
+/**
+ * One net change since a repository's last stable release, read from Git: a
+ * file, a dependency, package metadata, a submodule pin or a checksum. Its
+ * `id` hashes what changed, not when it was read, so a review of it holds
+ * until the change itself does.
+ */
+export const ReleaseFact = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals([
+    "file",
+    "dependency",
+    "metadata",
+    "submodule",
+    "commit",
+    "checksum",
+  ]),
+  path: Schema.String,
+  /** The old path of a renamed file. */
+  previousPath: Schema.NullOr(Schema.String),
+  changeType: Schema.Literals(["added", "modified", "deleted", "renamed"]),
+  /** The old object or dependency value. */
+  before: Schema.NullOr(Schema.String),
+  /** The new object or dependency value. */
+  after: Schema.NullOr(Schema.String),
+  dependency: Schema.NullOr(Schema.String),
+  role: Schema.NullOr(DependencyRole),
+  /** The submodule it's in, for a change in one. */
+  submodule: Schema.NullOr(Schema.String),
+  subject: Schema.NullOr(Schema.String),
+  /** The subjects of the commits whose content is still in it. */
+  subjects: Schema.optionalKey(Schema.Array(Schema.String)),
+  detail: Schema.String,
+  /** Lines added and removed, or null for a binary file. */
+  changedLines: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  /** Whether everything needed to classify it was read. */
+  complete: Schema.Boolean,
+  /** Where to see it, for a change in a submodule's upstream. */
+  evidenceUrl: Schema.optionalKey(Schema.String),
+});
+
+// A type alias rather than an interface merged with the schema, which lint
+// would take for a class instance wherever the value is spread
+export type ReleaseFact = typeof ReleaseFact.Type;
+
+/** A change with the impact its policy gives it and the one you chose. */
+export const ReleaseFinding = Schema.Struct({
+  ...ReleaseFact.fields,
+  /** The policy's impact, from the first rule that matched. */
+  automaticImpact: Impact,
+  /** The impact after your review. */
+  impact: Impact,
+  /** Why the policy gave it that impact. */
+  reason: Schema.String,
+  /** Whether you chose its impact. */
+  reviewed: Schema.Boolean,
+});
+
+export type ReleaseFinding = typeof ReleaseFinding.Type;
+
+/** A commit since the last stable release, or in a submodule's upstream. */
+export const ReleaseCommit = Schema.Struct({
+  id: Schema.String,
+  subject: Schema.String,
+  /** When it was committed, in ISO format. */
+  date: Schema.String,
+  submodule: Schema.NullOr(Schema.String),
+  url: Schema.optionalKey(Schema.String),
+});
+
+export type ReleaseCommit = typeof ReleaseCommit.Type;
+
+/**
+ * A comparison of a repository's watched branch with its last stable
+ * release: every commit and net change, classified. `complete` is false when
+ * evidence is missing, which is never a claim that no release is needed.
+ */
+export const ReleaseSnapshot = Schema.Struct({
+  /** What an action on it is bound to, so a stale page can't act. */
+  id: Schema.String,
+  repo: RepoName,
+  name: Schema.String,
+  branch: Schema.String,
+  /** The last stable release's tag, or null before the first. */
+  releaseTag: Schema.NullOr(Schema.String),
+  releaseCommit: Schema.NullOr(Schema.String),
+  /** The branch's commit it compared. */
+  head: Schema.String,
+  /** For a fork: the newest upstream version the branch includes. */
+  upstreamBase: Schema.optionalKey(Schema.String),
+  checkedAt: Schema.Finite,
+  /** The policy and settings it was classified with. */
+  policyId: Schema.String,
+  /** The release-relevant evidence, which an overall choice is bound to. */
+  comparisonId: Schema.String,
+  /** The comparison on GitHub. */
+  url: Schema.String,
+  commits: Schema.Array(ReleaseCommit),
+  findings: Schema.Array(ReleaseFinding),
+  /** Every net file change, including ones with nothing to classify. */
+  files: Schema.Array(ReleaseFact),
+  automaticSuggestion: Impact,
+  /** The highest impact after your review, or your overall choice. */
+  suggestion: Impact,
+  /** Whether you chose the overall impact. */
+  reviewed: Schema.Boolean,
+  complete: Schema.Boolean,
+  /** What evidence is missing. */
+  errors: Schema.Array(Schema.String),
+});
+
+export type ReleaseSnapshot = typeof ReleaseSnapshot.Type;
+
+/** Your impact choices for a repository, bound to the evidence they're for. */
+export const ReleaseDecisions = Schema.Struct({
+  /** Finding IDs to the impact you chose. */
+  findings: Schema.Record(Schema.String, Impact),
+  /** An overall impact, for the comparison it was chosen on. */
+  overall: Schema.NullOr(
+    Schema.Struct({ comparisonId: Schema.String, impact: Impact }),
+  ),
+});
+
+export type ReleaseDecisions = typeof ReleaseDecisions.Type;
+
+/** How a repository numbers its releases. */
+export const Versioning = Schema.Literals([
+  "semver",
+  "calver",
+  "fork",
+  "fork-base-js",
+]);
+
+export type Versioning = typeof Versioning.Type;
+
+/**
+ * How a repository publishes a release from Upkeep: its version files, as
+ * the branch has them, the commands that prepare and check it, and the files
+ * those commands may regenerate. A version file that can't be read says why.
+ */
+export const ReleaseRecipe = Schema.Struct({
+  versionFiles: Schema.Array(
+    Schema.Struct({
+      path: Schema.String,
+      before: Schema.NullOr(Schema.String),
+      error: Schema.NullOr(Schema.String),
+    }),
+  ),
+  commands: Schema.Array(Schema.Array(Schema.String)),
+  generatedFiles: Schema.Array(Schema.String),
+});
+
+export type ReleaseRecipe = typeof ReleaseRecipe.Type;
+
+/**
+ * What the unreleased job read of one repository, with the settings the page
+ * needs: its name and branch, how it numbers releases, when to tell you and
+ * how to publish. `snapshot` is as classified, before your review; null when
+ * the comparison failed, which `error` says.
+ */
+export const ReleaseScan = Schema.Struct({
+  repo: RepoName,
+  name: Schema.String,
+  branch: Schema.String,
+  policyId: Schema.String,
+  versioning: Versioning,
+  fork: Schema.NullOr(
+    Schema.Struct({ upstream: Schema.String, suffix: Schema.String }),
+  ),
+  notify: Schema.Struct({ enabled: Schema.Boolean, minimumImpact: Impact }),
+  recipe: Schema.NullOr(ReleaseRecipe),
+  snapshot: Schema.NullOr(ReleaseSnapshot),
+  error: Schema.NullOr(Schema.String),
+  attemptedAt: Schema.Finite,
+});
+
+export type ReleaseScan = typeof ReleaseScan.Type;
+
+/**
+ * A repository on the Releases page: its last comparison with your review
+ * applied, kept through a failed one, which marks it stale. `nextVersion` is
+ * the tag a release would take, or null with `versionError` saying why.
+ */
+export const ReleaseEntry = Schema.Struct({
+  repo: RepoName,
+  name: Schema.String,
+  branch: Schema.String,
+  snapshot: Schema.NullOr(ReleaseSnapshot),
+  stale: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+  attemptedAt: Schema.Finite,
+  /** The comparison has changes worth a release. */
+  needsRelease: Schema.Boolean,
+  nextVersion: Schema.NullOr(Schema.String),
+  versionError: Schema.NullOr(Schema.String),
+  versioning: Versioning,
+  notify: ReleaseScan.fields.notify,
+  recipe: Schema.NullOr(ReleaseRecipe),
+});
+
+export type ReleaseEntry = typeof ReleaseEntry.Type;
+
+/** The Releases page: each repository tracked for it, and the workers. */
+export const ReleasesPage = Schema.Struct({
+  repos: Schema.Array(ReleaseEntry),
+  workers: SkillsPage.fields.workers,
+});
+
+export type ReleasesPage = typeof ReleasesPage.Type;
+
+/**
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read,
  * `start-agent` opens an agent on one worker, which only that one claims,
  * `open-session` opens an agent's OpenCode session on the worker named, and
- * `ask-inbox` has that session ask you in the Plannotator Inbox there.
+ * `ask-inbox` has that session ask you in the Plannotator Inbox there, and
+ * `release-agent` opens an agent to prepare a release on the worker named.
  * The `skill-*` commands run as the `skill-change` job instead, `change` as
- * the `change` job, and `machine` names the worker a machine job's run is
- * for.
+ * the `change` job, `release-publish` as the `release-publish` job, and
+ * `machine` names the worker a machine job's run is for.
  */
 export const Command = Schema.Union([
   Schema.Struct({
@@ -740,6 +969,29 @@ export const Command = Schema.Union([
       Schema.isMinLength(1),
       Schema.isMaxLength(4000),
     ),
+  }),
+  /**
+   * Publish a repository's release: the comparison and tag you confirmed on
+   * the Releases page, which the worker checks are still current. `notes`
+   * go before GitHub's generated notes, or replace them.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("release-publish"),
+    repo: RepoName,
+    snapshot: Schema.String,
+    tag: Schema.String,
+    notes: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20000))),
+    notesMode: Schema.Literals(["prepend", "replace"]),
+  }),
+  /**
+   * Open an agent to prepare a repository's release, with its comparison as
+   * the brief, on the worker named, through its `attention.launch`.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("release-agent"),
+    worker: Schema.String,
+    repo: RepoName,
+    snapshot: Schema.String,
   }),
 ]);
 
@@ -918,11 +1170,11 @@ export type Health = typeof Health.Type;
 
 /** Something that needs you, pointing at where to deal with it. */
 export const NeedsYou = Schema.Struct({
-  kind: Schema.Literals(["needs", "skill-change"]),
+  kind: Schema.Literals(["needs", "skill-change", "release"]),
   title: Schema.String,
   /**
    * The dashboard page it's on, relative to the dashboard: `runs/<id>`,
-   * `jobs/<id>`, `skills`, or empty for the inbox.
+   * `jobs/<id>`, `skills`, `releases/<owner>/<name>`, or empty for the inbox.
    */
   path: Schema.String,
   at: Schema.Finite,
@@ -997,8 +1249,8 @@ export interface PermissionPrompts extends Schema.Schema.Type<
 /**
  * A part of the server's state that a change touched: `runs` covers runs and
  * jobs, `log` a run's log, `inbox` the inbox and tracked repositories,
- * `workers` what the workers last said they're set up with, and `theme` the
- * desktop's Omarchy theme.
+ * `workers` what the workers last said they're set up with, `theme` the
+ * desktop's Omarchy theme, and `releases` the Releases page.
  */
 export const Topic = Schema.Literals([
   "runs",
@@ -1008,6 +1260,7 @@ export const Topic = Schema.Literals([
   "skills",
   "workers",
   "theme",
+  "releases",
 ]);
 
 export type Topic = typeof Topic.Type;
