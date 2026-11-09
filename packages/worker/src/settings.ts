@@ -135,6 +135,111 @@ const Attention = Schema.Struct({
 export type Attention = typeof Attention.Type;
 
 /**
+ * A rule that sets the impact of the changes it matches, ahead of the
+ * policy's own. Fields are ANDed, the values in one ORed.
+ */
+const ReleaseRule = Schema.Struct({
+  /** Globs of repository paths, matching a renamed file's old path too. */
+  paths: Schema.optionalKey(Schema.Array(Schema.String)),
+  changeTypes: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["added", "modified", "deleted", "renamed"])),
+  ),
+  /** Dependency names, exactly. */
+  dependencies: Schema.optionalKey(Schema.Array(Schema.String)),
+  roles: Schema.optionalKey(Schema.Array(Domain.DependencyRole)),
+  /** Submodule paths. */
+  submodules: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Regular expressions for the subjects of the commits behind a change. */
+  subjects: Schema.optionalKey(Schema.Array(Schema.String)),
+  impact: Domain.Impact,
+  reason: Schema.String,
+});
+
+export type ReleaseRule = typeof ReleaseRule.Type;
+
+/** A JSON manifest's path, or a `setup.py` with a literal version. */
+const VersionFile = Schema.Union([
+  Schema.String,
+  Schema.Struct({
+    path: Schema.String,
+    format: Schema.Literal("python-setup"),
+  }),
+]);
+
+export type VersionFile = typeof VersionFile.Type;
+
+/** How the unreleased job reads one repository, and how it's released. */
+const ReleaseRepo = Schema.Struct({
+  /** The branch to compare with its last stable release; the default branch by default. */
+  branch: Schema.optionalKey(Schema.String),
+  /** What counts as shipped: `application` by default. */
+  policy: Schema.optionalKey(
+    Schema.Literals(["application", "oxlint-rules", "system-bridge"]),
+  ),
+  /** How releases are numbered: `semver` by default. */
+  versioning: Schema.optionalKey(Domain.Versioning),
+  /**
+   * For `fork` and `fork-base-js`: the upstream, as `owner/name`, whose
+   * plain SemVer tags (or merged `package.json`) give the base version, and
+   * the suffix the fork's own releases count under.
+   */
+  fork: Schema.optionalKey(
+    Schema.Struct({
+      upstream: Schema.String.check(
+        Schema.isPattern(
+          /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/,
+        ),
+      ),
+      suffix: Schema.String.check(
+        Schema.isPattern(/^(?![0-9]+$)[0-9A-Za-z-]+$/),
+      ),
+    }),
+  ),
+  /**
+   * Changed lines of shipped source above which a release is suggested as
+   * minor; off without it.
+   */
+  sourceMinorThreshold: Schema.optionalKey(Schema.Finite),
+  /** Globs left out of that count. */
+  sourceExcludes: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Rules applied before the policy's own, the first match winning. */
+  overrides: Schema.optionalKey(Schema.Array(ReleaseRule)),
+  /**
+   * How to publish from the Releases page: the version files that must
+   * carry the new version, the commands that prepare and check it, as
+   * argument lists, and the tracked files they may regenerate, such as a
+   * lockfile, which go in the version commit. Without it, the page can only
+   * hand a release to an agent.
+   */
+  publish: Schema.optionalKey(
+    Schema.Struct({
+      versionFiles: Schema.Array(VersionFile),
+      generatedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+      commands: Schema.Array(Schema.Array(Schema.String)),
+    }),
+  ),
+  /**
+   * Whether a suggested release needs you, through `notify`, and from what
+   * impact; on, from `patch`, by default.
+   */
+  notify: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      minimumImpact: Schema.optionalKey(Domain.Impact),
+    }),
+  ),
+}).check(
+  Schema.makeFilter((repo) =>
+    (repo.versioning === "fork" || repo.versioning === "fork-base-js") &&
+    repo.fork === undefined
+      ? `versioning ${repo.versioning} needs fork.upstream and fork.suffix`
+      : undefined,
+  ),
+);
+
+export type ReleaseRepo = typeof ReleaseRepo.Type;
+
+/**
  * How this worker tells you something new needs you, such as a heal that
  * asked, a parked job or a skill change waiting. `command` runs once for each,
  * with `{title}` and `{url}` (its dashboard page) replaced, such as
@@ -198,6 +303,15 @@ export const Settings = Schema.Struct({
     Schema.Struct({
       /** By repository, as `owner/name`. */
       repos: Schema.optionalKey(Schema.Record(Schema.String, BumpRepo)),
+    }),
+  ),
+  releases: Schema.optionalKey(
+    Schema.Struct({
+      /**
+       * By repository, as `owner/name`. A repository tracked for the
+       * unreleased job without one takes every default.
+       */
+      repos: Schema.optionalKey(Schema.Record(Schema.String, ReleaseRepo)),
     }),
   ),
   regression: Schema.optionalKey(

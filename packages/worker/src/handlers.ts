@@ -11,17 +11,21 @@ import { heal } from "./jobs/heal";
 import { labels } from "./jobs/labels";
 import { machine } from "./jobs/machine";
 import { notifications } from "./jobs/notifications";
+import { releasePublish } from "./jobs/release-publish";
 import { releases } from "./jobs/releases";
 import { skillChange } from "./jobs/skill-changes";
 import { skillConsumers, skillUpdates } from "./jobs/skills";
 import { stalledUpdates } from "./jobs/stalled-updates";
 import { summary } from "./jobs/summary";
 import { sync } from "./jobs/sync";
+import { unreleased } from "./jobs/unreleased";
 import { watch } from "./jobs/watch";
 import type { Handlers } from "./Worker";
 
 export const handlers: Handlers = {
   releases: () => releases(),
+  unreleased: () => unreleased(),
+  "release-publish": (_release, command) => releasePublish(command),
   watch: () => watch(),
   attention: () => attention(),
   labels: () => labels(),

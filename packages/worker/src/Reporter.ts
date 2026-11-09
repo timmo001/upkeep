@@ -123,6 +123,14 @@ export class Reporter extends Context.Service<
     readonly putSkills: (
       snapshot: Domain.SkillsSnapshot,
     ) => Effect.Effect<void, unknown>;
+    /** Keep a repository's release comparison, for the Releases page. */
+    readonly putRelease: (
+      scan: Domain.ReleaseScan,
+    ) => Effect.Effect<void, unknown>;
+    /** A repository as the Releases page shows it, with your choices. */
+    readonly release: (
+      repo: string,
+    ) => Effect.Effect<Domain.ReleaseEntry, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /**
@@ -235,6 +243,12 @@ export class Reporter extends Context.Service<
           skillCommand: (command) =>
             client.work.skillCommand({ payload: command }),
           putSkills: (snapshot) => client.work.putSkills({ payload: snapshot }),
+          putRelease: (scan) => client.work.putRelease({ payload: scan }),
+          release: (repo) => {
+            const [owner = "", name = ""] = repo.split("/");
+
+            return client.work.release({ params: { owner, name } });
+          },
         });
       }),
     );
@@ -308,6 +322,12 @@ export class Reporter extends Context.Service<
           RunLog.info(
             `Would send ${snapshot.skills.length} skills in ${snapshot.repo}`,
           ).pipe(Effect.provide(RunLog.RunLog.console)),
+        putRelease: (scan) =>
+          RunLog.info(
+            `Would send ${scan.repo}'s release comparison${scan.snapshot === null ? "" : `, ${scan.snapshot.findings.length} findings`}`,
+          ).pipe(Effect.provide(RunLog.RunLog.console)),
+        release: () =>
+          Effect.fail("Release comparisons are kept on the server"),
       }),
     );
 }
