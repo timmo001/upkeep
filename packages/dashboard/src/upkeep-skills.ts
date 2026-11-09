@@ -296,6 +296,8 @@ export class UpkeepSkills extends LitElement {
           ? nothing
           : html`<gw-code
               diff
+              wrap
+              storage-key="upkeep.skills.wrap"
               label=${`The change to ${change.title}`}
               .content=${change.patch}
             ></gw-code>`
