@@ -13,6 +13,7 @@ import { Api } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { Clock, Effect, Option, Path, Schema } from "effect";
 import { reason } from "../Failure";
+import * as Lane from "../Lane";
 import * as Regression from "../Regression";
 import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -268,6 +269,10 @@ export const across = Effect.fnUntraced(function* (
 
     // The agent runs in the background: nothing opens on the desktop, and one
     // that needs a person is picked up from its session, in the heal's record.
+    // A change frees its lane here; a heal's lane doesn't allow it, so the
+    // heal sessions setting still caps how many agents run.
+    yield* Lane.release;
+
     const outcome = yield* run(
       opencode,
       [

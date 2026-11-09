@@ -7,7 +7,7 @@
 import { Clock, Config, Effect, FileSystem, Path, Semaphore } from "effect";
 
 export interface State {
-  /** The jobs running now, one per lane. */
+  /** The jobs running now: one per lane, and the runs that freed theirs. */
   readonly running: ReadonlyArray<string>;
   /** How the last run ended, such as `bump succeeded`. */
   readonly last: { readonly job: string; readonly failed: boolean } | null;

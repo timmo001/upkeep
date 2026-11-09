@@ -10,6 +10,7 @@ import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
 import { Config, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 import { reason as why } from "../Failure";
+import * as Lane from "../Lane";
 import * as Names from "../Names";
 import { attention, pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -197,6 +198,9 @@ const work = Effect.fnUntraced(function* (
   minutes: number,
   options: Options,
 ) {
+  // The lane is free for the next run once the agent is going
+  yield* Lane.release;
+
   const outcome = yield* run(
     opencode,
     ["run", "--auto", "--session", session, "--title", title, text],

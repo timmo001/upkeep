@@ -48,6 +48,7 @@ const laneLabels = new Map<string, string>([
   ["repos", "Repositories lane: jobs that change repositories"],
   ["checks", "Checks lane: jobs that read repositories without pushing"],
   ["heal", "Heal lane: fixes for failed runs"],
+  ["agent", "Agent lane: agents you asked for, until each is going"],
   ["command", "Command lane: what the dashboard asks for"],
   ["machine", "Machine lane: keeping each worker's own machine current"],
 ]);

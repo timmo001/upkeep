@@ -11,6 +11,7 @@ import { Graphql, Repository, Workflow } from "@timmo001/effect-gh";
 import { Api, Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schema } from "effect";
 import { reason } from "../Failure";
+import * as Lane from "../Lane";
 import * as Names from "../Names";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -846,6 +847,9 @@ export const askInbox = Effect.fnUntraced(function* (
   yield* RunLog.info(
     `Asking session ${command.session} in ${directory} to ask you in the Inbox`,
   );
+
+  // The command lane is free for the next click once the agent is going
+  yield* Lane.release;
 
   yield* run(
     opencode,

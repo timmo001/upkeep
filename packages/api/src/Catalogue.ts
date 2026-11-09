@@ -177,7 +177,7 @@ export const skillChange: Job = {
     "Have an agent change a skill and hold its patch for your approval, or land, revise or start again on a held change",
   schedule: null,
   onRelease: false,
-  lane: "repos",
+  lane: "agent",
   tracked: false,
 };
 
@@ -188,7 +188,7 @@ export const change: Job = {
     "On request, have one agent make the same change across several repositories in one session, checking and pushing each",
   schedule: null,
   onRelease: false,
-  lane: "heal",
+  lane: "agent",
   tracked: false,
 };
 

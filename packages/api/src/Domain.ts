@@ -14,17 +14,19 @@ export type JobId = typeof JobId.Type;
 
 /**
  * Which of a worker's lanes runs a job. Each lane runs one run at a time, so
- * a job only waits behind the jobs in its own lane: `heal` for heals and
- * changes, which can run an agent for a long while, `quick` for short jobs
- * that read APIs or ask an agent for a few lines, `repos` for jobs that clone
- * and push to repositories, which take turns, `checks` for jobs that read
- * repositories or run their checks without pushing, so they don't wait
- * behind a long push, `command` for what the dashboard asks for, which a
+ * a job only waits behind the jobs in its own lane: `heal` for heals, which
+ * can run an agent for a long while, `agent` for the agents you ask for,
+ * such as a change, which free the lane once the agent is going, `quick` for
+ * short jobs that read APIs or ask an agent for a few lines, `repos` for jobs
+ * that clone and push to repositories, which take turns, `checks` for jobs
+ * that read repositories or run their checks without pushing, so they don't
+ * wait behind a long push, `command` for what the dashboard asks for, which a
  * worker checks for often so a click is answered in seconds, and `machine`
  * for jobs that update the worker's own machine.
  */
 export const Lane = Schema.Literals([
   "heal",
+  "agent",
   "quick",
   "repos",
   "checks",

@@ -12,9 +12,11 @@ import { Api, Catalogue, Client, Domain } from "@upkeep/api";
 import {
   Cause,
   Clock,
+  Deferred,
   Duration,
   Effect,
   Exit,
+  Fiber,
   Option,
   Predicate,
   Record,
@@ -27,6 +29,7 @@ import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
+import * as Lane from "./Lane";
 import * as Notify from "./Notify";
 import * as Prompts from "./Prompts";
 import * as RateLimits from "./RateLimits";
@@ -388,6 +391,8 @@ export const work = Effect.fn("Worker.work")(function* (
   const lane = (name: Domain.Lane, laneJobs: ReadonlyArray<string>) => {
     const command = name === "command";
     const wait = command ? commandPollInterval : pollInterval;
+    // Runs that hand their work to an agent free these lanes once it's going
+    const frees = command || name === "agent";
 
     const next = Effect.gen(function* () {
       yield* holdOff;
@@ -420,8 +425,8 @@ export const work = Effect.fn("Worker.work")(function* (
               ),
               Effect.andThen(command ? Effect.void : attention),
             ),
-          onSome: (claimed) =>
-            status.started(claimed.job).pipe(
+          onSome: (claimed) => {
+            const running = status.started(claimed.job).pipe(
               Effect.andThen(
                 execute(
                   Option.getOrElse(
@@ -436,7 +441,29 @@ export const work = Effect.fn("Worker.work")(function* (
                 ),
               ),
               Effect.flatMap((failed) => status.finished(claimed.job, failed)),
-            ),
+            );
+
+            if (!frees) return running;
+
+            // The run goes on beside the lane, which waits only until the run
+            // frees it or ends. It's the lane's own, so it stops with the worker.
+            return Effect.gen(function* () {
+              const freed = yield* Deferred.make<void>();
+
+              const fiber = yield* running.pipe(
+                Effect.provideService(
+                  Lane.Release,
+                  Deferred.succeed(freed, undefined).pipe(Effect.asVoid),
+                ),
+                Effect.forkChild,
+              );
+
+              yield* Effect.raceFirst(
+                Fiber.await(fiber),
+                Deferred.await(freed),
+              );
+            });
+          },
         }),
       ),
       Effect.catchTag("WorkerOutdated", (outdated) =>
