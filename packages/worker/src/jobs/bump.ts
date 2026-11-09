@@ -2,7 +2,9 @@
  * The bump job: roll a release out to the repositories that use it. Consumers
  * are found through code search, from workflow pins of the released
  * repository and from `package.json` dependencies on the packages it
- * publishes. Each one is checked out in a worktree, edited, checked and
+ * publishes, and by reading the tracked repositories' `package.json` files
+ * too, since code search can miss repositories or come back empty. Each one
+ * is checked out in a worktree, edited, checked and
  * pushed straight to its default branch, then its CI is watched. A consumer
  * that opts in to regression checks runs them before the push when the
  * release needs one, or has the update held for an agent. A consumer that
@@ -32,7 +34,7 @@ import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import * as RateLimits from "../RateLimits";
 import * as RunLog from "../RunLog";
-import { listed, pushed, summary, trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedRepos } from "../Reporter";
 import * as Regression from "../Regression";
 import * as Settings from "../settings";
 import { ConsumersFailed, HandedOff, skipped } from "../Worker";
@@ -158,6 +160,9 @@ const Manifest = Schema.Struct({
   version: Schema.optionalKey(Schema.String),
   private: Schema.optionalKey(Schema.Boolean),
   dependencies: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  devDependencies: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String),
+  ),
   peerDependencies: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.String),
   ),
@@ -297,6 +302,71 @@ const published = Effect.fnUntraced(function* (name: string, version: string) {
 });
 
 /**
+ * The tracked repositories whose `package.json` files, on their default
+ * branch, name each of the packages, read directly. Code search finds the
+ * same, but can miss repositories or return nothing at all, which would
+ * leave consumers on the old version without a word. A repository that
+ * can't be read is logged and left to code search.
+ */
+const manifestUsers = Effect.fnUntraced(function* (
+  repos: ReadonlyArray<string>,
+  names: ReadonlyArray<string>,
+) {
+  const wanted = new Set(names);
+  const users = new Map<string, Set<string>>();
+
+  yield* Effect.forEach(
+    repos,
+    (repo) =>
+      Effect.gen(function* () {
+        const { tree } = yield* Api.json(
+          {
+            endpoint: `repos/${repo}/git/trees/HEAD?recursive=1`,
+            method: "GET",
+          },
+          Tree,
+        );
+
+        const manifests = tree.filter(
+          (entry) =>
+            entry.type === "blob" &&
+            /(^|\/)package\.json$/.test(entry.path) &&
+            !entry.path.includes("node_modules/"),
+        );
+
+        for (const entry of manifests) {
+          const manifest = yield* Repository.readFile({
+            repo,
+            path: entry.path,
+          }).pipe(Effect.flatMap(decodeManifest));
+
+          const named = Object.keys({
+            ...manifest.dependencies,
+            ...manifest.devDependencies,
+            ...manifest.peerDependencies,
+            ...manifest.optionalDependencies,
+          });
+
+          for (const name of named) {
+            if (!wanted.has(name)) continue;
+
+            users.set(name, new Set([...(users.get(name) ?? []), repo]));
+          }
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          RunLog.warn(
+            `Couldn't read ${repo}'s package.json files, so only code search finds it: ${reason(cause)}`,
+          ),
+        ),
+      ),
+    { concurrency: 6, discard: true },
+  );
+
+  return users;
+});
+
+/**
  * Every consumer of the release and what changes in each, found before any
  * package reaches npm. Each package's wait for npm runs once, from when the
  * first consumer needs it, and is shared by the rest.
@@ -304,6 +374,7 @@ const published = Effect.fnUntraced(function* (name: string, version: string) {
 const discover = Effect.fnUntraced(function* (
   release: Domain.Release,
   sha: string,
+  tracked: ReadonlyArray<string>,
 ) {
   const [owner = ""] = release.repo.split("/");
   const consumers = new Map<string, Array<Edit>>();
@@ -336,13 +407,28 @@ const discover = Effect.fnUntraced(function* (
     Edit.Pins({ repo: release.repo, sha, tag: release.tag }),
   );
 
+  const read = yield* manifestUsers(
+    tracked,
+    toPublish.map(({ name }) => name),
+  );
+
   for (const { name, version } of toPublish) {
     // gh escapes quotes inside a quoted term, and code search can then report
     // matches but return no items, so the name goes in bare
-    add(
-      yield* search({ query: name, owner, filename: "package.json" }),
-      Edit.Dependency({ name, version }),
-    );
+    const searched = yield* search({
+      query: name,
+      owner,
+      filename: "package.json",
+    });
+
+    // Once each, ignoring case as GitHub does, by code search's spelling
+    const users = new Map<string, string>();
+
+    for (const repo of [...searched, ...(read.get(name) ?? [])]) {
+      if (!users.has(repo.toLowerCase())) users.set(repo.toLowerCase(), repo);
+    }
+
+    add([...users.values()], Edit.Dependency({ name, version }));
   }
 
   return {
@@ -1122,8 +1208,10 @@ export const bump = Effect.fnUntraced(function* (
     Commit,
   );
 
-  const tracked = yield* trackedFor(Catalogue.bump.id);
-  const found = yield* discover(release, sha);
+  const repos = yield* trackedRepos(Catalogue.bump.id);
+  const names = new Set(repos.map((repo) => repo.toLowerCase()));
+  const tracked = (repo: string) => names.has(repo.toLowerCase());
+  const found = yield* discover(release, sha, repos);
 
   const consumers = new Map(
     [...found.consumers].filter(([repo]) => tracked(repo)),

@@ -390,16 +390,24 @@ export const attention = Reporter.use((reporter) =>
 );
 
 /**
- * Whether a repository is tracked for a job, ignoring case as GitHub does.
- * Logs how many are, so a run that does nothing says why.
+ * The repositories tracked for a job. Logs how many there are, so a run that
+ * does nothing says why.
  */
-export const trackedFor = Effect.fnUntraced(function* (job: Domain.JobId) {
+export const trackedRepos = Effect.fnUntraced(function* (job: Domain.JobId) {
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos(job);
-  const names = new Set(repos.map((repo) => repo.toLowerCase()));
 
   yield* RunLog.info(
-    `${names.size} ${names.size === 1 ? "repository is" : "repositories are"} tracked for ${job}`,
+    `${repos.length} ${repos.length === 1 ? "repository is" : "repositories are"} tracked for ${job}`,
+  );
+
+  return repos;
+});
+
+/** Whether a repository is tracked for a job, ignoring case as GitHub does. */
+export const trackedFor = Effect.fnUntraced(function* (job: Domain.JobId) {
+  const names = new Set(
+    (yield* trackedRepos(job)).map((repo) => repo.toLowerCase()),
   );
 
   return (repo: string) => names.has(repo.toLowerCase());
