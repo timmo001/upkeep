@@ -141,7 +141,7 @@ const healFacts = (
   heal: Domain.Heal,
   worker: string | null,
   resumers: ReadonlyArray<string>,
-  attention: boolean,
+  attention: string | null,
 ) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
@@ -421,7 +421,7 @@ export class UpkeepRun extends LitElement {
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
-          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers(), current.attention)}
+          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers(), current.attention ? current.id : null)}
           ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${

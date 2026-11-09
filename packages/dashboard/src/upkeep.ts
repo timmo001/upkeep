@@ -276,6 +276,7 @@ export const askInbox = UpkeepApi.runtime.fn(
     readonly session: string;
     readonly directory: string;
     readonly title: string;
+    readonly run: string;
   }) =>
     UpkeepApi.use((client) =>
       client.attention.command({

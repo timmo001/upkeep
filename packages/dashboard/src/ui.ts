@@ -355,8 +355,9 @@ export const attentionBadge = html`<gw-badge
 /**
  * An agent's OpenCode session: the command that resumes it, with a button to
  * copy it, and one to open it in Herdr on each worker in `on`, the one it ran
- * on first. With `ask`, for a session that left work for you, one more has it
- * ask you in the Plannotator Inbox, resumed in the background where it ran.
+ * on first. With `ask`, the ID of a run that left work for you, one more has
+ * the session ask you in the Plannotator Inbox, resumed in the background where
+ * it ran, and dismiss that run once nothing waits on you.
  */
 export const agentSession = (
   open: {
@@ -366,7 +367,7 @@ export const agentSession = (
     readonly title: string;
   },
   on: ReadonlyArray<string> = [open.worker],
-  ask = false,
+  ask: string | null = null,
 ) => {
   const resume = `opencode2 --session ${open.session}`;
 
@@ -405,7 +406,7 @@ export const agentSession = (
         >`,
     )}
     ${
-      ask
+      ask !== null
         ? html`<gw-button
             size="xs"
             appearance="outlined"
@@ -414,7 +415,7 @@ export const agentSession = (
             @click=${(event: Event) => {
               const button = event.currentTarget;
 
-              registry.set(askInbox, open);
+              registry.set(askInbox, { ...open, run: ask });
 
               if (button instanceof HTMLElement)
                 button.setAttribute("icon", phCheck);

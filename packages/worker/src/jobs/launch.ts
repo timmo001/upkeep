@@ -672,12 +672,19 @@ export const resume = Effect.fnUntraced(function* (
 });
 
 /** What an agent is told when you ask it to put its questions in the Inbox. */
-const askInboxPrompt = [
-  "This work was left for a person, and they've asked you to put what you need from them in the Plannotator Inbox.",
-  "Load the `plannotator` skill first, and any other skill it points you to for asking questions.",
-  "Then send one message with the `plannotator_inbox` tool: where the work stands, what you tried, and each decision only they can make as a `:::question` block with your recommendation.",
-  "End your turn once it's sent. Their answer comes back to this session, and you carry on from there.",
-].join(" ");
+const askInboxPrompt = (run: string | undefined) =>
+  [
+    "This work was left for a person, and they've asked you to put what you need from them in the Plannotator Inbox.",
+    "Load the `plannotator` skill first, and any other skill it points you to for asking questions.",
+    "Then send one message with the `plannotator_inbox` tool: where the work stands, what you tried, and each decision only they can make as a `:::question` block with your recommendation.",
+    "End your turn once it's sent. Their answer comes back to this session, and you carry on from there.",
+    ...(run === undefined
+      ? []
+      : [
+          `Upkeep shows run ${run} as needing them until it's dismissed.`,
+          `Once the work is done and nothing waits on them any more, dismiss it with Upkeep's \`dismiss\` tool or \`upkeep dismiss ${run}\`, and say so in the Inbox thread.`,
+        ]),
+  ].join(" ");
 
 /** How long the agent has to send its message. */
 const askInboxMinutes = 10;
@@ -705,7 +712,13 @@ export const askInbox = Effect.fnUntraced(function* (
   yield* run(
     opencode,
     // Nobody is there to answer a permission prompt; denied ones stay denied
-    ["run", "--auto", "--session", command.session, askInboxPrompt],
+    [
+      "run",
+      "--auto",
+      "--session",
+      command.session,
+      askInboxPrompt(command.run),
+    ],
     { cwd: directory, trusted: "" },
   ).pipe(
     Effect.timeoutOrElse({

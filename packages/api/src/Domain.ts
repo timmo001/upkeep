@@ -676,7 +676,8 @@ export const Command = Schema.Union([
   /**
    * Resume an agent's session that left work for you in the background, on
    * the worker named, telling it to ask you what it needs in the Plannotator
-   * Inbox. The session is found as for `open-session`.
+   * Inbox. The session is found as for `open-session`. `run` is the run
+   * that needs you, which the agent dismisses once nothing waits on you.
    */
   Schema.Struct({
     kind: Schema.Literal("ask-inbox"),
@@ -684,6 +685,7 @@ export const Command = Schema.Union([
     session: Schema.String,
     directory: Schema.String,
     title: Schema.String,
+    run: Schema.optionalKey(Schema.String),
   }),
   /**
    * Have an agent work on a skill in its own checkout and hold what it
