@@ -107,13 +107,37 @@ export const desktopTheme = UpkeepApi.query("theme", "get", {
   reactivityKeys: themeKey,
 });
 
+/** How many runs each list, and each older page of it, holds. */
+export const runsPage = 50;
+
 /** The latest runs, of every job or one. */
 export const runs = Atom.family((job: string) =>
   UpkeepApi.query("runs", "list", {
-    query: job === "" ? {} : { job },
+    query: job === "" ? { limit: runsPage } : { job, limit: runsPage },
     reactivityKeys: runsKey,
   }),
 );
+
+/**
+ * A page of older runs, of every job or one, queued before the run `before`,
+ * loaded as a list of runs scrolls. Keyed by both, as a family takes one key
+ * (see `olderRunsKey`). Not refreshed by the server's changes: runs this old have
+ * finished, and the latest page keeps up with the rest.
+ */
+export const olderRuns = Atom.family((key: string) => {
+  const [job = "", before = ""] = key.split("\n");
+
+  return UpkeepApi.query("runs", "list", {
+    query:
+      job === ""
+        ? { before, limit: runsPage }
+        : { job, before, limit: runsPage },
+  });
+});
+
+/** The key `olderRuns` takes: the job and run ids, which hold no line breaks. */
+export const olderRunsKey = (job: string, before: string) =>
+  `${job}\n${before}`;
 
 /** The tracked repositories, with their titles and jobs. */
 export const repos = UpkeepApi.query("repos", "list", {

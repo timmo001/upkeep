@@ -4,7 +4,8 @@
  * it, with its log. Beside the table's search, a Filters button opens a
  * sheet of filters, as the inbox's does, each on shown as a chip that takes
  * it off. The filters are kept with the table's own view state, in
- * groundwork's shared store.
+ * groundwork's shared store. Older runs load a page at a time as the table
+ * scrolls to its end.
  */
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
@@ -17,7 +18,7 @@ import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { ref } from "lit/directives/ref.js";
-import { always, AtomController } from "./AtomController.ts";
+import { always, AtomController, registry } from "./AtomController.ts";
 import {
   phBookBookmark,
   phBriefcase,
@@ -42,7 +43,15 @@ import {
   view,
 } from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
-import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
+import {
+  jobHref,
+  jobs,
+  olderRuns,
+  olderRunsKey,
+  runHref,
+  runs,
+  runsPage,
+} from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
@@ -206,6 +215,94 @@ export class UpkeepRuns extends LitElement {
 
   readonly #jobs = new AtomController(this, () => jobs, always);
 
+  /** The runs each older page was loaded before, oldest page last. */
+  #cursors: string[] = [];
+
+  /** Each older page's subscription, which keeps it loaded. */
+  #pages: Array<() => void> = [];
+
+  /**
+   * Every run shown once older pages are loaded, by id, so a run the latest
+   * page drops as new runs arrive stays rather than leaving a gap above the
+   * older pages.
+   */
+  #kept = new Map<string, Domain.Run>();
+
+  /** Forgets the older pages, for another job's runs or when it's gone. */
+  #resetPages() {
+    for (const unsubscribe of this.#pages) unsubscribe();
+
+    this.#pages = [];
+    this.#cursors = [];
+    this.#kept = new Map();
+  }
+
+  override willUpdate(changed: Map<PropertyKey, unknown>) {
+    if (changed.has("job")) this.#resetPages();
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#resetPages();
+  }
+
+  /** The older pages' runs loaded so far, oldest page last. */
+  #older() {
+    return this.#cursors.flatMap((before) => {
+      const page = registry.get(olderRuns(olderRunsKey(this.job, before)));
+
+      return AsyncResult.isSuccess(page) ? page.value : [];
+    });
+  }
+
+  /**
+   * The latest runs with the older pages under them, newest first, as the
+   * server orders them.
+   */
+  #merged(latest: ReadonlyArray<Domain.Run>) {
+    if (this.#cursors.length === 0) return latest;
+
+    for (const run of [...this.#older(), ...latest]) {
+      this.#kept.set(run.id, run);
+    }
+
+    return [...this.#kept.values()].toSorted(
+      (a, b) =>
+        b.queuedAt - a.queuedAt || Number(a.id < b.id) - Number(a.id > b.id),
+    );
+  }
+
+  /**
+   * Whether there may be older runs to load: the last page came back full,
+   * or is still loading. A page that failed stops the loading.
+   */
+  #hasMore(latest: ReadonlyArray<Domain.Run>) {
+    const last = this.#cursors.at(-1);
+
+    if (last === undefined) return latest.length >= runsPage;
+
+    const page = registry.get(olderRuns(olderRunsKey(this.job, last)));
+
+    if (AsyncResult.isSuccess(page)) return page.value.length >= runsPage;
+
+    return !AsyncResult.isFailure(page);
+  }
+
+  /** Loads the page of runs before the oldest shown, once. */
+  #loadOlder(all: ReadonlyArray<Domain.Run>) {
+    const oldest = all.at(-1);
+
+    if (oldest === undefined || this.#cursors.includes(oldest.id)) return;
+
+    this.#cursors = [...this.#cursors, oldest.id];
+    this.#pages.push(
+      registry.subscribe(olderRuns(olderRunsKey(this.job, oldest.id)), () =>
+        this.requestUpdate(),
+      ),
+    );
+    this.requestUpdate();
+  }
+
   #laneOf(job: string) {
     const known = AsyncResult.isSuccess(this.#jobs.value)
       ? this.#jobs.value.value
@@ -329,8 +426,11 @@ export class UpkeepRuns extends LitElement {
       </gw-sheet>`;
   }
 
-  /** The runs as a table, newest first, grouped by the day each was queued. */
-  #table(all: ReadonlyArray<Domain.Run>) {
+  /**
+   * The runs as a table, newest first, grouped by the day each was queued,
+   * with skeleton rows and the next page loading at its end while `more`.
+   */
+  #table(all: ReadonlyArray<Domain.Run>, more: boolean) {
     const kept = keptAt(this.#storageKey);
 
     const filters = runFilters.map((filter) => {
@@ -480,6 +580,8 @@ export class UpkeepRuns extends LitElement {
       search="always"
       search-label="Search runs"
       empty-label="No runs match the filters"
+      .more=${more}
+      @more=${() => this.#loadOlder(all)}
       .columns=${columns}
       .rows=${list.map((run) => ({
         id: run.id,
@@ -504,11 +606,13 @@ export class UpkeepRuns extends LitElement {
   }
 
   override render() {
-    return view(this.#runs.value, (all) =>
-      all.length === 0
+    return view(this.#runs.value, (latest) => {
+      const all = this.#merged(latest);
+
+      return all.length === 0
         ? empty(phClockCounterClockwise, "No runs yet.")
-        : this.#table(all),
-    );
+        : this.#table(all, this.#hasMore(latest));
+    });
   }
 }
 
