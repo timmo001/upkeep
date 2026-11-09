@@ -2,20 +2,19 @@
  * The bump job: roll a release out to the repositories that use it. Consumers
  * are found through code search, from workflow pins of the released
  * repository and from `package.json` dependencies on the packages it
- * publishes. Each one is cloned, edited, checked and pushed straight to its
- * default branch, then its CI is watched. A consumer that opts in to
- * regression checks runs them before the push when the release needs one, or
- * has the update held for an agent. A consumer that fails is logged and
- * the rest carry on; the run fails at the end, naming them. Consumers start as
- * soon as what they need is published, and only the work on their clones is
- * limited to four at a time, so a slow CI run doesn't hold up the next push.
+ * publishes. Each one is checked out in a worktree, edited, checked and
+ * pushed straight to its default branch, then its CI is watched. A consumer
+ * that opts in to regression checks runs them before the push when the
+ * release needs one, or has the update held for an agent. A consumer that
+ * fails is logged and the rest carry on; the run fails at the end, naming
+ * them. Consumers start as soon as what they need is published, and only the
+ * work on their worktrees is limited to four at a time, so a slow CI run
+ * doesn't hold up the next push.
  */
 import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
-  ByteSize,
   Cache,
-  Clock,
   Config,
   Data,
   Effect,
@@ -37,6 +36,7 @@ import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as Regression from "../Regression";
 import * as Settings from "../settings";
 import { ConsumersFailed, HandedOff, skipped } from "../Worker";
+import * as Worktrees from "../Worktrees";
 
 // Other jobs and the tests still reach these through the bump job
 export { failedOutput, run } from "../Command";
@@ -376,116 +376,6 @@ const ready = <R>(
         : Effect.succeed(true),
     { concurrency: "unbounded" },
   );
-
-export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
-  Config.orElse(() =>
-    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
-  ),
-  Config.map((root) => `${root}/upkeep/bump`),
-);
-
-/**
- * Lock files an interrupted Git command leaves behind, which stop every
- * command after it in that repository.
- */
-const gitLocks = new Set([
-  "index.lock",
-  "HEAD.lock",
-  "config.lock",
-  "packed-refs.lock",
-  "shallow.lock",
-]);
-
-/** How old a lock is before it's taken as left by a command that died. */
-const staleLockMillis = 60 * 60 * 1000;
-
-/**
- * Remove stale lock files from a checkout's Git directory and its submodules'
- * under `modules/`, so a command interrupted once, such as by a restart,
- * doesn't fail every run after it. Only empty ones over an hour old go: a
- * live command holds one for seconds. Clearing never fails the checkout.
- */
-const clearStaleLocks = Effect.fnUntraced(
-  function* (gitDir: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const now = yield* Clock.currentTimeMillis;
-    const pending = [gitDir];
-
-    for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
-      const names = yield* fs.readDirectory(dir);
-      // Between modules/ and a submodule's Git directory are the folders of
-      // its path, which hold nothing else
-      const isGitDir = names.includes("HEAD");
-
-      for (const name of names) {
-        const file = path.join(dir, name);
-
-        if (isGitDir && gitLocks.has(name)) {
-          const { mtime, size } = yield* fs.stat(file);
-          const changed = Option.getOrUndefined(mtime)?.getTime() ?? now;
-
-          if (
-            ByteSize.toBigInt(size) === 0n &&
-            now - changed > staleLockMillis
-          ) {
-            yield* fs.remove(file);
-            yield* RunLog.warn(`Removed a stale Git lock, ${file}`);
-          }
-        } else if (
-          (isGitDir && name === "modules") ||
-          (!isGitDir && (yield* fs.stat(file)).type === "Directory")
-        )
-          pending.push(file);
-      }
-    }
-  },
-  Effect.catchCause((cause) =>
-    RunLog.warn(`Couldn't clear stale Git locks: ${reason(cause)}`),
-  ),
-);
-
-/**
- * A clean checkout of the default branch, reusing the last one, with its
- * submodules when it has any. Stale Git locks in a reused one are cleared
- * first.
- */
-export const checkout = Effect.fnUntraced(function* (
-  repo: string,
-  branch: string,
-  directory: string,
-  trusted: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const options = { cwd: directory, trusted };
-
-  if (yield* fs.exists(directory)) {
-    yield* clearStaleLocks(path.join(directory, ".git"));
-    yield* run("git", ["fetch", "--quiet", "origin", branch], options);
-    yield* run(
-      "git",
-      ["checkout", "--quiet", "--force", "-B", branch, `origin/${branch}`],
-      options,
-    );
-    // The second -f also removes untracked nested repositories, such as a
-    // submodule the branch has since removed, which a job's `git add --all`
-    // would otherwise commit back as a gitlink
-    yield* run("git", ["clean", "--quiet", "-ffdx"], options);
-  } else
-    yield* Repository.clone({
-      repository: repo,
-      directory,
-      gitArgs: ["--quiet", "--filter=blob:none"],
-    });
-
-  if (yield* fs.exists(path.join(directory, ".gitmodules")))
-    yield* run(
-      "git",
-      ["submodule", "update", "--quiet", "--init", "--recursive", "--force"],
-      options,
-    );
-});
 
 /**
  * Each lockfile, the package manager that writes it and its install. CI is
@@ -913,8 +803,8 @@ interface BumpContext {
   readonly decide: (
     change: Moved | undefined,
   ) => Effect.Effect<Option.Option<Regression.Decided>>;
-  /** Where clones live, which mise is told to trust. */
-  readonly root: string;
+  /** The run's worktrees, and the path mise is told to trust. */
+  readonly worktrees: Worktrees.Run;
   readonly settings: Settings.Settings;
   readonly dryRun: boolean;
   /** Holds one of the four slots for local work: clone, install, check, push. */
@@ -1100,10 +990,9 @@ const prepare = Effect.fnUntraced(function* (
   }
 
   const branch = info.default_branch;
-  const directory = path.join(context.root, repo);
-  const options = { cwd: directory, trusted: context.root };
-
-  yield* checkout(repo, branch, directory, context.root);
+  const { trusted } = context.worktrees;
+  const directory = yield* context.worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted };
 
   const changed = new Set<string>();
   const manifests: Array<string> = [];
@@ -1152,7 +1041,7 @@ const prepare = Effect.fnUntraced(function* (
   const mise = yield* usesMise(directory);
 
   for (const lockfile of yield* install(directory, manifests, {
-    trusted: context.root,
+    trusted,
     mise,
   })) {
     changed.add(lockfile);
@@ -1223,7 +1112,6 @@ export const bump = Effect.fnUntraced(function* (
   if (release === null) return yield* new NoRelease();
 
   const settings = yield* Settings.load();
-  const root = yield* cacheRoot;
 
   const dryRun = yield* Config.Boolean("UPKEEP_BUMP_DRY_RUN").pipe(
     Config.withDefault(false),
@@ -1281,7 +1169,7 @@ export const bump = Effect.fnUntraced(function* (
         decisions,
         `${change?.from ?? "unknown"}\u0000${change?.to ?? release.tag}`,
       ),
-    root,
+    worktrees: yield* Worktrees.forRun("bump"),
     settings,
     dryRun,
     slot: (effect) => slots.withPermit(effect),
@@ -1361,4 +1249,4 @@ export const bump = Effect.fnUntraced(function* (
 
   if (held.length > 0 && !dryRun)
     return HandedOff.make({ repos: held.toSorted() });
-});
+}, Effect.scoped);

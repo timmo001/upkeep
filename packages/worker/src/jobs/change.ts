@@ -67,6 +67,7 @@ export const change = Effect.fnUntraced(function* (
   yield* RunLog.info(`Changing ${command.repos.join(", ")}: ${command.prompt}`);
 
   const result = yield* across(
+    "change",
     command.repos,
     agent,
     "change",

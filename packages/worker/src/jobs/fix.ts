@@ -1,30 +1,27 @@
 /**
- * Agents over checkouts. A heal's fix: check out the target, create an
- * OpenCode session with the chosen model and variant through OpenCode's API,
- * checking both, and run it headless with `opencode run` on the failed run,
- * so nothing opens on the desktop. Several repositories, a heal's consumers
- * or a change you asked for, are checked out side by side and worked on in
- * the one session, each checked and pushed on its own. The agent has the
- * session limit, per repository up to four, to finish; whatever it pushed is
- * recorded as the run's commits and what it said last as its summary.
+ * Agents over checkouts. A heal's fix: check out the target in a worktree of
+ * the agent's own, create an OpenCode session with the chosen model and
+ * variant through OpenCode's API, checking both, and run it headless with
+ * `opencode run` on the failed run, so nothing opens on the desktop. Several
+ * repositories, a heal's consumers or a change you asked for, are checked
+ * out side by side and worked on in the one session, each checked and pushed
+ * on its own. The agent has the session limit, per repository up to four, to
+ * finish; whatever it pushed is recorded as the run's commits and what it
+ * said last as its summary.
  */
 import { Api } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
-import { Config, Effect, FileSystem, Option, Schema, Semaphore } from "effect";
+import { Clock, Effect, Option, Path, Schema } from "effect";
+import { reason } from "../Failure";
 import * as Regression from "../Regression";
+import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
+import * as Worktrees from "../Worktrees";
 import { createSession, lastWords, recordCommits } from "./agent";
-import { checkout, run, usesMise } from "./bump";
+import { run, usesMise } from "./bump";
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
-
-const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
-  Config.orElse(() =>
-    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
-  ),
-  Config.map((root) => `${root}/upkeep/heal`),
-);
 
 /** A repository the agent works in, and where it's checked out. */
 export interface Checkout {
@@ -32,30 +29,6 @@ export interface Checkout {
   readonly directory: string;
   readonly branch: string;
 }
-
-// Heals run side by side and share one checkout per repository, so a session
-// holds its repositories' locks until it's done with them
-const locks = new Map<string, Semaphore.Semaphore>();
-
-const lockOf = (repo: string) => {
-  const found = locks.get(repo);
-
-  if (found !== undefined) return found;
-
-  const lock = Semaphore.makeUnsafe(1);
-  locks.set(repo, lock);
-
-  return lock;
-};
-
-/** Run `effect` holding each repository's lock, taken in order so two never wait on each other. */
-const holding = <A, E, R>(
-  repos: ReadonlyArray<string>,
-  effect: Effect.Effect<A, E, R>,
-) =>
-  [...new Set(repos.map((repo) => repo.toLowerCase()))]
-    .sort()
-    .reduceRight((inner, repo) => lockOf(repo).withPermit(inner), effect);
 
 /** What the session records as it goes: a heal's, or nothing. */
 type Recorder = (update: {
@@ -214,65 +187,76 @@ const tip = (
   );
 
 /**
- * Check out each repository side by side, or Upkeep's own for none, and run
- * one agent session over them all with the prompt `ask` writes for them.
- * Returns what happened, and records the session and any commit as it goes.
+ * Check out each repository side by side in worktrees of the agent's own, or
+ * Upkeep's for none, and run one agent session over them all with the prompt
+ * `ask` writes for them. Returns what happened, and records the session and
+ * any commit as it goes. The worktrees go when the agent is done with them,
+ * and are kept while it needs you; `prune` removes them once it doesn't.
  */
-export const across = Effect.fnUntraced(
-  function* (
-    repos: ReadonlyArray<string>,
-    agent: Settings.Agent,
-    title: string,
-    ask: (checkouts: ReadonlyArray<Checkout>, minutes: number) => string,
-    record: Recorder,
-  ) {
-    const fs = yield* FileSystem.FileSystem;
-    const settings = (yield* Settings.load()).heal ?? {};
-    const opencode = settings.opencode ?? "opencode2";
-    const root = yield* cacheRoot;
+export const across = Effect.fnUntraced(function* (
+  kind: string,
+  repos: ReadonlyArray<string>,
+  agent: Settings.Agent,
+  title: string,
+  ask: (checkouts: ReadonlyArray<Checkout>, minutes: number) => string,
+  record: Recorder,
+) {
+  const path = yield* Path.Path;
+  const settings = (yield* Settings.load()).heal ?? {};
+  const opencode = settings.opencode ?? "opencode2";
+  const trusted = yield* Worktrees.root;
 
-    const several = repos.length > 1;
+  const targets =
+    repos.length === 0 ? [settings.repo ?? "timmo001/upkeep"] : repos;
 
-    const minutes =
-      (settings.sessionMinutes ?? 30) * Math.min(Math.max(repos.length, 1), 4);
+  const several = targets.length > 1;
+  const worktrees = yield* Worktrees.forAgent(kind, several);
+  const made: Array<string> = [];
 
-    yield* fs.makeDirectory(root, { recursive: true });
+  const minutes =
+    (settings.sessionMinutes ?? 30) * Math.min(Math.max(repos.length, 1), 4);
 
+  const result = yield* Effect.gen(function* () {
     const checkouts = yield* Effect.forEach(
-      repos.length === 0 ? [settings.repo ?? "timmo001/upkeep"] : repos,
+      targets,
       Effect.fnUntraced(function* (repo) {
         const { default_branch: branch } = yield* Api.json(
           { endpoint: `repos/${repo}`, method: "GET" },
           RepositoryInfo,
         );
 
-        const directory = `${root}/${repo}`;
+        const directory = yield* Worktrees.checkout(
+          repo,
+          branch,
+          worktrees.place(repo),
+        );
 
-        yield* checkout(repo, branch, directory, root);
+        made.push(directory);
 
         // The agent's shell runs in OpenCode's service, which would ask before
-        // trusting a new checkout's mise config. Trusting it needs the cache
-        // root left out of the trusted paths, or mise has nothing to do.
+        // trusting a new worktree's mise config. Trusting it needs the
+        // worktrees left out of the trusted paths, or mise has nothing to do.
         if (yield* usesMise(directory))
           yield* run("mise", ["trust"], { cwd: directory, trusted: "" });
 
-        const before = yield* tip(branch, { cwd: directory, trusted: root });
+        const before = yield* tip(branch, { cwd: directory, trusted });
 
         return { repo, directory, branch, before };
       }),
     );
 
-    // Several checkouts are worked on from the folder holding them all: their
-    // owner's, or the cache root's when the owners differ
+    // Several checkouts are worked on from the folder holding them all, or
+    // their owner's in it when they share one
     const owners = new Set(checkouts.map(({ repo }) => repo.split("/")[0]));
+    const folder = worktrees.folder ?? trusted;
 
     const directory = several
       ? owners.size === 1
-        ? `${root}/${[...owners][0] ?? ""}`
-        : root
-      : (checkouts[0]?.directory ?? root);
+        ? path.join(folder, [...owners][0] ?? "")
+        : folder
+      : (checkouts[0]?.directory ?? folder);
 
-    const options = { cwd: directory, trusted: root };
+    const options = { cwd: directory, trusted };
     const session = yield* createSession(opencode, agent, options);
 
     yield* record({ session, directory });
@@ -311,7 +295,7 @@ export const across = Effect.fnUntraced(
     const pushed: Array<string> = [];
 
     for (const { repo, directory: cwd, branch, before } of checkouts) {
-      const after = yield* tip(branch, { cwd, trusted: root });
+      const after = yield* tip(branch, { cwd, trusted });
 
       if (after === "" || after === before) continue;
 
@@ -367,14 +351,60 @@ export const across = Effect.fnUntraced(
           said,
         };
     }
-  },
-  (effect, repos) =>
-    Settings.load().pipe(
-      Effect.map((settings) => settings.heal?.repo ?? "timmo001/upkeep"),
-      Effect.flatMap((own) =>
-        holding(repos.length === 0 ? [own] : repos, effect),
-      ),
+  }).pipe(
+    Effect.onError(() =>
+      Effect.forEach(made, (directory) => Worktrees.discard(directory), {
+        discard: true,
+      }),
     ),
+  );
+
+  if (!result.attention) yield* Worktrees.discard(result.directory);
+
+  return result;
+});
+
+/** How long an agent's worktrees no heal still needs are kept, in case you look. */
+const keptMillis = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Remove the worktrees of heal and change agents that are done with them:
+ * a heal's once it no longer needs you, and any other once it's a week old.
+ * One still running, or left for you, is kept.
+ */
+export const prune = Effect.fnUntraced(
+  function* () {
+    const reporter = yield* Reporter;
+    const now = yield* Clock.currentTimeMillis;
+
+    const worked = (yield* reporter.heals(now - keptMillis)).flatMap((run) =>
+      run.heal?.directory === null || run.heal?.directory === undefined
+        ? []
+        : [
+            {
+              directory: run.heal.directory,
+              needed: run.finishedAt === null || run.attention,
+            },
+          ],
+    );
+
+    for (const kind of ["heal", "change"])
+      for (const { directory, changed } of yield* Worktrees.agents(kind)) {
+        const heals = worked.filter(
+          (heal) =>
+            heal.directory === directory ||
+            heal.directory.startsWith(`${directory}/`),
+        );
+
+        if (heals.some((heal) => heal.needed)) continue;
+
+        if (heals.length > 0 || now - changed > keptMillis)
+          yield* Worktrees.discard(directory);
+      }
+  },
+  Effect.catchCause((cause) =>
+    RunLog.warn(`Couldn't remove agents' old worktrees: ${reason(cause)}`),
+  ),
 );
 
 /**
@@ -410,6 +440,7 @@ export const fix = (
   record: Recorder,
 ) =>
   across(
+    "heal",
     Domain.targetRepos(heal.target),
     agent,
     failed.job,

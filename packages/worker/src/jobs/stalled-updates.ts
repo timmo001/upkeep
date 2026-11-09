@@ -1,7 +1,7 @@
 /**
  * The stalled-updates job: take over dependency update pull requests, from
  * Renovate or Dependabot, that stalled because their checks failed. Each one
- * is squashed onto a clean checkout of the default branch, checked, pushed
+ * is squashed onto a clean worktree of the default branch, checked, pushed
  * straight to it and closed with a link to the commit, then CI is watched.
  * It reads no updater config, only the pull request's diff, so it works
  * whatever the repository's config. Only repositories tracked for it are
@@ -11,23 +11,15 @@
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Config, Effect, Path, Schema } from "effect";
+import { Config, Effect, Schema } from "effect";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import { attention, listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
-import {
-  cacheRoot,
-  check,
-  checkout,
-  commitAndPush,
-  install,
-  run,
-  usesMise,
-  watch,
-} from "./bump";
+import * as Worktrees from "../Worktrees";
+import { check, commitAndPush, install, run, usesMise, watch } from "./bump";
 
 /** The updaters whose pull requests are taken over, by search author. */
 const updaters = ["app/renovate", "app/dependabot"];
@@ -151,7 +143,7 @@ const open = Effect.fnUntraced(function* () {
 });
 
 interface TakeoverContext {
-  readonly root: string;
+  readonly worktrees: Worktrees.Run;
   readonly settings: Settings.Settings;
   readonly dryRun: boolean;
 }
@@ -178,17 +170,17 @@ const takeOver = Effect.fnUntraced(function* (
   pr: PullRequest,
   context: TakeoverContext,
 ) {
-  const path = yield* Path.Path;
   const repo = pr.base.repo.full_name;
   const branch = pr.base.ref;
-  const directory = path.join(context.root, repo);
-  const options = { cwd: directory, trusted: context.root };
+  const { trusted } = context.worktrees;
 
   yield* RunLog.info(
     `${repo}: taking over "${pr.title}" ${pr.html_url} from ${updaterOf(pr)}, whose checks failed`,
   );
 
-  yield* checkout(repo, branch, directory, context.root);
+  const directory = yield* context.worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted };
+
   yield* run("git", ["fetch", "--quiet", "origin", pr.head.sha], options);
 
   // GitHub can report a pull request as mergeable before it has checked, so a
@@ -239,7 +231,7 @@ const takeOver = Effect.fnUntraced(function* (
   yield* install(
     directory,
     ["package.json", ...files.filter((file) => file.endsWith("package.json"))],
-    { trusted: context.root, mise },
+    { trusted, mise },
   );
   yield* run("git", ["add", "--update"], options);
 
@@ -298,8 +290,7 @@ const takeOver = Effect.fnUntraced(function* (
  */
 export const stalledUpdates = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
-  const path = yield* Path.Path;
-  const root = path.join(path.dirname(yield* cacheRoot), "stalled-updates");
+  const worktrees = yield* Worktrees.forRun("stalled-updates");
 
   const dryRun = yield* Config.Boolean("UPKEEP_STALLED_UPDATES_DRY_RUN").pipe(
     Config.withDefault(false),
@@ -346,9 +337,11 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
   yield* Effect.forEach(
     [...byRepo].toSorted(([a], [b]) => a.localeCompare(b)),
     ([repo, prs]) =>
-      Effect.forEach(prs, (pr) => takeOver(pr, { root, settings, dryRun }), {
-        discard: true,
-      }).pipe(
+      Effect.forEach(
+        prs,
+        (pr) => takeOver(pr, { worktrees, settings, dryRun }),
+        { discard: true },
+      ).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
             Effect.andThen(Effect.sync(() => failed.push(repo))),
@@ -378,4 +371,4 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
     action: "take over stalled updates in",
     repos: failed.toSorted(),
   });
-});
+}, Effect.scoped);

@@ -18,12 +18,8 @@ import * as GitHubApp from "../GitHubApp";
 import { pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
-import {
-  cacheRoot as bumpCacheRoot,
-  checkout,
-  commitAndPush,
-  run,
-} from "./bump";
+import * as Worktrees from "../Worktrees";
+import { commitAndPush, run } from "./bump";
 import { open, prune } from "./skill-changes";
 import { other as otherSkills, send, shared } from "./skill-snapshots";
 
@@ -85,12 +81,11 @@ export class SkillUpdateProblems extends Schema.TaggedError<SkillUpdateProblems>
 type Start = Extract<Domain.Command, { readonly kind: "skill-start" }>;
 
 /**
- * A clean checkout of the signed-in account's skills repository with
- * `skill-maintenance` built in it. Returns the checkout and the binary.
+ * A clean worktree of the signed-in account's skills repository with
+ * `skill-maintenance` built in it. Returns the worktree and the binary.
  */
-const build = Effect.fnUntraced(function* () {
+const build = Effect.fnUntraced(function* (worktrees: Worktrees.Run) {
   const path = yield* Path.Path;
-  const root = path.join(path.dirname(yield* bumpCacheRoot), "skills");
   const login = yield* GitHubApp.login;
   const repo = `${login}/skills`;
 
@@ -99,10 +94,9 @@ const build = Effect.fnUntraced(function* () {
     RepositoryInfo,
   );
 
-  const directory = path.join(root, repo);
-  const options = { cwd: directory, trusted: root };
+  const directory = yield* worktrees.checkout(repo, info.default_branch);
+  const options = { cwd: directory, trusted: worktrees.trusted };
 
-  yield* checkout(repo, info.default_branch, directory, root);
   yield* run(
     "mise",
     ["exec", "--", "bun", "install", "--frozen-lockfile"],
@@ -115,7 +109,8 @@ const build = Effect.fnUntraced(function* () {
     repo,
     branch: info.default_branch,
     directory,
-    root,
+    worktrees,
+    trusted: worktrees.trusted,
     binary: path.join(directory, "dist", "skill-maintenance"),
   };
 });
@@ -159,7 +154,7 @@ const maintain = Effect.fnUntraced(function* (
           stdin: "ignore",
           extendEnv: true,
           env: {
-            MISE_TRUSTED_CONFIG_PATHS: built.root,
+            MISE_TRUSTED_CONFIG_PATHS: built.trusted,
             MISE_YES: "1",
             GIT_TERMINAL_PROMPT: "0",
           },
@@ -210,7 +205,7 @@ const report = Effect.fnUntraced(function* <A>(
 
 /** Sync the skill copies of every repository listed in `consumers.yml`. */
 export const skillConsumers = Effect.fnUntraced(function* () {
-  const built = yield* build();
+  const built = yield* build(yield* Worktrees.forRun("skill-consumers"));
   const { exitCode } = yield* maintain(built, ["consumers"]);
 
   if (exitCode !== 0)
@@ -220,7 +215,7 @@ export const skillConsumers = Effect.fnUntraced(function* () {
     });
 
   yield* summary("Synced the shared skills into their consumers");
-});
+}, Effect.scoped);
 
 /** `owner/name` of a GitHub origin URL. */
 const originRepo = (origin: string) =>
@@ -290,7 +285,7 @@ const land = Effect.fnUntraced(function* (
   names: ReadonlyArray<string>,
   subject: string,
 ) {
-  const options = { cwd: built.directory, trusted: built.root };
+  const options = { cwd: built.directory, trusted: built.trusted };
 
   return yield* Effect.gen(function* () {
     for (const name of names) {
@@ -358,7 +353,7 @@ const land = Effect.fnUntraced(function* (
  * skill-change job, which holds the agent's change for your approval.
  */
 export const skillUpdates = Effect.fnUntraced(function* () {
-  const built = yield* build();
+  const built = yield* build(yield* Worktrees.forRun("skill-updates"));
 
   const updates = yield* report(built, ["updates", "--json"], UpdateReport);
 
@@ -499,7 +494,7 @@ export const skillUpdates = Effect.fnUntraced(function* () {
   yield* send(
     shared(
       built.repo,
-      { cwd: built.directory, trusted: built.root },
+      { cwd: built.directory, trusted: built.trusted },
       updates.skills,
       checked,
     ),
@@ -508,7 +503,7 @@ export const skillUpdates = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
 
   for (const other of settings.skills?.repos ?? [])
-    yield* send(otherSkills(other.repo, other.path, built.root));
+    yield* send(otherSkills(other.repo, other.path, built.worktrees));
 
   yield* summary(
     [
@@ -523,7 +518,7 @@ export const skillUpdates = Effect.fnUntraced(function* () {
   );
 
   if (problems.length > 0) return yield* new SkillUpdateProblems({ problems });
-});
+}, Effect.scoped);
 
 /**
  * Hand each piece of work to an agent through the skill-change job, unless

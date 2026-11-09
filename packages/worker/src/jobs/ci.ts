@@ -1,7 +1,7 @@
 /**
  * The ci job: read the latest run of each workflow on every tracked
  * repository's default branch. Where one failed, the repository's checks are
- * run in a clean clone, and both the failed run's log and the local result
+ * run in a clean worktree, and both the failed run's log and the local result
  * are logged, so its heal can tell a real failure from one only CI sees. Once
  * a workflow passes again, its unread failure notifications are dismissed.
  * The run fails at the end, naming the repositories still red. One whose CI
@@ -11,14 +11,15 @@
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Effect, Path, Schedule, Schema } from "effect";
+import { Effect, Schedule, Schema } from "effect";
 import { pretty, reason } from "../Failure";
 import * as Kept from "../Kept";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
-import { cacheRoot, check, checkout, install, run, usesMise } from "./bump";
+import * as Worktrees from "../Worktrees";
+import { check, install, run, usesMise } from "./bump";
 
 const RepositoryInfo = Schema.Struct({
   archived: Schema.Boolean,
@@ -120,18 +121,16 @@ const failedLog = (repo: string, item: Workflow.Run) =>
 const checkHere = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
-  root: string,
+  worktrees: Worktrees.Run,
   settings: Settings.Settings,
 ) {
-  const path = yield* Path.Path;
-  const directory = path.join(root, repo);
-  const options = { cwd: directory, trusted: root };
-
-  yield* checkout(repo, branch, directory, root);
+  const { trusted } = worktrees;
+  const directory = yield* worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted };
 
   const mise = yield* usesMise(directory);
 
-  yield* install(directory, ["package.json"], { trusted: root, mise });
+  yield* install(directory, ["package.json"], { trusted, mise });
 
   const changed = (yield* run("git", ["status", "--porcelain"], options))
     .trim()
@@ -238,7 +237,7 @@ const readBranch = Effect.fnUntraced(function* (repo: string, kept: Kept.Kept) {
 const ciRepository = Effect.fnUntraced(function* (
   repo: string,
   context: {
-    readonly root: string;
+    readonly worktrees: Worktrees.Run;
     readonly settings: Settings.Settings;
     readonly threads: ReadonlyArray<Thread>;
     readonly kept: Kept.Kept;
@@ -270,7 +269,7 @@ const ciRepository = Effect.fnUntraced(function* (
     );
   }
 
-  yield* checkHere(repo, branch, context.root, context.settings);
+  yield* checkHere(repo, branch, context.worktrees, context.settings);
 
   return "red" as const;
 });
@@ -278,8 +277,7 @@ const ciRepository = Effect.fnUntraced(function* (
 /** Read every tracked repository's CI, four at a time. */
 export const ci = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
-  const path = yield* Path.Path;
-  const root = path.join(path.dirname(yield* cacheRoot), "ci");
+  const worktrees = yield* Worktrees.forRun("ci");
   const reporter = yield* Reporter;
   const repos = yield* reporter.repos(Catalogue.ci.id);
   const kept = yield* Kept.make("ci");
@@ -301,7 +299,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* Effect.forEach(
     repos,
     (repo) =>
-      ciRepository(repo, { root, settings, threads, kept }).pipe(
+      ciRepository(repo, { worktrees, settings, threads, kept }).pipe(
         Effect.catchCause((cause) =>
           RunLog.warn(`${repo}: couldn't check its CI: ${pretty(cause)}`).pipe(
             Effect.as("red" as const),

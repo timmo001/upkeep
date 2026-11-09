@@ -25,6 +25,7 @@ import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
+import * as Worktrees from "../Worktrees";
 import * as Bump from "./bump";
 import * as Drift from "./drift";
 
@@ -182,7 +183,7 @@ const planRepository = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   extras: Settings.Settings["deps"],
-  root: string,
+  worktrees: Worktrees.Run,
 ) {
   const updaters = yield* Updaters;
   const datasources = yield* Datasources;
@@ -190,10 +191,8 @@ const planRepository = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const directory = path.join(root, repo);
-  const options = { cwd: directory, trusted: root };
-
-  yield* Bump.checkout(repo, branch, directory, root);
+  const directory = yield* worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted: worktrees.trusted };
 
   const paths = (yield* Bump.run("git", ["ls-files", "-z"], options))
     .split("\0")
@@ -360,8 +359,8 @@ const subject = (group: Planner.Group) => {
 };
 
 interface ApplyContext {
-  /** Where clones live, which mise is told to trust. */
-  readonly root: string;
+  /** The run's worktrees, and the path mise is told to trust. */
+  readonly worktrees: Worktrees.Run;
   readonly checks: ReadonlyArray<string> | undefined;
   readonly generate: ReadonlyArray<string> | undefined;
   readonly regression: Regression.Setting | undefined;
@@ -609,10 +608,9 @@ const applyGroup = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = path.join(context.root, repo);
-  const options = { cwd: directory, trusted: context.root };
-
-  yield* Bump.checkout(repo, branch, directory, context.root);
+  const { trusted } = context.worktrees;
+  const directory = yield* context.worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted };
 
   // A submodule moves by checking out its new commit, not by an edit
   const submodules = group.updates.filter(
@@ -634,7 +632,7 @@ const applyGroup = Effect.fnUntraced(function* (
 
     const submodule = {
       cwd: path.join(directory, update.dependency.depName),
-      trusted: context.root,
+      trusted,
     };
 
     yield* Bump.run(
@@ -692,7 +690,7 @@ const applyGroup = Effect.fnUntraced(function* (
       update.dependency.file,
       lockfile,
       { name: update.dependency.packageName, version: update.to },
-      { trusted: context.root, mise },
+      { trusted, mise },
     );
   }
 
@@ -709,7 +707,7 @@ const applyGroup = Effect.fnUntraced(function* (
   yield* Bump.install(
     directory,
     edited.filter((file) => path.basename(file) === "package.json"),
-    { trusted: context.root, mise },
+    { trusted, mise },
   );
 
   if (
@@ -732,6 +730,7 @@ const applyGroup = Effect.fnUntraced(function* (
 
   return yield* land(repo, branch, group.branch, subject(group), changed, {
     ...context,
+    directory,
     mise,
     check,
   });
@@ -751,12 +750,16 @@ const land = Effect.fnUntraced(function* (
   message: string,
   edited: ReadonlyArray<string>,
   context: ApplyContext & {
+    /** The worktree the change was made in. */
+    readonly directory: string;
     readonly mise: boolean;
     readonly check?: Check | undefined;
   },
 ) {
-  const path = yield* Path.Path;
-  const options = { cwd: path.join(context.root, repo), trusted: context.root };
+  const options = {
+    cwd: context.directory,
+    trusted: context.worktrees.trusted,
+  };
 
   const changed = [
     ...new Set([
@@ -834,11 +837,9 @@ const maintainLockfiles = Effect.fnUntraced(function* (
   everyDays: number,
   context: ApplyContext,
 ) {
-  const path = yield* Path.Path;
-  const directory = path.join(context.root, repo);
-  const options = { cwd: directory, trusted: context.root };
-
-  yield* Bump.checkout(repo, branch, directory, context.root);
+  const { trusted } = context.worktrees;
+  const directory = yield* context.worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted };
 
   const last = (yield* Bump.run(
     "git",
@@ -878,7 +879,7 @@ const maintainLockfiles = Effect.fnUntraced(function* (
 
   for (const lockfile of lockfiles)
     yield* Bump.regenerate(directory, lockfile, {
-      trusted: context.root,
+      trusted,
       mise,
     });
 
@@ -900,7 +901,7 @@ const maintainLockfiles = Effect.fnUntraced(function* (
     maintenanceBranch,
     maintenanceSubject,
     changed,
-    { ...context, mise },
+    { ...context, directory, mise },
   );
 });
 
@@ -1004,13 +1005,16 @@ const applyRepository = Effect.fnUntraced(function* (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
-    const tooling = path.join(context.root, repo, Drift.toolingFile);
+    const tooling = path.join(
+      yield* context.worktrees.checkout(repo, branch),
+      Drift.toolingFile,
+    );
 
     if (yield* fs.exists(tooling)) {
       yield* RunLog.info(`${repo}: checking tool drift after the updates`);
 
       yield* Drift.driftRepository(repo, {
-        root: yield* Drift.cacheRoot,
+        worktrees: context.worktrees,
         dryRun: false,
       }).pipe(
         // A release to review goes to the heal with the rest, as drift's
@@ -1037,14 +1041,13 @@ export const deps = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
   const extras = settings.deps;
   const tracked = yield* trackedFor(Catalogue.deps.id);
-  const path = yield* Path.Path;
 
   const applying = new Set(
     (extras?.apply ?? []).map((repo) => repo.toLowerCase()),
   );
 
   const dryRun = extras?.dryRun !== false;
-  const root = path.join(path.dirname(yield* Bump.cacheRoot), "deps");
+  const worktrees = yield* Worktrees.forRun("deps");
 
   const repos = (yield* repositories()).filter((repo) =>
     tracked(repo.full_name),
@@ -1078,7 +1081,7 @@ export const deps = Effect.fnUntraced(function* () {
           repo.full_name,
           repo.default_branch,
           extras,
-          root,
+          worktrees,
         );
 
         if (Option.isNone(result)) return;
@@ -1094,7 +1097,7 @@ export const deps = Effect.fnUntraced(function* () {
           result.value.groups,
           result.value.policy,
           {
-            root,
+            worktrees,
             checks: settings.bump?.repos?.[repo.full_name]?.checks,
             generate: settings.bump?.repos?.[repo.full_name]?.generate,
             regression: settings.bump?.repos?.[repo.full_name]?.regression,
@@ -1147,4 +1150,4 @@ export const deps = Effect.fnUntraced(function* () {
       action: "update the dependencies of",
       repos: heal,
     });
-});
+}, Effect.scoped);

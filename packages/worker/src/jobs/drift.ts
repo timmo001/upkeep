@@ -20,7 +20,8 @@ import * as GitHubApp from "../GitHubApp";
 import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed, HandedOff, skipped } from "../Worker";
-import { checkout, run, watch } from "./bump";
+import * as Worktrees from "../Worktrees";
+import { run, watch } from "./bump";
 
 /**
  * The file at a repository root that records its reviewed tool releases.
@@ -268,13 +269,6 @@ export const needsFullReview = (tool: Tool, tag: string) =>
     ` Add what's missing, keeping everything the repository already does working as it does now, and push it to the default branch${tag === tool.reviewed ? "" : `, then set its \`reviewed\` to ${tag} in ${toolingFile}`}. If nothing is missing, say so.`,
   ].join("");
 
-export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
-  Config.orElse(() =>
-    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
-  ),
-  Config.map((root) => `${root}/upkeep/drift`),
-);
-
 interface Options {
   readonly cwd: string;
   readonly trusted: string;
@@ -334,7 +328,7 @@ const repositories = Effect.fnUntraced(function* () {
 type Outcome = "updated" | "current" | "review" | "skipped";
 
 interface DriftContext {
-  readonly root: string;
+  readonly worktrees: Worktrees.Run;
   readonly dryRun: boolean;
 }
 
@@ -360,11 +354,9 @@ export const driftRepository = Effect.fnUntraced(function* (
   }
 
   const branch = info.default_branch;
-  const directory = path.join(context.root, repo);
-  const options = { cwd: directory, trusted: context.root };
+  const directory = yield* context.worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted: context.worktrees.trusted };
   const file = path.join(directory, toolingFile);
-
-  yield* checkout(repo, branch, directory, context.root);
 
   const { tools } = yield* decode(yield* fs.readFileString(file));
   const problems: Array<string> = [];
@@ -493,7 +485,7 @@ export const driftRepository = Effect.fnUntraced(function* (
 
 /** Check every repository with a tooling.yml, two at a time. */
 export const drift = Effect.fnUntraced(function* () {
-  const root = yield* cacheRoot;
+  const worktrees = yield* Worktrees.forRun("drift");
 
   const dryRun = yield* Config.Boolean("UPKEEP_DRIFT_DRY_RUN").pipe(
     Config.withDefault(false),
@@ -519,7 +511,7 @@ export const drift = Effect.fnUntraced(function* () {
   yield* Effect.forEach(
     repos,
     (repo) =>
-      driftRepository(repo, { root, dryRun }).pipe(
+      driftRepository(repo, { worktrees, dryRun }).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             counts[outcome] += 1;
@@ -555,7 +547,7 @@ export const drift = Effect.fnUntraced(function* () {
 
   // Nothing moved, as after drift's own push comes back as an event
   if (updated.length === 0) return skipped;
-});
+}, Effect.scoped);
 
 /**
  * List what an agent should review one repository for: each tool in its
@@ -565,7 +557,7 @@ export const drift = Effect.fnUntraced(function* () {
  */
 export const reviewRepository = Effect.fnUntraced(function* (
   repo: string,
-  root: string,
+  worktrees: Worktrees.Run,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -583,10 +575,8 @@ export const reviewRepository = Effect.fnUntraced(function* (
     return "skipped" satisfies Outcome;
   }
 
-  const directory = path.join(root, repo);
-  const options = { cwd: directory, trusted: root };
-
-  yield* checkout(repo, info.default_branch, directory, root);
+  const directory = yield* worktrees.checkout(repo, info.default_branch);
+  const options = { cwd: directory, trusted: worktrees.trusted };
 
   const { tools } = yield* decode(
     yield* fs.readFileString(path.join(directory, toolingFile)),
@@ -620,7 +610,7 @@ export const reviewRepository = Effect.fnUntraced(function* (
  * their own; narrow it to one repository with `--repo`.
  */
 export const driftReview = Effect.fnUntraced(function* () {
-  const root = yield* cacheRoot;
+  const worktrees = yield* Worktrees.forRun("drift");
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
   const failed: Array<string> = [];
@@ -631,7 +621,7 @@ export const driftReview = Effect.fnUntraced(function* () {
   yield* Effect.forEach(
     repos,
     (repo) =>
-      reviewRepository(repo, root).pipe(
+      reviewRepository(repo, worktrees).pipe(
         Effect.tap((outcome) =>
           Effect.sync(() => {
             if (outcome === "review") reviewing.push(repo);
@@ -670,4 +660,4 @@ export const driftReview = Effect.fnUntraced(function* () {
   const nothing: typeof skipped = skipped;
 
   return nothing;
-});
+}, Effect.scoped);

@@ -1,21 +1,23 @@
 /**
- * The skill-change job: an agent changes a skill in its own checkout, and
- * what it commits is held on the server as a patch for your approval rather
- * than pushed. The patch, not the checkout, is what counts, so any worker can
- * land it, or start it again from where it got to, when the one that ran the
- * agent is down. Its session and checkout are only for resuming it there.
+ * The skill-change job: an agent changes a skill in a worktree of its own,
+ * and what it commits is held on the server as a patch for your approval
+ * rather than pushed. The patch, not the worktree, is what counts, so any
+ * worker can land it, or start it again from where it got to, when the one
+ * that ran the agent is down. Its session and worktree are only for resuming
+ * it there, and go once the change has landed or been dropped.
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
-import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
+import { Config, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 import { reason as why } from "../Failure";
 import * as Names from "../Names";
 import { attention, pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { skipped } from "../Worker";
+import * as Worktrees from "../Worktrees";
 import { AgentFailed, createSession, lastWords } from "./agent";
-import { cacheRoot, checkout, miseTasks, run, usesMise } from "./bump";
+import { miseTasks, run, usesMise } from "./bump";
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
@@ -35,13 +37,38 @@ export const open: ReadonlySet<Domain.SkillChangeState> = new Set([
   "stale",
 ]);
 
-/** Where the checkouts of skill changes live, and the root mise trusts. */
-const roots = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const trusted = path.join(path.dirname(yield* cacheRoot), "skills");
+/** Where the patches being applied and the briefs of opened agents go. */
+const cache = Config.String("XDG_CACHE_HOME").pipe(
+  Config.orElse(() =>
+    Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
+  ),
+  Config.map((root) => `${root}/upkeep/skills`),
+);
 
-  return { trusted, changes: path.join(trusted, "changes") };
-});
+/** A change's patch, written to a file for `git am` and removed after. */
+const patchFile = <A, E, R>(
+  id: string,
+  patch: string,
+  use: (file: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const folder = `${yield* cache}/patches`;
+    const file = `${folder}/${id}.patch`;
+
+    yield* fs.makeDirectory(folder, { recursive: true });
+    yield* fs.writeFileString(file, patch);
+
+    return yield* use(file).pipe(
+      Effect.ensuring(fs.remove(file).pipe(Effect.ignore)),
+    );
+  });
+
+/** The repository's default branch. */
+const defaultBranch = (repo: string) =>
+  Api.json({ endpoint: `repos/${repo}`, method: "GET" }, RepositoryInfo).pipe(
+    Effect.map(({ default_branch }) => default_branch),
+  );
 
 /** `git` lines a patch changes, leaving out its file headers. */
 const changedLines = (patch: string) => {
@@ -129,21 +156,20 @@ const agentSettings = Effect.gen(function* () {
   };
 });
 
-/** A clean checkout of the default branch, ready for an agent. */
+/**
+ * A clean worktree of the default branch for the change, ready for an agent:
+ * the change's own, reset to the tip when it's already there.
+ */
 const prepare = Effect.fnUntraced(function* (repo: string, id: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { trusted, changes } = yield* roots;
-  const directory = path.join(changes, id);
+  const trusted = yield* Worktrees.root;
+  const branch = yield* defaultBranch(repo);
+  const own = yield* Worktrees.forAgent("skill", false, id.slice(0, 8));
+
+  const directory = yield* Worktrees.checkout(repo, branch, own.place(repo));
+
   const options = { cwd: directory, trusted };
-
-  const { default_branch: branch } = yield* Api.json(
-    { endpoint: `repos/${repo}`, method: "GET" },
-    RepositoryInfo,
-  );
-
-  yield* fs.makeDirectory(changes, { recursive: true });
-  yield* checkout(repo, branch, directory, trusted);
 
   // As in a heal, the agent's shell runs in OpenCode's service, which would
   // ask before trusting a new checkout's mise config
@@ -325,6 +351,7 @@ const settle = Effect.fnUntraced(function* (
       state: "dropped",
       note: stopped ?? "The agent changed nothing",
     });
+    yield* Worktrees.discard(prepared.options.cwd);
 
     return yield* summary(`${held.title}: nothing to change`);
   }
@@ -341,6 +368,7 @@ const settle = Effect.fnUntraced(function* (
       note: null,
     });
     yield* pushed(held.repo, sha, result.subject);
+    yield* Worktrees.discard(prepared.options.cwd);
 
     return yield* summary(`Pushed ${result.subject}, which only moves pins`);
   }
@@ -426,7 +454,6 @@ const start = Effect.fnUntraced(function* (command: Start) {
  * marked stale, for you to start again.
  */
 const approve = Effect.fnUntraced(function* (id: string) {
-  const fs = yield* FileSystem.FileSystem;
   const reporter = yield* Reporter;
   const change = yield* reporter.skillChange(id);
 
@@ -443,29 +470,26 @@ const approve = Effect.fnUntraced(function* (id: string) {
 
   yield* reporter.skillChangeState(id, { state: "applying" });
 
-  const { changes } = yield* roots;
-  const file = `${changes}/${id}.patch`;
   const patch = change.patch;
 
   const landed = yield* Effect.gen(function* () {
     const prepared = yield* prepare(change.repo, id);
 
-    yield* fs.writeFileString(file, patch);
-    yield* run("git", ["am", "--3way", "--quiet", file], prepared.options).pipe(
-      Effect.tapError(() =>
-        run("git", ["am", "--abort"], prepared.options).pipe(Effect.ignore),
+    yield* patchFile(id, patch, (file) =>
+      run("git", ["am", "--3way", "--quiet", file], prepared.options).pipe(
+        Effect.tapError(() =>
+          run("git", ["am", "--abort"], prepared.options).pipe(Effect.ignore),
+        ),
       ),
     );
     yield* validate(prepared.options);
 
     const sha = yield* push(prepared.branch, prepared.options);
 
-    yield* fs
-      .remove(prepared.directory, { recursive: true })
-      .pipe(Effect.ignore);
+    yield* Worktrees.discard(prepared.directory);
 
     return sha;
-  }).pipe(Effect.ensuring(fs.remove(file).pipe(Effect.ignore)), Effect.exit);
+  }).pipe(Effect.exit);
 
   if (Exit.isFailure(landed)) {
     const note = why(landed.cause);
@@ -485,16 +509,16 @@ const approve = Effect.fnUntraced(function* (id: string) {
 });
 
 /**
- * Ask for more on a held change. On the worker it ran on, with its checkout
+ * Ask for more on a held change. On the worker it ran on, with its worktree
  * still there, its session goes on; anywhere else, a new session starts from
- * a fresh checkout with the held patch applied.
+ * a fresh worktree with the held patch applied.
  */
 const revise = Effect.fnUntraced(function* (command: Revise) {
   const fs = yield* FileSystem.FileSystem;
   const reporter = yield* Reporter;
   const setup = yield* agentSettings;
   const change = yield* reporter.skillChange(command.change);
-  const { trusted } = yield* roots;
+  const trusted = yield* Worktrees.root;
   const resumable = change.session;
 
   if (
@@ -504,12 +528,7 @@ const revise = Effect.fnUntraced(function* (command: Revise) {
     (yield* fs.exists(change.directory))
   ) {
     const options = { cwd: change.directory, trusted };
-
-    const branch = (yield* run(
-      "git",
-      ["rev-parse", "--abbrev-ref", "HEAD"],
-      options,
-    )).trim();
+    const branch = yield* defaultBranch(change.repo);
 
     const held: Held = {
       ...toHeld(change),
@@ -542,26 +561,18 @@ const revise = Effect.fnUntraced(function* (command: Revise) {
   const prepared = yield* prepare(change.repo, change.id);
   let applied = false;
 
-  if (change.patch !== null) {
-    const { changes } = yield* roots;
-    const file = `${changes}/${change.id}.patch`;
-
-    yield* fs.writeFileString(file, change.patch);
-    applied = yield* run(
-      "git",
-      ["am", "--3way", "--quiet", file],
-      prepared.options,
-    ).pipe(
-      Effect.as(true),
-      Effect.catch(() =>
-        run("git", ["am", "--abort"], prepared.options).pipe(
-          Effect.ignore,
-          Effect.as(false),
+  if (change.patch !== null)
+    applied = yield* patchFile(change.id, change.patch, (file) =>
+      run("git", ["am", "--3way", "--quiet", file], prepared.options).pipe(
+        Effect.as(true),
+        Effect.catch(() =>
+          run("git", ["am", "--abort"], prepared.options).pipe(
+            Effect.ignore,
+            Effect.as(false),
+          ),
         ),
       ),
-      Effect.ensuring(fs.remove(file).pipe(Effect.ignore)),
     );
-  }
 
   const session = yield* createSession(
     setup.opencode,
@@ -622,28 +633,20 @@ const revise = Effect.fnUntraced(function* (command: Revise) {
 });
 
 /**
- * Remove the checkouts of changes that have ended, or that the server no
+ * Remove the worktrees of changes that have ended, or that the server no
  * longer knows, leaving those still open.
  */
 export const prune = Effect.fnUntraced(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const reporter = yield* Reporter;
-  const { changes } = yield* roots;
-
-  if (!(yield* fs.exists(changes))) return;
 
   const kept = new Set(
     (yield* reporter.skillChanges())
       .filter((change) => open.has(change.state))
-      .map((change) => change.id),
+      .map((change) => change.directory),
   );
 
-  for (const entry of yield* fs.readDirectory(changes)) {
-    if (kept.has(entry.replace(/\.patch$/, ""))) continue;
-
-    yield* fs.remove(path.join(changes, entry), { recursive: true });
-  }
+  for (const { directory } of yield* Worktrees.agents("skill"))
+    if (!kept.has(directory)) yield* Worktrees.discard(directory);
 });
 
 /**
@@ -683,8 +686,7 @@ const openAgent = Effect.fnUntraced(function* (command: OpenAgent) {
     "Wait for instructions. Don't push: the change lands when it's approved on the Skills page, and what's committed here is part of it once changes are asked for there with Resume.",
   ].join("\n");
 
-  const { trusted } = yield* roots;
-  const briefs = path.join(trusted, "briefs");
+  const briefs = path.join(yield* cache, "briefs");
   const file = path.join(briefs, `${change.id}.md`);
 
   yield* fs.makeDirectory(briefs, { recursive: true });

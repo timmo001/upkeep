@@ -4,12 +4,13 @@
  * the repositories with a `sync.json` at their root, found through code
  * search.
  *
- * Each run clones groundwork and the apps, and runs groundwork's sync over
- * them: an app's edit to a QML copy is carried back into groundwork, then
- * every changed source is copied out. A carried-back edit is checked and
- * pushed to groundwork first, then each changed app is checked, pushed and
- * its CI watched. A copy the sync can't settle, edited in the app and
- * changed in groundwork too, fails its app, so a heal hands it to an agent.
+ * Each run checks out groundwork and the apps in worktrees, and runs
+ * groundwork's sync over them: an app's edit to a QML copy is carried back
+ * into groundwork, then every changed source is copied out. A carried-back
+ * edit is checked and pushed to groundwork first, then each changed app is
+ * checked, pushed and its CI watched. A copy the sync can't settle, edited in
+ * the app and changed in groundwork too, fails its app, so a heal hands it to
+ * an agent.
  */
 import { Api, Search } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
@@ -21,15 +22,8 @@ import { listed, pushed, summary, trackedFor } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed, skipped } from "../Worker";
-import {
-  cacheRoot as bumpCacheRoot,
-  check,
-  checkout,
-  commitAndPush,
-  run,
-  usesMise,
-  watch,
-} from "./bump";
+import * as Worktrees from "../Worktrees";
+import { check, commitAndPush, run, usesMise, watch } from "./bump";
 
 /** The file at an app's root that names what it takes from groundwork. */
 export const syncFile = "sync.json";
@@ -183,7 +177,7 @@ const changedFiles = (options: {
   );
 
 interface Context {
-  readonly root: string;
+  readonly worktrees: Worktrees.Run;
   readonly settings: Settings.Settings;
 }
 
@@ -195,7 +189,7 @@ const push = Effect.fnUntraced(function* (
   directory: string,
   context: Context,
 ) {
-  const options = { cwd: directory, trusted: context.root };
+  const options = { cwd: directory, trusted: context.worktrees.trusted };
 
   const ran = yield* check(context.settings.bump?.repos?.[repo]?.checks, {
     ...options,
@@ -230,8 +224,9 @@ const push = Effect.fnUntraced(function* (
 export const sync = Effect.fnUntraced(function* () {
   const path = yield* Path.Path;
   const settings = yield* Settings.load();
-  const root = path.join(path.dirname(yield* bumpCacheRoot), "sync");
-  const context = { root, settings };
+  const worktrees = yield* Worktrees.forRun("sync");
+  const { trusted } = worktrees;
+  const context = { worktrees, settings };
 
   const dryRun = yield* Config.Boolean("UPKEEP_SYNC_DRY_RUN").pipe(
     Config.withDefault(false),
@@ -275,9 +270,8 @@ export const sync = Effect.fnUntraced(function* () {
           return;
         }
 
-        const directory = path.join(root, repo);
+        const directory = yield* worktrees.checkout(repo, info.default_branch);
 
-        yield* checkout(repo, info.default_branch, directory, root);
         apps.set(repo, { branch: info.default_branch, directory });
       }).pipe(
         Effect.catchCause((cause) =>
@@ -294,10 +288,13 @@ export const sync = Effect.fnUntraced(function* () {
     RepositoryInfo,
   );
 
-  const groundwork = path.join(root, source);
-  const sourceOptions = { cwd: groundwork, trusted: root };
+  const groundwork = yield* worktrees.checkout(
+    source,
+    sourceInfo.default_branch,
+  );
 
-  yield* checkout(source, sourceInfo.default_branch, groundwork, root);
+  const sourceOptions = { cwd: groundwork, trusted };
+
   yield* run(
     "mise",
     ["exec", "--", "bun", "install", "--frozen-lockfile"],
@@ -311,7 +308,7 @@ export const sync = Effect.fnUntraced(function* () {
   const changes = yield* runSync(
     groundwork,
     [...apps.values()].map((app) => app.directory),
-    { trusted: root, dryRun },
+    { trusted, dryRun },
   );
 
   const changesOf = (repo: string) =>
@@ -361,10 +358,7 @@ export const sync = Effect.fnUntraced(function* () {
       Effect.gen(function* () {
         const own = changesOf(repo);
 
-        if (
-          (yield* changedFiles({ cwd: app.directory, trusted: root })).length >
-          0
-        ) {
+        if ((yield* changedFiles({ cwd: app.directory, trusted })).length > 0) {
           yield* push(
             repo,
             own.some((change) => change.change === "copied")
@@ -405,4 +399,4 @@ export const sync = Effect.fnUntraced(function* () {
       action: "sync",
       repos: failed.toSorted(),
     });
-});
+}, Effect.scoped);

@@ -124,8 +124,9 @@ const Attention = Schema.Struct({
   /**
    * How this worker opens an agent's OpenCode session for you, from a heal's
    * run or a skill change. `command` runs in the directory the agent worked
-   * in, with `{session}`, `{directory}`, `{name}` (the directory's last
-   * folder) and `{title}` replaced.
+   * in, usually a Git worktree of its own, with `{session}`, `{directory}`,
+   * `{name}` (the name `names` gives the repository, or its own) and
+   * `{title}` replaced.
    */
   resume: Schema.optionalKey(
     Schema.Struct({
@@ -348,8 +349,9 @@ export const Settings = Schema.Struct({
        * A command the worker runs when a heal ends with a session that needs
        * you, such as a tool that parks a session for another machine. It
        * runs in the directory the agent worked in, with `{session}`,
-       * `{directory}`, `{name}` (the directory's last folder) and `{title}`
-       * filled in. Its failing is logged, and the heal still needs you.
+       * `{directory}`, `{name}` (the name `names` gives the repository, or
+       * its own) and `{title}` filled in. Its failing is logged, and the
+       * heal still needs you.
        */
       handOff: Schema.optionalKey(
         Schema.Struct({

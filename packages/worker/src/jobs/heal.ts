@@ -17,12 +17,13 @@ import { Cause, Clock, Duration, Effect, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
 import * as Decisions from "../Decisions";
 import { reason as failureReason } from "../Failure";
+import * as Names from "../Names";
 import * as RateLimits from "../RateLimits";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { run as exec } from "./bump";
-import { earlierHeal, fix, handedTo } from "./fix";
+import { earlierHeal, fix, handedTo, prune } from "./fix";
 
 const Failure = Schema.Struct({
   failed: Schema.Struct({
@@ -460,12 +461,13 @@ const handOff = Effect.fnUntraced(function* (
 
   if (settings.handOff !== undefined) {
     const target = Domain.targetName(healing.heal.target);
+    const name = Names.nameOf(repo, yield* Names.find(repo));
 
     const fill = (arg: string) =>
       arg
         .replaceAll("{session}", session)
         .replaceAll("{directory}", directory)
-        .replaceAll("{name}", directory.split("/").at(-1) ?? directory)
+        .replaceAll("{name}", name)
         .replaceAll("{title}", `${run.job} heal for ${target}`);
 
     const [program = "", ...args] = settings.handOff.command.map(fill);
@@ -557,6 +559,7 @@ export const heal = Effect.fnUntraced(function* () {
   const healing = yield* reporter.healing();
   const { heal: record, run, log, precedents, earlier } = healing;
 
+  yield* prune();
   yield* RunLog.info(
     run.state === "handed-off"
       ? `Taking over ${run.job} run ${run.id}, handed off for an agent`

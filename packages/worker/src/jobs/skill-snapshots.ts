@@ -11,7 +11,8 @@ import { Yaml } from "effect/encoding";
 import { reason } from "../Failure";
 import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
-import { checkout, run } from "./bump";
+import type * as Worktrees from "../Worktrees";
+import { run } from "./bump";
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
@@ -248,25 +249,23 @@ export const shared = Effect.fnUntraced(function* (
 });
 
 /**
- * The skills in another repository's folder, from a clone of its default
- * branch kept beside the shared skills checkout.
+ * The skills in another repository's folder, from the run's worktree of its
+ * default branch.
  */
 export const other = Effect.fnUntraced(function* (
   repo: string,
   folder: string,
-  root: string,
+  worktrees: Worktrees.Run,
 ) {
   const path = yield* Path.Path;
-  const directory = path.join(root, repo);
-  const options = { cwd: directory, trusted: root };
 
   const { default_branch: branch } = yield* Api.json(
     { endpoint: `repos/${repo}`, method: "GET" },
     RepositoryInfo,
   );
 
-  yield* checkout(repo, branch, directory, root);
-
+  const directory = yield* worktrees.checkout(repo, branch);
+  const options = { cwd: directory, trusted: worktrees.trusted };
   const names = (yield* skillFolders(path.join(directory, folder))).sort();
 
   return { repo, skills: yield* authored(folder, options, names) };

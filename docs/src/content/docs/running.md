@@ -285,6 +285,27 @@ counts it as live and Upkeep's status doesn't warn that no worker is. Runs
 queued for it in the meantime, such as its machine jobs, start when the hours
 end. Its status reads `Quiet hours` and stays `ok`.
 
+### Worktrees
+
+The jobs that change repositories work in Git worktrees rather than clones of
+their own. A worktree comes from your checkout of the repository, at the
+`path` your [`names`](#names) list gives it, when that checkout's `origin` is
+the repository on GitHub, or else from one bare clone shared in
+`upkeep/repos` in the XDG cache directory. It lives in Herdr's worktree
+folder, `~/.herdr/worktrees/<checkout>/upkeep-<job>-<id>`, beside your own
+worktrees of the repository, detached at the tip of the default branch, so
+your checkout's own branch and changes are never touched. Fetches only update
+`origin/<branch>`.
+
+A run's worktrees are removed when it ends, and any a run that died left
+behind go after 12 hours. An agent's, from a heal, a change or a skill change,
+are named `upkeep-agent-<kind>-<id>` and kept while it may still need you: a
+heal's until its run no longer needs you (or a week, for a change), and a
+skill change's until it has landed or been dropped. Nothing opens in Herdr
+until you resume one. Before a worktree is reused, empty Git lock files over an
+hour old are removed from it, its submodules and its repository, so a Git
+command cut off once, such as by a restart, doesn't fail every run after it.
+
 ## Repositories
 
 Jobs that work on repositories (`releases`, `labels`, `bump`,
@@ -404,8 +425,8 @@ them, so its run page shows what the agent was asked to do before it starts,
 and its reason names the releases it's reviewing against.
 
 A worker runs up to `heal.sessions` heals at once (3 by default), so a review
-handed off for several repositories is worked on side by side. Two heals never
-work on the same repository at once: one waits for the other's checkout.
+handed off for several repositories is worked on side by side, each heal in
+worktrees of its own.
 
 Each heal keeps a record of the failed run, what was decided and why, the
 model and variant used, what was done, the commit if there was one and the
@@ -428,7 +449,7 @@ model chooses what to do:
 
 - `retry` queues the failed job again, for the same release.
 - `fix` picks an agent from the worker's list to fix it. The worker checks
-  out the target in `upkeep/heal` in the XDG cache directory, creates an
+  out the target in a [worktree](#worktrees) of the agent's own, creates an
   OpenCode session with the agent's model and variant, checking OpenCode has
   both, and runs it headless with `opencode run --auto`, named for the job
   and repository, with the failure as its prompt. Nothing opens on the
@@ -514,10 +535,10 @@ picks by what each is `for`:
 Upkeep's own repository, for a heal that targets Upkeep.
 
 `handOff` runs a command when a heal ends with a session that needs you,
-such as a tool that parks it for another machine. It runs in the checkout the
-agent worked in, with `{session}`, `{directory}`, `{name}` (the checkout's
-folder) and `{title}` filled in. If it fails, the run log says so and the
-heal still needs you:
+such as a tool that parks it for another machine. It runs in the worktree the
+agent worked in, with `{session}`, `{directory}`, `{name}` (the name `names`
+gives the repository, or its own) and `{title}` filled in. If it fails, the
+run log says so and the heal still needs you:
 
 ```json
 {
@@ -638,7 +659,8 @@ The Jobs table shows each worker's latest run of each one.
 
 ### Bump
 
-For each consumer, the `bump` job clones the default branch, moves the pins
+For each consumer, the `bump` job checks out the default branch in a
+[worktree](#worktrees), moves the pins
 to the release's commit and the dependencies to its version, and installs
 where a changed `package.json` has a lockfile. A dependency change is then
 checked with `mise run check` and `mise run build` where the repository has
@@ -650,11 +672,7 @@ others; the run fails at the end, naming them. A release nothing uses ends
 job's runs.
 
 A package is only bumped once its version is on npm, waiting up to 20
-minutes for the publish. Clones are kept in `upkeep/bump` in the XDG cache
-directory and reused. Before a clone is reused, as by every job that keeps
-clones, empty Git lock files over an hour old are removed from it and its
-submodules, so a Git command cut off once, such as by a restart, doesn't fail
-every run after it.
+minutes for the publish.
 
 Set `UPKEEP_BUMP_DRY_RUN=true` to stop before each commit and log what would
 be pushed.
@@ -750,8 +768,8 @@ warning. A group that fails is logged and left while the rest go on. After a
 repository's updates land, its `tooling.yml`, if it has one, is checked as
 `drift` would, so a tool bump and its review go out together. The run fails
 at the end naming each repository with a failed group, and a heal for each
-one applies that group by hand, migrating what the new versions need. Clones
-are kept in `upkeep/deps` in the XDG cache directory, with their submodules.
+one applies that group by hand, migrating what the new versions need. Each
+repository is worked on in a [worktree](#worktrees), with its submodules.
 
 Git submodules are read when the config turns on Renovate's `git-submodules`
 manager. Each submodule follows its `.gitmodules` branch, or its remote's
@@ -955,7 +973,8 @@ with `{owner}` and `{name}`; a repository with no checkout there yet is
 cloned there, never into a scratch directory. `resume` lets
 the worker open an agent's OpenCode session from a heal's run page or a skill
 change: `command` runs in the directory the agent worked in, with
-`{session}`, `{directory}`, `{name}` (the directory's last folder) and
+`{session}`, `{directory}`, `{name}` (the name `names` gives the
+repository, or its own) and
 `{title}` filled in. A heal session another worker shared is imported first,
 into the same directory when it's on this worker too, or else into the
 checkout an agent from the Attention page would start in:
@@ -992,7 +1011,8 @@ and onboarding are left alone, as are pull requests whose checks pass or are
 still running, which the updater merges itself, and those that conflict with
 the default branch, which it rebases.
 
-Each update is squashed onto a clean clone of the default branch, its
+Each update is squashed onto a clean [worktree](#worktrees) of the default
+branch, its
 dependencies installed, and checked as a bump is (with the same
 per-repository checks). A repository with no check or build task to run is
 left alone, since its checks already failed there and nothing here could
@@ -1002,7 +1022,7 @@ for the commit's CI. A repository that fails at any step is logged and the
 others carry on; the run fails at the end, naming them, and a heal for each
 one hands the update to an agent to apply and fix forward.
 
-Clones are kept in `upkeep/stalled-updates` in the XDG cache directory. Set
+Set
 `UPKEEP_STALLED_UPDATES_DRY_RUN=true` to stop before each commit and log what
 would be pushed. A dry run logs the repositories that failed rather than
 failing, so it queues no heals.
@@ -1013,7 +1033,7 @@ Each hour the `ci` job reads the latest finished run of each workflow on
 every tracked repository's default branch, skipping archived ones. Pull
 request runs and cancelled runs are left out. When a workflow's latest run
 failed, the job logs the end of its failed steps, then runs the repository's
-checks in a clean clone, as a bump does, and logs how they went: whether
+checks in a clean [worktree](#worktrees), as a bump does, and logs how they went: whether
 installing changed a lockfile, which a frozen install in CI refuses, whether
 the checks fail here too, or whether they pass, so it fails only in CI. The
 run fails at the end, naming the red repositories, and a heal for each one
@@ -1021,8 +1041,6 @@ hands both results to an agent to fix the cause, push and watch CI.
 
 Once a workflow's latest run passes again, the job dismisses the unread
 "workflow run failed" notifications for it on the default branch.
-
-Clones are kept in `upkeep/ci` in the XDG cache directory.
 
 ### Drift
 
@@ -1076,7 +1094,7 @@ longer match. The run then ends `handed-off`, and a heal for each repository
 hands it to an agent, which adds what's missing or says nothing is. Without `--repo` it
 reviews every repository tracked for `drift`; it has no opt-in of its own.
 
-Clones are kept in `upkeep/drift` in the XDG cache directory. Set
+Set
 `UPKEEP_DRIFT_DRY_RUN=true` to log what would be pushed instead, without
 failing for the reviews.
 
@@ -1085,7 +1103,8 @@ failing for the reviews.
 Every hour the `sync` job finds the signed-in account's repositories with a
 [`sync.json`](https://groundwork.timmo.dev/sync) at their root, the apps that
 take copies of groundwork's items, such as its QML panel components. It
-clones groundwork and each app, and runs groundwork's own sync over them.
+checks out groundwork and each app in [worktrees](#worktrees), and runs
+groundwork's own sync over them.
 
 An app's edit to a QML copy is carried back into groundwork, then every
 changed source is copied out to the apps that take it. Carried-back edits are
@@ -1097,7 +1116,7 @@ A copy edited in the app and changed in groundwork too, or edited differently
 in two apps, is left alone and fails its app, so a heal hands it to an agent
 to move the edit into groundwork or a wrapper.
 
-Clones are kept in `upkeep/sync` in the XDG cache directory. Set
+Set
 `UPKEEP_SYNC_DRY_RUN=true` to log what would change instead, without changing
 anything.
 
@@ -1105,8 +1124,8 @@ anything.
 
 The skill jobs run the shared skills repository's own `skill-maintenance`,
 the signed-in account's `skills`, so its upkeep runs once on a worker rather
-than on a timer on every machine. Each run clones the repository's default
-branch into `upkeep/skills` in the XDG cache directory and builds
+than on a timer on every machine. Each run checks out the repository's
+default branch in a [worktree](#worktrees) and builds
 `skill-maintenance` there, so it always runs the latest pushed version, and
 its output goes to the run's log as it's written.
 
@@ -1124,7 +1143,7 @@ Imports that follow one tool release land together, as `Update <repo> to
 What needs an agent, such as upstream changes to merge into a skill's local
 edits or a skill to review against a new tool release, starts a run of the
 `skill-change` job, unless a change for it is still open. The agent works in
-its own checkout under `upkeep/skills/changes` and commits once, without
+a worktree of its own and commits once, without
 pushing. A commit that only moves pins in `skills.yml`, reviewed tags or
 upstream SHAs, is pushed straight away; anything else is kept on the server as
 a patch, waiting for your approval, and an open change for the same skill
