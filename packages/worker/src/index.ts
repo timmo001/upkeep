@@ -10,4 +10,6 @@ export { handlers } from "./handlers";
 
 export { openSession } from "./jobs/launch";
 
+export { selfUpdate } from "./jobs/machine";
+
 export * as Worker from "./Worker";

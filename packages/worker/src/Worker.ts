@@ -86,6 +86,16 @@ export interface WorkOptions {
   readonly commandPollInterval?: Duration.Input;
   /** How often to tell the server a run is still going. */
   readonly heartbeatInterval?: Duration.Input;
+  /**
+   * What to do when the server refuses this worker as older than itself,
+   * such as updating the machine's packages, at most every 15 minutes: a
+   * refused worker takes no runs, so no job can update it.
+   */
+  readonly onOutdated?: Effect.Effect<
+    void,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner
+  >;
 }
 
 /** The server stopped counting the run as this worker's, so it stops. */
@@ -330,6 +340,24 @@ export const work = Effect.fn("Worker.work")(function* (
     yield* Effect.sleep(RateLimits.waitUntil(until, now));
   });
 
+  // Every lane hears it's outdated at once, so only the first in each window
+  // catches up
+  const caughtUpAt = yield* Ref.make<number | null>(null);
+
+  const catchUp = Effect.gen(function* () {
+    if (options.onOutdated === undefined) return;
+
+    const now = yield* Clock.currentTimeMillis;
+
+    const due = yield* Ref.modify(caughtUpAt, (last) =>
+      last === null || now - last >= Duration.toMillis("15 minutes")
+        ? [true, now]
+        : [false, last],
+    );
+
+    if (due) yield* options.onOutdated;
+  });
+
   yield* Effect.logInfo(`Waiting for runs of ${jobs.join(", ")}`);
   yield* status.write;
 
@@ -468,6 +496,7 @@ export const work = Effect.fn("Worker.work")(function* (
       ),
       Effect.catchTag("WorkerOutdated", (outdated) =>
         Effect.logWarning(`${outdated.message}: update upkeep-git`).pipe(
+          Effect.andThen(catchUp),
           Effect.andThen(Effect.sleep(wait)),
         ),
       ),

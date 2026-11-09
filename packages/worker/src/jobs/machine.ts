@@ -99,6 +99,41 @@ const described = (result: StageResult) =>
     .filter((action) => action.notable === true || action.status === "warn")
     .map((action) => action.message);
 
+/**
+ * Upgrade this machine's first-party packages outside a run, for a worker
+ * the server refuses as older than itself, which no run can reach. The
+ * upkeep package's own upgrade then restarts the worker on the new binary.
+ * A machine without `dot`, or without the upgrade set up, is left as it is.
+ */
+export const selfUpdate = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  yield* Effect.logInfo(
+    "Upgrading this machine's first-party packages to catch up with the server",
+  );
+
+  const code = yield* Effect.scoped(
+    spawner
+      .spawn(
+        ChildProcess.make("dot", ["up", "first-party", "--json"], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+          extendEnv: true,
+          env: { NO_COLOR: "1" },
+        }),
+      )
+      .pipe(Effect.flatMap((handle) => handle.exitCode)),
+  );
+
+  if (Number(code) !== 0)
+    yield* Effect.logWarning(`dot up first-party exited with ${code}`);
+}).pipe(
+  Effect.catchCause((cause) =>
+    Effect.logWarning("Couldn't upgrade this machine's packages", cause),
+  ),
+);
+
 export const machine = Effect.fnUntraced(function* (name: string) {
   const result = yield* stage(name).pipe(
     Effect.catchTag("PlatformError", (error) =>

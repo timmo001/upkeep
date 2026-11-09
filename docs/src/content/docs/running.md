@@ -272,8 +272,9 @@ Workers follow main and the server ships through releases, so a worker can be
 older than the server. Each claim carries the worker's protocol, and the server
 gives a worker older than itself no runs at all rather than one it can't read:
 the worker logs that it's older than the server and needs `upkeep-git`
-updated, and picks up work again once it is. Update the workers before a
-release that raises the protocol.
+updated, and picks up work again once it is. A worker on a machine with
+`dot up first-party` set up updates itself (see [Machines](#machines)); update
+the others before a release that raises the protocol.
 
 A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
 `$UPKEEP_WORKER_STATUS`: a `health`, a one-line `summary` and when it was
@@ -640,11 +641,12 @@ The same change can be asked for through the API, as the `change` command:
 | `up-repos`          | Every 30 minutes | Pulls the tracked repositories on every worker that are behind and have no work in progress. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                    |
 | `up-tools`          | Daily at 05:10   | Installs and upgrades every worker's mise tools. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                                |
 | `up-plugins`        | Daily at 05:20   | Updates every worker's agent plugins, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                       |
+| `up-first-party`    | Hourly           | Upgrades every worker's packages from the signed first-party Arch repository without a password, and restarts the services still running an old binary. See [Machines](#machines).                                                                                                                                                                                                                                                                                         |
 
 With [GitHub events](/events) set up, `bump`, `watch`, `sync`, `deps`,
-`drift`, `ci` and `skill-consumers` also start seconds after the release,
-push or workflow run that concerns them, and the schedules above catch what
-an event misses.
+`drift`, `ci`, `skill-consumers` and `up-first-party` also start seconds after
+the release, push or workflow run that concerns them, and the schedules above
+catch what an event misses.
 
 A job whose scheduled time passed while the server was down, such as during
 an upgrade, runs once as the server starts, rather than waiting for its next
@@ -670,6 +672,18 @@ it. When a stage changed skills or agent plugins, the job runs `dot up agents`
 after it, which reloads running agents. A worker without `dot` skips them. A
 failed stage fails its run, which shows on the dashboard and is never healed.
 The Jobs table shows each worker's latest run of each one.
+
+`up-first-party` runs `dot up first-party`, which upgrades the packages from
+the signed first-party Arch repository through a root unit that the worker's
+user may start without a password. Each package's own install script restarts
+its user service, `upkeep-worker.service` among them, so a run that upgrades
+`upkeep-git` is cut off by its own worker's restart and goes back in the queue
+once, where it finds nothing left to do. A successful publish in that
+repository queues it on every worker straight away.
+
+A worker the server refuses as [older than itself](#workers) can't take that
+run, so it runs `dot up first-party` itself, at most every 15 minutes, until
+the upgrade restarts it on a version the server takes.
 
 ### Bump
 

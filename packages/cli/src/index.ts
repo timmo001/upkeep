@@ -2,7 +2,14 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Api, Client, Domain } from "@upkeep/api";
 import { Server, version } from "@upkeep/server";
-import { ghLayer, handlers, openSession, RunLog, Worker } from "@upkeep/worker";
+import {
+  ghLayer,
+  handlers,
+  openSession,
+  RunLog,
+  selfUpdate,
+  Worker,
+} from "@upkeep/worker";
 import {
   Cause,
   Config,
@@ -194,7 +201,9 @@ const runLine = (run: Domain.Run) =>
     .trimEnd();
 
 const worker = Command.make("worker", { server }, (input) =>
-  Worker.work(handlers).pipe(Effect.provide(workerClient(input.server))),
+  Worker.work(handlers, { onOutdated: selfUpdate }).pipe(
+    Effect.provide(workerClient(input.server)),
+  ),
 ).pipe(
   Command.withDescription(
     "Take and run jobs from the server with the token in $UPKEEP_WORKER_TOKEN",
