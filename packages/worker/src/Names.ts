@@ -6,10 +6,10 @@
  */
 import { homedir } from "node:os";
 import { Effect, Schema } from "effect";
+import { run } from "./Command";
 import { reason } from "./Failure";
 import * as RunLog from "./RunLog";
 import * as Settings from "./settings";
-import { run } from "./jobs/bump";
 
 /** What a `names` command prints: repositories by `owner/name`, with a name. */
 const Named = Schema.Array(
@@ -51,3 +51,18 @@ export const nameOf = (
   repo: string,
   entry: { readonly name: string } | undefined,
 ) => entry?.name.trim() || (repo.split("/").at(-1) ?? repo);
+
+/** The `owner/name` on GitHub a checkout or worktree is cloned from, or undefined. */
+export const repoAt = (directory: string) =>
+  run("git", ["remote", "get-url", "origin"], {
+    cwd: directory,
+    trusted: "",
+  }).pipe(
+    Effect.map(
+      (url) =>
+        /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+          url.trim(),
+        )?.[1],
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );

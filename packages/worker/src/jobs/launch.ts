@@ -777,12 +777,18 @@ export const openSession = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const { session } = command;
   const { directory, title } = yield* locate(command, settings, lookup);
+  const repo = yield* Names.repoAt(directory);
+
+  const name =
+    repo === undefined
+      ? path.basename(directory)
+      : Names.nameOf(repo, yield* Names.find(repo));
 
   const fill = (arg: string) =>
     arg
       .replaceAll("{session}", session)
       .replaceAll("{directory}", directory)
-      .replaceAll("{name}", path.basename(directory))
+      .replaceAll("{name}", name)
       .replaceAll("{title}", title);
 
   const [program = "", ...args] = setup.command.map(fill);
