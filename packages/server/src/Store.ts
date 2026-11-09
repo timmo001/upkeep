@@ -1092,10 +1092,15 @@ export class Store extends Context.Service<
      * repository takes over the waiting runs for one, in the oldest's place.
      */
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
+    /**
+     * The latest runs, newest first, or with `before`, a run's id, the ones
+     * queued before it.
+     */
     runs(filter: {
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
       readonly limit: number;
+      readonly before?: string | undefined;
     }): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     run(id: string): Effect.Effect<Domain.Run, Api.RunNotFound | StoreError>;
     /** The latest run of each job that has one. */
@@ -1711,10 +1716,18 @@ export class Store extends Context.Service<
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
       readonly limit: number;
+      readonly before?: string | undefined;
     }) {
       const conditions = [
         ...(filter.job === undefined ? [] : [sql`job = ${filter.job}`]),
         ...(filter.state === undefined ? [] : [sql`state = ${filter.state}`]),
+        // In the list's own order, so runs queued in the same millisecond
+        // aren't skipped or repeated between pages
+        ...(filter.before === undefined
+          ? []
+          : [
+              sql`(queued_at, id) < (SELECT queued_at, id FROM runs WHERE id = ${filter.before})`,
+            ]),
       ];
 
       return yield* selectRuns(sql`

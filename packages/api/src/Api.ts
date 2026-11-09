@@ -599,11 +599,16 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
 
 export class RunsGroup extends HttpApiGroup.make("runs")
   .add(
+    /**
+     * The latest runs, newest first. With `before`, a run's id, the page of
+     * runs queued before it, for loading older runs as a list scrolls.
+     */
     HttpApiEndpoint.get("list", "/", {
       query: {
         job: Schema.optional(Schema.String),
         state: Schema.optional(RunState),
         limit: Schema.optional(Schema.Int),
+        before: Schema.optional(Schema.String),
       },
       success: Schema.Array(Run),
     }),

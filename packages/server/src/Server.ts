@@ -772,6 +772,7 @@ const RunsHandlers = HttpApiBuilder.group(
             job: query.job,
             state: query.state,
             limit: bounded(query.limit, defaultRuns, Api.maxRuns),
+            before: query.before,
           })
           .pipe(Effect.orDie),
       get: ({ params }) =>

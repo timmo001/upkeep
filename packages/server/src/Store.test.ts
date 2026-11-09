@@ -557,6 +557,34 @@ test("a run for every repository takes over the waiting runs for one", () =>
     }),
   ));
 
+test("runs page with a before cursor, skipping and repeating none", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      // Different jobs, so none is covered by another waiting run
+      for (const job of ["ci", "drift", "deps", "bump", "watch"]) {
+        yield* store.queueRun({ job, trigger: "schedule", release: null });
+      }
+
+      const all = (yield* store.runs({ limit: 10 })).map((each) => each.id);
+      const paged: string[] = [];
+      let before: string | undefined;
+
+      for (;;) {
+        const page = yield* store.runs({ limit: 2, before });
+
+        if (page.length === 0) break;
+
+        paged.push(...page.map((each) => each.id));
+        before = page.at(-1)?.id;
+      }
+
+      expect(all).toHaveLength(5);
+      expect(paged).toEqual(all);
+    }),
+  ));
+
 test("a run asked for by hand is taken before older ones", () =>
   run(
     Effect.gen(function* () {
