@@ -32,6 +32,16 @@ import "@timmo001/groundwork-ui/define/gw-card.ts";
 import "@timmo001/groundwork-ui/define/gw-markdown.ts";
 import "./upkeep-sign-in.ts";
 
+type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
+
+/** The colour of a release impact, the same wherever it shows. */
+export const impactTone: Record<Domain.Impact, Tone> = {
+  none: "neutral",
+  patch: "accent",
+  minor: "warning",
+  major: "danger",
+};
+
 /** Styles every element shares. */
 export const shared = css`
   :host {

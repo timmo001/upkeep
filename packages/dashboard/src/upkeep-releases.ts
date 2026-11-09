@@ -24,6 +24,7 @@ import {
   drawn,
   empty,
   externalLink,
+  impactTone,
   shared,
   time,
   view,
@@ -47,15 +48,6 @@ import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section-title.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
-
-type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
-
-const impactTone: Record<Domain.Impact, Tone> = {
-  none: "neutral",
-  patch: "accent",
-  minor: "warning",
-  major: "danger",
-};
 
 const impacts: ReadonlyArray<Domain.Impact> = [
   "none",

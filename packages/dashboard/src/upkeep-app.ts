@@ -14,7 +14,7 @@ import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
 import { phSignOut } from "./icons.ts";
 import { bindTheme, offerDesktopTheme } from "./theme.ts";
-import { shared } from "./ui.ts";
+import { impactTone, shared } from "./ui.ts";
 import {
   attentionHref,
   desktopTheme,
@@ -45,6 +45,18 @@ import "./upkeep-repo.ts";
 import "./upkeep-repos.ts";
 import "./upkeep-run.ts";
 import "./upkeep-skills.ts";
+
+/** A count beside a menu link, in its own colour, and what it counts. */
+interface Badge {
+  readonly count: number;
+  readonly tone: string;
+  readonly label: string;
+}
+
+/** One plain count, for a link with nothing to tell apart. */
+const counted = (count: number): ReadonlyArray<Badge> => [
+  { count, tone: "accent", label: "" },
+];
 
 export class UpkeepApp extends LitElement {
   static override styles = [
@@ -130,13 +142,23 @@ export class UpkeepApp extends LitElement {
       : 0;
   }
 
-  /** How many repositories have changes worth a release, for the menu. */
-  #unreleased() {
+  /**
+   * How many repositories have changes worth a release, by the release they
+   * suggest, biggest first, for the menu.
+   */
+  #unreleased(): ReadonlyArray<Badge> {
     const result = this.#releases.value;
 
-    return AsyncResult.isSuccess(result)
-      ? result.value.repos.filter((entry) => entry.needsRelease).length
-      : 0;
+    if (!AsyncResult.isSuccess(result)) return [];
+
+    const due = result.value.repos.filter((entry) => entry.needsRelease);
+
+    return (["major", "minor", "patch"] as const).map((impact) => ({
+      count: due.filter((entry) => entry.snapshot?.suggestion === impact)
+        .length,
+      tone: impactTone[impact],
+      label: impact,
+    }));
   }
 
   /** How many entries worth reading are unread, for the menu. */
@@ -150,14 +172,26 @@ export class UpkeepApp extends LitElement {
       : 0;
   }
 
-  #link(href: string, label: string, current: boolean, count = 0) {
+  #link(
+    href: string,
+    label: string,
+    current: boolean,
+    badges: ReadonlyArray<Badge> = [],
+  ) {
     return html`<gw-button appearance="plain" variant="neutral"
       ><a href=${href} aria-current=${current ? "page" : "false"}
-        >${label}${
-          count === 0
-            ? nothing
-            : html`<gw-chip size="xs" tone="accent">${count}</gw-chip>`
-        }</a
+        >${label}${badges.flatMap((badge) =>
+          badge.count === 0
+            ? []
+            : [
+                html`<gw-chip
+                  size="xs"
+                  tone=${badge.tone}
+                  title=${badge.label === "" ? nothing : `${badge.count} ${badge.label}`}
+                  >${badge.count}</gw-chip
+                >`,
+              ],
+        )}</a
       ></gw-button
     >`;
   }
@@ -196,9 +230,9 @@ export class UpkeepApp extends LitElement {
               : nothing
           }</a
         >
-        ${this.#link(homeHref, "Inbox", onInbox, this.#unread())}
+        ${this.#link(homeHref, "Inbox", onInbox, counted(this.#unread()))}
         ${this.#link(attentionHref, "Attention", onAttention)}
-        ${this.#link(skillsHref, "Skills", onSkills, this.#waiting())}
+        ${this.#link(skillsHref, "Skills", onSkills, counted(this.#waiting()))}
         ${this.#link(releasesHref, "Releases", onReleases, this.#unreleased())}
         ${this.#link(reposHref, "Repositories", onRepos)}
         ${this.#link(jobsHref, "Jobs", onJobs)}
