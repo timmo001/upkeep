@@ -888,7 +888,9 @@ const inboxList = Command.make(
             ? "needs you"
             : entry.routine
               ? "bumps"
-              : "worth";
+              : Domain.worthReading(entry)
+                ? "worth"
+                : "yours";
 
         yield* Console.log(
           `${entry.id}  ${tab}  ${entry.title}${placedBy[entry.placedBy]}`,
@@ -899,7 +901,7 @@ const inboxList = Command.make(
   ),
 ).pipe(
   Command.withDescription(
-    "List the inbox's entries with their IDs and whether each is worth reading or a version bump",
+    "List the inbox's entries with their IDs and whether each is worth reading, your own or a version bump",
   ),
 );
 

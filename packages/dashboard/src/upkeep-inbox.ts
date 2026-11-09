@@ -5,7 +5,7 @@
  * a feed windowed so it stays quick however long it gets. Built from
  * groundwork's components.
  */
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController, registry } from "./AtomController.ts";
@@ -151,7 +151,7 @@ export class UpkeepInbox extends LitElement {
     const parked = this.#parked();
     const needs = box.entries.filter((entry) => entry.kind === "needs");
     const others = box.entries.filter((entry) => entry.kind !== "needs");
-    const worth = others.filter((entry) => !entry.routine);
+    const worth = others.filter(Domain.worthReading);
     const routine = others.filter((entry) => entry.routine);
     const fresh = others.filter((entry) => entry.readAt === null);
     const unread = worth.filter((entry) => entry.readAt === null).length;

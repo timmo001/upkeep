@@ -207,7 +207,7 @@ const Activity = Tool.make("activity", {
 
 const Inbox = Tool.make("inbox", {
   description:
-    "The inbox: each entry's ID, what it is, and whether it's worth reading or a version bump (routine), with placedBy saying whether Upkeep, a repository rule or a person put it there. `days` defaults to 7, up to 30.",
+    "The inbox: each entry's ID, what it is, and whether it's worth reading or a version bump (routine), with placedBy saying whether Upkeep, a repository rule or a person put it there. An entry with `you` set is the person's own commits or release, left out of what's worth reading unless it holds a fix by Upkeep or was put there. `days` defaults to 7, up to 30.",
   parameters: Schema.Struct({ days: Schema.optionalKey(Schema.Finite) }),
   success: Domain.Inbox,
   failure: UpkeepError,

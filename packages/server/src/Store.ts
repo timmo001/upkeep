@@ -677,6 +677,12 @@ const migrations = SqliteMigrator.fromRecord({
     `;
     yield* sql`UPDATE runs SET command = NULL WHERE job = 'release-publish'`;
   }),
+  // Releases are of repositories you own, so they're yours like your commits
+  "0035_your_releases": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`UPDATE entries SET you = 1 WHERE kind = 'release'`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -3516,6 +3522,7 @@ export class Store extends Context.Service<
 
           changed.push(release);
 
+          // A release of a repository you own is yours, so it starts read
           yield* upsertEntry(
             {
               key: Entries.releaseKey(release),
@@ -3526,7 +3533,7 @@ export class Store extends Context.Service<
               job: null,
               run: null,
               routine: false,
-              you: false,
+              you: true,
               at: now,
             },
             false,
@@ -3574,7 +3581,7 @@ export class Store extends Context.Service<
           count: 1,
           firstAt: entry.at,
           lastAt: entry.at,
-          // Your own commits are history you already know, so start read
+          // Your own doing is history you already know, so start read
           readAt: entry.you ? entry.at : null,
         })}
         ON CONFLICT (key) DO UPDATE SET

@@ -1156,6 +1156,9 @@ test("a release's bumps across repositories land in one inbox entry", () =>
       expect(entries[0]?.kind).toBe("release");
       expect(entries[0]?.title).toBe("lib v2");
       expect(entries[0]?.url).toBe(v2.url);
+      // A release is yours, and its bumps don't bring it back unread
+      expect(entries[0]?.you).toBe(true);
+      expect(entries[0]?.readAt).not.toBeNull();
       expect(entries[0]?.items.map((item) => item.repo)).toEqual([
         "timmo001/a",
         "timmo001/b",

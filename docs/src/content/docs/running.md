@@ -139,9 +139,13 @@ unread count, the summary and notifications.
 
 An opened entry links to the job behind it and, while it's kept, the run.
 An entry is unread until you open it or mark everything read, and comes back
-unread when something new joins it. Your own commits start read, and stay
-read as more of yours join them: they're kept as history, but they aren't
-counted as new or summed up as unread. Read and dismissed entries are deleted 30
+unread when something new joins it. Your own doing, your commits and the
+releases of your repositories, starts read and stays read as more of it
+joins, such as the bumps a release is rolled out with: it's kept as history,
+but it isn't counted as new, summed up as unread or shown under worth
+reading, only under its own tab. A release Upkeep had to fix something for
+comes back unread and is worth reading, and so is anything of yours moved
+there. Read and dismissed entries are deleted 30
 days after they last changed. The first time the server starts with the
 inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 `watch` job adds the commits made outside Upkeep.

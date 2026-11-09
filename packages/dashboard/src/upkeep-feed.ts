@@ -5,7 +5,7 @@
  * table, links to the job and run behind it, and its Move menu are only
  * drawn once it's opened, which also marks it read.
  */
-import { Catalogue, type Domain } from "@upkeep/api";
+import { Catalogue, Domain } from "@upkeep/api";
 import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import { GwExpansion } from "@timmo001/groundwork-ui/gw-expansion.ts";
 import type {
@@ -260,7 +260,7 @@ export class UpkeepFeed extends LitElement {
           value: "worth",
           label: "Worth reading",
           icon: phStar,
-          checked: !entry.routine,
+          checked: Domain.worthReading(entry),
         },
         {
           value: "bumps",
@@ -303,11 +303,12 @@ export class UpkeepFeed extends LitElement {
   #body(entry: Domain.Entry) {
     const kind = kinds[entry.kind];
     const fixes = fixesOf(entry);
+    const yours = entry.you && entry.kind === "commit";
 
     return html`<gw-stack gap="s">
       <gw-row gap="s">
-        <gw-chip size="xs" tone=${entry.you ? "accent" : kind.tone}
-          >${entry.you ? "You" : kind.label}</gw-chip
+        <gw-chip size="xs" tone=${yours ? "accent" : kind.tone}
+          >${yours ? "You" : kind.label}</gw-chip
         >
         ${
           fixes.length > 0

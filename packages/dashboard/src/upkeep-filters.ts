@@ -12,7 +12,7 @@ import "@timmo001/groundwork-ui/define/gw-segmented.ts";
 import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { plural, titleOf, type Titles } from "./entries.ts";
@@ -65,7 +65,7 @@ export const kindTabs: ReadonlyArray<{
     label: "Worth reading",
     icon: phStar,
     description:
-      "Everything that changed something real: releases, commits, updates and drift moves that needed a code or config change, and Upkeep's fixes. Version bumps are left out, and anything moved here from its Move menu or by a repository rule is in.",
+      "What's new to you: releases that needed a fix, commits by anyone else, updates and drift moves that needed a code or config change, and Upkeep's fixes. Version bumps are left out, and so are your own commits and releases, which are under their own tabs. Anything moved here from its Move menu or by a repository rule is in.",
   },
   {
     value: "release",
@@ -121,9 +121,9 @@ const readStateOf = (entry: Domain.Entry): ReadState =>
 export const matchesKind = (entry: Domain.Entry, kind: KindFilter) => {
   if (kind === "routine") return entry.routine;
 
-  if (entry.routine) return false;
+  if (kind === "worth") return Domain.worthReading(entry);
 
-  return kind === "worth" || entry.kind === kind;
+  return !entry.routine && entry.kind === kind;
 };
 
 /** Whether an entry shows under every filter but the kind. */

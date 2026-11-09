@@ -124,7 +124,7 @@ export const placement = (
           key: releaseKey(release),
           kind: "release",
           title: releaseTitle(release),
-          text: `Fixed: ${change.subject}`,
+          text: `${Domain.fixPrefix}${change.subject}`,
         };
   }
 
@@ -144,6 +144,8 @@ export const placement = (
   }
 
   switch (run?.job) {
+    // A release is yours, and rolling it out as planned is nothing new, so
+    // its bumps leave it read; a heal's fix above brings it back
     case Catalogue.bump.id:
       return run.release === null
         ? commit
@@ -152,6 +154,7 @@ export const placement = (
             key: releaseKey(run.release),
             kind: "release",
             title: releaseTitle(run.release),
+            you: true,
           };
 
     case Catalogue.drift.id:

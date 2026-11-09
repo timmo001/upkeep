@@ -6,6 +6,7 @@ import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import "@timmo001/groundwork-ui/define/gw-theme-picker.ts";
 import { GwThemePicker } from "@timmo001/groundwork-ui/gw-theme-picker.ts";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
@@ -144,7 +145,7 @@ export class UpkeepApp extends LitElement {
 
     return AsyncResult.isSuccess(result)
       ? result.value.entries.filter(
-          (entry) => entry.readAt === null && !entry.routine,
+          (entry) => entry.readAt === null && Domain.worthReading(entry),
         ).length
       : 0;
   }

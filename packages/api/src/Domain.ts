@@ -1087,7 +1087,10 @@ export const Entry = Schema.Struct({
   routine: Schema.Boolean,
   /** Who decided `routine`. */
   placedBy: EntryPlacer,
-  /** Pushed by the person Upkeep works for. */
+  /**
+   * The doing of the person Upkeep works for: their commits, or a release
+   * of theirs with the bumps Upkeep rolled it out with.
+   */
   you: Schema.Boolean,
   /** How many times it happened, such as how often a job was parked. */
   count: Schema.Int,
@@ -1098,6 +1101,20 @@ export const Entry = Schema.Struct({
 });
 
 export interface Entry extends Schema.Schema.Type<typeof Entry> {}
+
+/** The prefix of an item that's a fix Upkeep pushed, such as for a release. */
+export const fixPrefix = "Fixed: ";
+
+export const isFix = (item: EntryItem) => item.text.startsWith(fixPrefix);
+
+/**
+ * Whether an entry is worth reading: not a version bump, and not your own
+ * doing, which you already know about, unless Upkeep had to fix something
+ * in it or you or a repository rule put it there.
+ */
+export const worthReading = (entry: Entry) =>
+  !entry.routine &&
+  (!entry.you || entry.placedBy !== "upkeep" || entry.items.some(isFix));
 
 /**
  * The inbox: every entry that's unread or changed since `since`, newest

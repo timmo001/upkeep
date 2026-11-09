@@ -3,7 +3,7 @@
  * how much is unread in it, when it last changed and the jobs it's opted
  * into. Each card opens the repository's own page.
  */
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
 import { always, AtomController } from "./AtomController.ts";
@@ -35,8 +35,9 @@ const activityOf = (
   );
 
   return {
-    unread: touching.filter((entry) => entry.readAt === null && !entry.routine)
-      .length,
+    unread: touching.filter(
+      (entry) => entry.readAt === null && Domain.worthReading(entry),
+    ).length,
     lastAt: touching.reduce<number | null>(
       (last, entry) => Math.max(last ?? 0, entry.lastAt),
       null,

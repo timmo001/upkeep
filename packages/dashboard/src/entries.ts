@@ -3,7 +3,7 @@
  * and a line, its kind, the day it belongs to, and the summary of what's
  * new. Shared by the inbox and the repository pages.
  */
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 
 /** Repository titles by `owner/name`, lower-cased. */
 export type Titles = ReadonlyMap<string, string>;
@@ -61,7 +61,7 @@ const filler =
   /^(Release |Merge |Bump version|Update (dependency |lockfile|\S+ (digest|action))|Format|Lint|wip$)/i;
 
 export const fixesOf = (entry: Domain.Entry) =>
-  entry.items.filter((item) => item.text.startsWith("Fixed:"));
+  entry.items.filter(Domain.isFix);
 
 /**
  * What an entry did, as a heading and a line under it. Commits lead with
@@ -168,7 +168,9 @@ export const summarise = (
     sentences.push(`${plural(releases.length - 3, "more release")} went out.`);
   }
 
-  const yours = fresh.filter((entry) => entry.you && !entry.routine);
+  const yours = fresh.filter(
+    (entry) => entry.kind === "commit" && entry.you && !entry.routine,
+  );
 
   if (yours.length > 0) {
     const byRepo = new Map<string, number>();
