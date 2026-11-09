@@ -85,12 +85,20 @@ test("a successful package publish upgrades every worker's first-party packages"
       }),
     );
 
+  // The event carries the run's name, which names the package
+  expect(publish("Publish system-bridge-git", "success")).toEqual([
+    "ci:timmo001/arch-repo",
+    "up-first-party:all",
+  ]);
   expect(publish("Publish package", "success")).toEqual([
     "ci:timmo001/arch-repo",
     "up-first-party:all",
   ]);
-  expect(publish("Publish package", "failure")).toEqual([
+  expect(publish("Publish upkeep-git", "failure")).toEqual([
     "ci:timmo001/arch-repo",
   ]);
   expect(publish("Lint", "success")).toEqual(["ci:timmo001/arch-repo"]);
+  expect(publish("Purge package cache", "success")).toEqual([
+    "ci:timmo001/arch-repo",
+  ]);
 });

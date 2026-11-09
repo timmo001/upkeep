@@ -23,13 +23,15 @@ export const renovateConfigFiles: ReadonlyArray<string> = [
 ];
 
 /**
- * The repository that publishes the first-party Arch packages, and the
- * workflow that publishes them. Each successful publish has every worker
- * upgrade its own machine.
+ * The repository that publishes the first-party Arch packages, and how its
+ * publish runs are named. Each successful publish has every worker upgrade
+ * its own machine. A run is named for its package, such as `Publish
+ * upkeep-git`, and the event carries that name rather than the workflow's,
+ * so it's matched by prefix; no other workflow there starts with it.
  */
 export const packageRepository = "arch-repo";
 
-export const packageWorkflow = "Publish package";
+export const packageRunPrefix = "Publish ";
 
 /** A run an event asks for: for its repository, or for every one. */
 export interface EventRun {
@@ -94,7 +96,7 @@ export const runsFor = (event: GitHubEvent): ReadonlyArray<EventRun> => {
     return [
       { job: Catalogue.ci.id, ...own },
       ...(name === packageRepository &&
-      event.workflow.name === packageWorkflow &&
+      event.workflow.name.startsWith(packageRunPrefix) &&
       event.workflow.conclusion === "success"
         ? [{ job: Catalogue.upFirstParty.id, repo: null }]
         : []),

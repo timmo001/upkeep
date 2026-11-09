@@ -36,12 +36,12 @@ kept for as long as runs are (`keep_days`).
 
 ## What each event starts
 
-| Event                                                            | What it does                                                                                                                                                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `release` published, or promoted from a pre-release (`released`) | Records the release and queues `bump` if it's new, as the `releases` job does. The scheduled `releases` run then finds it recorded and queues nothing. A paused or parked `bump` holds it until it's let go. |
-| `push` to the default branch                                     | Queues `watch` for the repository, and `sync` for it when it's tracked for sync. A push to groundwork queues `sync` for every app, and one to the skills repository queues `skill-consumers`.                |
-| `push` that changes the Renovate config or `tooling.yml`         | Also queues `deps` or `drift` for the repository. A push with more changed paths than the event carries (300) queues both.                                                                                   |
-| `workflow_run` completed on the default branch                   | Queues `ci` for the repository. A successful `Publish package` run in `arch-repo` also queues `up-first-party` on every worker, so each machine upgrades its first-party packages straight away.             |
+| Event                                                            | What it does                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `release` published, or promoted from a pre-release (`released`) | Records the release and queues `bump` if it's new, as the `releases` job does. The scheduled `releases` run then finds it recorded and queues nothing. A paused or parked `bump` holds it until it's let go.       |
+| `push` to the default branch                                     | Queues `watch` for the repository, and `sync` for it when it's tracked for sync. A push to groundwork queues `sync` for every app, and one to the skills repository queues `skill-consumers`.                      |
+| `push` that changes the Renovate config or `tooling.yml`         | Also queues `deps` or `drift` for the repository. A push with more changed paths than the event carries (300) queues both.                                                                                         |
+| `workflow_run` completed on the default branch                   | Queues `ci` for the repository. A successful publish run in `arch-repo` (named `Publish <package>`) also queues `up-first-party` on every worker, so each machine upgrades its first-party packages straight away. |
 
 A run for one repository is only queued when the repository is tracked for
 the job, or tracked at all for `watch`, and a waiting run for it or for every
