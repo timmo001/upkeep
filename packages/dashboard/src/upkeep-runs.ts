@@ -1,28 +1,29 @@
 /**
  * `upkeep-runs`: the latest runs, of every job or the one in `job`, grouped
  * by day and kept up to date while it's on screen. A run's whole row opens
- * it, with its log. The search and filters sit in a section over the table
- * that folds away, and what's set in them is kept with the table's own view
- * state, in groundwork's shared store.
+ * it, with its log. Beside the table's search, a Filters button opens a
+ * sheet of filters, as the inbox's does, each on shown as a chip that takes
+ * it off. The filters are kept with the table's own view state, in
+ * groundwork's shared store.
  */
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
-import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
 import type {
   TableColumn,
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
-import { isText, keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
+import { keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
 import type { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
-import { css, html, LitElement, nothing } from "lit";
+import { css, html, LitElement } from "lit";
+import { ref } from "lit/directives/ref.js";
 import { always, AtomController } from "./AtomController.ts";
-import { plural } from "./entries.ts";
 import {
   phBookBookmark,
   phBriefcase,
   phCheckCircle,
   phClockCounterClockwise,
-  phMagnifyingGlass,
+  phFunnelSimple,
   phPlay,
   phTerminalWindow,
   phX,
@@ -43,9 +44,8 @@ import {
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import { jobHref, jobs, runHref, runs } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
-import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
-import "@timmo001/groundwork-ui/define/gw-input.ts";
+import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
 /** Each filter of the runs, by the key it's kept under. */
@@ -182,21 +182,8 @@ export class UpkeepRuns extends LitElement {
         cursor: pointer;
       }
 
-      /* The search and filters take the table's whole toolbar */
-      gw-expansion {
-        flex: 1 1 100%;
-      }
-
-      gw-input.search {
-        max-width: 24rem;
-      }
-
-      .filters {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-        gap: var(--gw-space-3) var(--gw-space-4);
-        align-items: start;
-        margin-top: var(--gw-space-3);
+      gw-sheet {
+        --gw-filter-inset: var(--gw-space-4);
       }
     `,
   ];
@@ -206,6 +193,8 @@ export class UpkeepRuns extends LitElement {
 
   /** Starts with every day folded away. */
   declare groupsCollapsed: boolean;
+
+  #sheet: GwSheet | undefined;
 
   constructor() {
     super();
@@ -225,7 +214,7 @@ export class UpkeepRuns extends LitElement {
     return known.find((item) => item.id === job)?.lane ?? "repos";
   }
 
-  /** Where the table keeps its view state, and the search and filters beside it. */
+  /** Where the table keeps its view state, and the filters beside it. */
   get #storageKey() {
     return this.job === "" ? "upkeep.runs.table" : "upkeep.job-runs.table";
   }
@@ -253,20 +242,18 @@ export class UpkeepRuns extends LitElement {
     this.requestUpdate();
   }
 
-  #clear() {
-    keep(this.#storageKey, {
-      query: "",
-      ...Object.fromEntries(runFilters.map((filter) => [filter.id, null])),
-    });
+  /** Takes a filter off, back to its default. */
+  #off(filter: RunFilter) {
+    keep(this.#storageKey, { [filter.id]: null });
     this.requestUpdate();
   }
 
   /**
-   * The search and filters, folded into the table's toolbar, with what's on
-   * in the line under the heading so it shows while it's shut.
+   * The Filters button beside the table's search, counting the filters that
+   * are on, with a chip for each that takes it off, and the sheet it opens,
+   * as the inbox's filters work.
    */
-  #search(
-    query: string,
+  #toolbar(
     filters: ReadonlyArray<{
       readonly filter: RunFilter;
       readonly options: ReadonlyArray<{
@@ -279,57 +266,44 @@ export class UpkeepRuns extends LitElement {
       readonly on: boolean;
       readonly shown: boolean;
     }>,
-    shown: number,
-    total: number,
   ) {
-    const on = filters.filter((each) => each.on).length;
+    const on = filters.filter((each) => each.on);
 
-    const description = [
-      query === "" ? "" : `Searching for "${query}"`,
-      on === 0
-        ? ""
-        : `${plural(on, "filter")} on, ${shown} of ${plural(total, "run")}`,
-    ]
-      .filter((part) => part !== "")
-      .join(", ");
+    return html`<gw-button
+        slot="toolbar"
+        appearance=${on.length > 0 ? "accent" : "outlined"}
+        variant=${on.length > 0 ? "brand" : "neutral"}
+        icon=${phFunnelSimple}
+        @click=${() => this.#sheet?.toggle()}
+        >${on.length > 0 ? `Filters (${on.length})` : "Filters"}</gw-button
+      >
+      ${on.map(({ filter, options, value }) => {
+        const [only] = value;
 
-    return html`<gw-expansion
-      slot="toolbar"
-      heading="Search and filters"
-      description=${description}
-      storage-key=${`${this.#storageKey}.search`}
-    >
-      ${
-        query === "" && on === 0
-          ? nothing
-          : html`<gw-button
-              slot="actions"
-              size="xs"
-              appearance="outlined"
-              variant="neutral"
-              icon=${phX}
-              @click=${() => this.#clear()}
-              >Clear</gw-button
-            >`
-      }
-      <gw-input
-        class="search"
-        type="search"
-        label="Search runs"
-        label-hidden
-        placeholder="Search runs"
-        icon=${phMagnifyingGlass}
-        .value=${query}
-        @input=${(event: Event) => {
-          const target = event.currentTarget;
+        // The one value it's narrowed to by name, or how many
+        const label =
+          value.length === 1 && only !== undefined
+            ? (options.find((option) => option.value === only)?.label ?? only)
+            : `${value.length === 0 ? "All" : value.length} ${filter.many}`;
 
-          keep(this.#storageKey, {
-            query: target instanceof GwInput ? target.value : "",
-          });
-          this.requestUpdate();
-        }}
-      ></gw-input>
-      <div class="filters">
+        return html`<gw-button
+          slot="toolbar"
+          size="xs"
+          appearance="outlined"
+          variant="neutral"
+          icon=${phX}
+          label=${`Remove ${label}`}
+          @click=${() => this.#off(filter)}
+          >${label}</gw-button
+        >`;
+      })}
+      <gw-sheet
+        slot="toolbar"
+        heading="Filters"
+        ${ref((element) => {
+          this.#sheet = element instanceof GwSheet ? element : undefined;
+        })}
+      >
         ${filters.flatMap(({ filter, options, value, fallback, shown }) =>
           shown
             ? [
@@ -352,14 +326,12 @@ export class UpkeepRuns extends LitElement {
               ]
             : [],
         )}
-      </div>
-    </gw-expansion>`;
+      </gw-sheet>`;
   }
 
   /** The runs as a table, newest first, grouped by the day each was queued. */
   #table(all: ReadonlyArray<Domain.Run>) {
     const kept = keptAt(this.#storageKey);
-    const query = isText(kept?.query) ? kept.query : "";
 
     const filters = runFilters.map((filter) => {
       const options = optionsOf(filter, all);
@@ -496,8 +468,8 @@ export class UpkeepRuns extends LitElement {
       },
     ];
 
-    // The table's own search field is left out for the one in the section,
-    // which keeps its text where the table reads it back from
+    // The search always shows, so it doesn't come and go as the filters
+    // narrow the rows
     return html`<gw-table
       storage-key=${this.#storageKey}
       label="Runs"
@@ -505,10 +477,9 @@ export class UpkeepRuns extends LitElement {
       ?groups-collapsed=${this.groupsCollapsed}
       contained
       row-key="id"
-      search="never"
+      search="always"
+      search-label="Search runs"
       empty-label="No runs match the filters"
-      no-match-label="No runs match the search"
-      .query=${query}
       .columns=${columns}
       .rows=${list.map((run) => ({
         id: run.id,
@@ -528,7 +499,7 @@ export class UpkeepRuns extends LitElement {
         queued: run.queuedAt,
       }))}
     >
-      ${this.#search(query, filters, list.length, all.length)}
+      ${this.#toolbar(filters)}
     </gw-table>`;
   }
 
