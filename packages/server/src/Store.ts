@@ -991,6 +991,16 @@ const jobName = (id: string) =>
 /** The entry of a parked job. */
 const parkedKey = (job: string) => `needs:parked:${job}`;
 
+/** The start of the entries for the permission prompts on a worker's machine. */
+const promptPrefix = (worker: string) => `needs:permission:${worker}:`;
+
+/** A prompt's entry, saying which agent waits and what it wants to do. */
+const promptEntry = (worker: string, prompt: Domain.PermissionPrompt) => ({
+  key: `${promptPrefix(worker)}${prompt.id}`,
+  title: `${prompt.title ?? "An agent"} is waiting on permission`,
+  detail: `Wants ${prompt.resources.length === 0 ? prompt.action : `${prompt.action}: ${prompt.resources.join(", ")}`}, in ${prompt.directory} on ${worker}`,
+});
+
 /** An entry for something that needs a person, by its key. */
 export interface Needs {
   readonly key: string;
@@ -1419,6 +1429,14 @@ export class Store extends Context.Service<
     needs(needs: Needs): Effect.Effect<void, StoreError>;
     /** Settle an entry that needed a person, so it leaves the inbox. */
     settle(key: string): Effect.Effect<void, StoreError>;
+    /**
+     * Keep the permission prompts waiting on `worker`'s machine: raise an
+     * entry for each new one, and settle those no longer waiting.
+     */
+    putPrompts(
+      worker: string,
+      prompts: ReadonlyArray<Domain.PermissionPrompt>,
+    ): Effect.Effect<void, StoreError>;
     /** Delete read or dismissed entries last changed before `before`. */
     pruneInbox(before: number): Effect.Effect<number, StoreError>;
     /**
@@ -3439,6 +3457,58 @@ export class Store extends Context.Service<
       `;
     }, Effect.mapError(storeError));
 
+    // Each prompt is raised once, so one you dismissed stays dismissed while
+    // it waits; the rest settle once it's answered or gone.
+    const putPrompts = Effect.fn("Store.putPrompts")(
+      function* (
+        worker: string,
+        prompts: ReadonlyArray<Domain.PermissionPrompt>,
+      ) {
+        const prefix = promptPrefix(worker);
+        const now = yield* Clock.currentTimeMillis;
+
+        const known = yield* sql<{ key: string; dismissedAt: number | null }>`
+          SELECT key, dismissed_at FROM entries
+          WHERE substr(key, 1, ${prefix.length}) = ${prefix}
+        `;
+
+        const raised = new Set(known.map((row) => row.key));
+        const entries = prompts.map((prompt) => promptEntry(worker, prompt));
+        const waiting = new Set(entries.map((entry) => entry.key));
+
+        for (const entry of entries) {
+          if (raised.has(entry.key)) continue;
+
+          yield* upsertEntry(
+            {
+              ...entry,
+              kind: "needs",
+              url: null,
+              job: null,
+              run: null,
+              routine: false,
+              you: false,
+              at: now,
+            },
+            true,
+          );
+        }
+
+        const answered = known
+          .filter((row) => row.dismissedAt === null && !waiting.has(row.key))
+          .map((row) => row.key);
+
+        if (answered.length > 0) {
+          yield* sql`
+            UPDATE entries SET dismissed_at = ${now}
+            WHERE ${sql.in("key", answered)}
+          `;
+        }
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
     const ruleRows = sql`
       SELECT repo AS place, routine, at FROM inbox_rules ORDER BY repo
     `.pipe(Effect.flatMap(decodePlaces));
@@ -4170,6 +4240,7 @@ export class Store extends Context.Service<
       seen: announce(touches("inbox"), seen),
       needs: announce(touches("inbox"), needs),
       settle: announce(touches("inbox"), settle),
+      putPrompts: announce(touches("inbox"), putPrompts),
       pruneInbox: announce(
         touchesIf((pruned: number) => pruned > 0, "inbox"),
         pruneInbox,

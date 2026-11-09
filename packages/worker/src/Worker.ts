@@ -28,6 +28,7 @@ import type { ChildProcessSpawner } from "effect/process";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
 import * as Notify from "./Notify";
+import * as Prompts from "./Prompts";
 import * as RateLimits from "./RateLimits";
 import { narrowTo, Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
@@ -473,8 +474,9 @@ export const work = Effect.fn("Worker.work")(function* (
   const copies = (name: Domain.Lane) => (name === "heal" ? healSessions : 1);
 
   // Telling you what's new that needs you runs beside the lanes, once a minute,
-  // and so does following the desktop's Omarchy theme. It's held in the quiet
-  // hours, so what came up overnight is told when they end.
+  // and so do following the desktop's Omarchy theme and the permission
+  // prompts its agents wait on. Telling you is held in the quiet hours, so
+  // what came up overnight is told when they end.
   const notify = (yield* Notify.make).pipe(
     Effect.when(Effect.map(quiet, (resting) => !resting)),
     Effect.repeat(Schedule.spaced("1 minute")),
@@ -487,6 +489,7 @@ export const work = Effect.fn("Worker.work")(function* (
       ),
       notify,
       Theme.follow,
+      Prompts.follow,
     ],
     {
       concurrency: "unbounded",

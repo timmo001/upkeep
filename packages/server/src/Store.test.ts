@@ -1391,6 +1391,50 @@ test("parking needs a person until the job is unparked", () =>
     }),
   ));
 
+test("a permission prompt needs you once, until it's answered", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const prompt = (id: string): Domain.PermissionPrompt => ({
+        id,
+        session: "ses_1",
+        title: "Fix the build",
+        directory: "/work/a",
+        action: "bash",
+        resources: ["rm -rf dist"],
+      });
+
+      const titles = Effect.map(store.inbox(0), ({ entries }) =>
+        entries.map((entry) => `${entry.title}: ${entry.detail}`),
+      );
+
+      yield* store.putPrompts("desk", [prompt("per_1"), prompt("per_2")]);
+      yield* store.putPrompts("desk", [prompt("per_1"), prompt("per_2")]);
+      yield* store.putPrompts("laptop", [prompt("per_3")]);
+
+      const entries = (yield* store.inbox(0)).entries;
+
+      expect(entries.map((entry) => entry.count)).toEqual([1, 1, 1]);
+      expect(yield* titles).toContain(
+        "Fix the build is waiting on permission: Wants bash: rm -rf dist, in /work/a on desk",
+      );
+
+      const desk = entries.find((entry) => entry.detail?.endsWith("on desk"));
+
+      yield* store.dismiss(desk?.id ?? "");
+      yield* store.putPrompts("desk", [prompt("per_1"), prompt("per_2")]);
+
+      expect((yield* store.inbox(0)).entries.length).toBe(2);
+
+      yield* store.putPrompts("desk", []);
+
+      expect(yield* titles).toEqual([
+        "Fix the build is waiting on permission: Wants bash: rm -rf dist, in /work/a on laptop",
+      ]);
+    }),
+  ));
+
 test("tracking a repository again replaces its jobs, ignoring case", () =>
   run(
     Effect.gen(function* () {

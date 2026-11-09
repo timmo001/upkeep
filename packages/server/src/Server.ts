@@ -1339,6 +1339,13 @@ const WorkHandlers = HttpApiBuilder.group(
 
         yield* store.putTheme(payload, worker.name).pipe(Effect.orDie);
       }),
+      putPrompts: Effect.fn(function* ({ payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .putPrompts(worker.name, payload.prompts)
+          .pipe(Effect.orDie);
+      }),
     });
   }),
 );

@@ -111,8 +111,9 @@ with no agent; **Summarise in more detail** runs the `summary` job, which asks
 an agent for a longer write-up of what's unread and shows it in the same card.
 Below that:
 
-- **Needs you** holds only what won't settle without you: a parked job, or a
-  heal that asked for you or left a fix unfinished. Each comes once however
+- **Needs you** holds only what won't settle without you: a parked job, a
+  heal that asked for you or left a fix unfinished, or an OpenCode agent
+  that's waited a minute on a permission prompt. Each comes once however
   often it happened, with the button that settles it, and goes once it's
   settled or dismissed.
 - **What changed** is one entry per change, by day. A change that reached
@@ -460,6 +461,15 @@ link with `upkeep open`, which opens the session through that machine's
 `attention.resume` as a worker would, importing it from the server (as the
 admin in `admin.env`) when it ran elsewhere. Run it by hand with
 `upkeep open <session>`.
+
+Each worker also watches its own machine's OpenCode for any session, Upkeep's
+or yours, waiting on a permission prompt. Every 15 seconds it reads the
+background service's address from `$XDG_STATE_HOME/opencode/service.json`
+and asks it for the prompts waiting in each place it has loaded. One that's
+waited a minute goes under Needs you, and in `upkeep status`, with the
+session's title, its directory, the worker and what the agent wants to do.
+It settles once the prompt is answered, or gone after a restart. A machine
+without OpenCode running sends nothing.
 
 The decision model and agents go in the worker's config file. The model is
 any TypeSafe System One API at `url`, such as Ollaya or Ollama on the worker,

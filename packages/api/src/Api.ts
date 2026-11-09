@@ -44,6 +44,7 @@ import {
   Outcome,
   Parked,
   Period,
+  PermissionPrompts,
   Precedent,
   Release,
   RepoName,
@@ -1164,6 +1165,14 @@ export class WorkGroup extends HttpApiGroup.make("work")
     /** Keep the Omarchy theme the worker's desktop just switched to. */
     HttpApiEndpoint.put("putTheme", "/theme", {
       payload: OmarchyTheme,
+      success: HttpApiSchema.NoContent,
+    }),
+    /**
+     * Keep the permission prompts OpenCode agents on the worker's machine
+     * have left waiting, replacing the last set it sent.
+     */
+    HttpApiEndpoint.put("putPrompts", "/prompts", {
+      payload: PermissionPrompts,
       success: HttpApiSchema.NoContent,
     }),
   )

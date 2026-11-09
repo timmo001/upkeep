@@ -968,6 +968,33 @@ export const DesktopTheme = Schema.Struct({
 export interface DesktopTheme extends Schema.Schema.Type<typeof DesktopTheme> {}
 
 /**
+ * A permission prompt an OpenCode agent on a worker's machine has waited on
+ * for a while: the request, its session and what the agent wants to do.
+ */
+export const PermissionPrompt = Schema.Struct({
+  id: Schema.String,
+  session: Schema.String,
+  /** The session's title, or none when it has none yet. */
+  title: Schema.NullOr(Schema.String),
+  directory: Schema.String,
+  action: Schema.String,
+  resources: Schema.Array(Schema.String),
+});
+
+export interface PermissionPrompt extends Schema.Schema.Type<
+  typeof PermissionPrompt
+> {}
+
+/** Every prompt waiting on a worker's machine, replacing what it sent last. */
+export const PermissionPrompts = Schema.Struct({
+  prompts: Schema.Array(PermissionPrompt),
+});
+
+export interface PermissionPrompts extends Schema.Schema.Type<
+  typeof PermissionPrompts
+> {}
+
+/**
  * A part of the server's state that a change touched: `runs` covers runs and
  * jobs, `log` a run's log, `inbox` the inbox and tracked repositories,
  * `workers` what the workers last said they're set up with, and `theme` the
