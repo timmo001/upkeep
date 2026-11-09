@@ -330,6 +330,9 @@ config file, a command that prints a JSON array of objects with `github`
 The `watch` job runs it each time and names the tracked repositories it
 lists. Give the command's full path when the worker runs as a service. A
 name set by hand always stays; clear it and the worker's name shows again.
+An agent the worker opens for a repository, from the Attention, Releases or
+Skills page, gets the same name, and one from the Attention or Releases page
+starts in the object's `path` when it has one.
 
 ## Runs
 
@@ -945,15 +948,17 @@ so are items carrying one of `ignoreLabels`. `workTime.command` prints
 match, or All without it. `agent` is the OpenCode model the context job runs
 on, best a quick one, or the first of `heal.agents` without it. `launch`
 lets the worker start agents: `command` runs in the checkout with `{brief}`
-(the brief's file), `{directory}`, `{repo}`, `{name}` and `{title}` filled
-in, and `directory` is where your checkouts are, with `{owner}` and `{name}`;
-a repository with no checkout there is cloned into the cache. `resume` lets
+(the brief's file), `{directory}`, `{repo}`, `{name}` (the name `names`
+gives the repository, or its own) and `{title}` filled in. The checkout is
+the `path` `names` gives, or else from `directory`, where your checkouts are,
+with `{owner}` and `{name}`; a repository with no checkout there yet is
+cloned there, never into a scratch directory. `resume` lets
 the worker open an agent's OpenCode session from a heal's run page or a skill
 change: `command` runs in the directory the agent worked in, with
 `{session}`, `{directory}`, `{name}` (the directory's last folder) and
 `{title}` filled in. A heal session another worker shared is imported first,
 into the same directory when it's on this worker too, or else into the
-checkout `launch.directory` finds:
+checkout an agent from the Attention page would start in:
 
 ```json
 {

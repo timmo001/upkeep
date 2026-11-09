@@ -12,15 +12,13 @@
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
-import { homedir } from "node:os";
 import { Clock, Effect, Schema } from "effect";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import * as Kept from "../Kept";
+import * as Names from "../Names";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
-import * as Settings from "../settings";
-import { run } from "./bump";
 
 /** How far back each run looks; commits the inbox has are skipped. */
 const lookbackHours = 48;
@@ -258,43 +256,20 @@ const readTitle = (repo: string, kept: Kept.Kept) =>
     Effect.catchCause(() => Effect.succeed({ repo, title: null })),
   );
 
-/** What a `names` command prints: repositories by `owner/name`, with a name. */
-const Named = Schema.Array(
-  Schema.Struct({
-    github: Schema.optionalKey(Schema.NullOr(Schema.String)),
-    name: Schema.String,
-  }),
-);
-
 /**
  * The names the `names` command gives the tracked repositories, matched
  * ignoring case. None without the setting, or when the command fails.
  */
 const namesOf = Effect.fnUntraced(function* (repos: ReadonlyArray<string>) {
-  const command = (yield* Settings.load()).names?.command ?? [];
-  const [program, ...args] = command;
-
-  if (program === undefined) return [];
-
   const tracked = new Map(repos.map((repo) => [repo.toLowerCase(), repo]));
 
-  return yield* run(program, args, { cwd: homedir(), trusted: homedir() }).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Named))),
-    Effect.map((named) =>
-      named.flatMap(({ github, name }) => {
-        const repo = tracked.get(github?.toLowerCase() ?? "");
+  return (yield* Names.listed).flatMap(({ github, name }) => {
+    const repo = tracked.get(github?.toLowerCase() ?? "");
 
-        return repo === undefined || name.trim() === ""
-          ? []
-          : [{ repo, name: name.trim() }];
-      }),
-    ),
-    Effect.catchCause((cause) =>
-      RunLog.warn(
-        `Couldn't read names from ${command.join(" ")}: ${reason(cause)}`,
-      ).pipe(Effect.as([])),
-    ),
-  );
+    return repo === undefined || name.trim() === ""
+      ? []
+      : [{ repo, name: name.trim() }];
+  });
 });
 
 export const watch = Effect.fnUntraced(function* () {

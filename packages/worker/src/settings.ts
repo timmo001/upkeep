@@ -109,9 +109,11 @@ const Attention = Schema.Struct({
   /**
    * How this worker opens an agent for you from the Attention page, which it
    * offers only with this set. `command` runs in the checkout with `{brief}`
-   * (the brief's file), `{directory}`, `{repo}` (`owner/name`), `{name}` and
-   * `{title}` replaced. `directory` is where your checkouts are, with
-   * `{owner}` and `{name}`; one that isn't there is cloned into the cache.
+   * (the brief's file), `{directory}`, `{repo}` (`owner/name`), `{name}` (the
+   * name `names` gives it, or the repository's own) and `{title}` replaced.
+   * The checkout is the one `names` gives, where it prints a `path`, or else
+   * from `directory`, where your checkouts are, with `{owner}` and `{name}`;
+   * one that isn't there yet is cloned there.
    */
   launch: Schema.optionalKey(
     Schema.Struct({
@@ -250,7 +252,9 @@ export const Settings = Schema.Struct({
    * Opt in to naming tracked repositories from your own list, over their
    * README titles. The watch job runs `command` each time and reads the JSON
    * array it prints, of objects with `github` (`owner/name`) and `name`, such
-   * as `["dot", "repo", "list", "--json"]`. A name set by hand is kept.
+   * as `["dot", "repo", "list", "--json"]`. A name set by hand is kept. An
+   * agent opened for a repository is named the same, and one from the
+   * Attention or Releases page starts in the object's `path` when it has one.
    */
   names: Schema.optionalKey(
     Schema.Struct({

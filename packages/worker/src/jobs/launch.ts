@@ -11,6 +11,7 @@ import { Graphql, Repository, Workflow } from "@timmo001/effect-gh";
 import { Api, Domain } from "@upkeep/api";
 import { Config, Effect, FileSystem, Path, Schema } from "effect";
 import { reason } from "../Failure";
+import * as Names from "../Names";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -403,40 +404,39 @@ const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
 );
 
 /**
- * Where the agent works: your checkout from the `directory` pattern, or a
- * clone in the cache, which is left as it is once there so work in it isn't
- * lost.
+ * Where the agent works: your checkout of the repository, at the `path` your
+ * `names` list gives it or else from the `directory` pattern, cloned there
+ * when it isn't yet. An agent you open never works in a scratch clone.
  */
 const directoryFor = Effect.fnUntraced(function* (
   repo: string,
   pattern: string | undefined,
+  listed: { readonly path?: string } | undefined,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const [owner = "", name = ""] = repo.split("/");
   const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
 
-  if (pattern !== undefined) {
-    const mine = pattern
-      .replace(/^~(?=\/)/, home)
+  const directory =
+    listed?.path ??
+    pattern
+      ?.replace(/^~(?=\/)/, home)
       .replaceAll("{owner}", owner)
       .replaceAll("{name}", name);
 
-    if (yield* fs.exists(mine)) return mine;
-
-    yield* RunLog.info(`There's no checkout at ${mine}, so using the cache`);
-  }
-
-  const directory = `${yield* cacheRoot}/agents/${repo}`;
+  if (directory === undefined)
+    return yield* new LaunchFailed({
+      message: `There's no checkout of ${repo} here: list it in names, or set attention.launch.directory`,
+    });
 
   if (!(yield* fs.exists(directory))) {
     yield* RunLog.info(`Cloning ${repo} into ${directory}`);
-    yield* fs.makeDirectory(`${yield* cacheRoot}/agents/${owner}`, {
-      recursive: true,
-    });
+    yield* fs.makeDirectory(path.dirname(directory), { recursive: true });
     yield* Repository.clone({
       repository: repo,
       directory,
-      gitArgs: ["--quiet", "--filter=blob:none"],
+      gitArgs: ["--quiet"],
     });
   }
 
@@ -480,6 +480,7 @@ export const launch = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const repo = command.repo ?? first.repo;
   const title = group?.name ?? first.title;
+  const listed = yield* Names.find(repo);
 
   yield* RunLog.info(
     `Gathering where ${items.length === 1 ? "the item stands" : `${items.length} items stand`}, and finding ${repo}'s checkout`,
@@ -490,7 +491,7 @@ export const launch = Effect.fnUntraced(function* (
   const [brief, directory] = yield* Effect.all(
     [
       briefOf(page, items, group, command.prompt, repo),
-      directoryFor(repo, setup.directory),
+      directoryFor(repo, setup.directory, listed),
     ],
     { concurrency: 2 },
   );
@@ -506,7 +507,7 @@ export const launch = Effect.fnUntraced(function* (
       .replaceAll("{brief}", file)
       .replaceAll("{directory}", directory)
       .replaceAll("{repo}", repo)
-      .replaceAll("{name}", repo.split("/").at(-1) ?? repo)
+      .replaceAll("{name}", Names.nameOf(repo, listed))
       .replaceAll("{title}", title);
 
   const [program = "", ...args] = setup.command.map(fill);
@@ -624,7 +625,8 @@ export const releaseAgent = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const repo = command.repo;
   const title = `Release ${entry.nextVersion ?? entry.name}`;
-  const directory = yield* directoryFor(repo, setup.directory);
+  const listed = yield* Names.find(repo);
+  const directory = yield* directoryFor(repo, setup.directory, listed);
   const briefs = `${yield* cacheRoot}/briefs`;
   const file = path.join(briefs, `${Date.now()}.md`);
 
@@ -636,7 +638,7 @@ export const releaseAgent = Effect.fnUntraced(function* (
       .replaceAll("{brief}", file)
       .replaceAll("{directory}", directory)
       .replaceAll("{repo}", repo)
-      .replaceAll("{name}", repo.split("/").at(-1) ?? repo)
+      .replaceAll("{name}", Names.nameOf(repo, listed))
       .replaceAll("{title}", title);
 
   const [program = "", ...args] = setup.command.map(fill);
@@ -692,7 +694,7 @@ const imported = Effect.fnUntraced(function* (
 
   const directory = (yield* fs.exists(command.directory))
     ? command.directory
-    : yield* directoryFor(shared.repo, pattern);
+    : yield* directoryFor(shared.repo, pattern, yield* Names.find(shared.repo));
 
   const sessions = `${yield* cacheRoot}/sessions`;
   const file = path.join(sessions, `${command.session}.json`);

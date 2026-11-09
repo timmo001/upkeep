@@ -9,6 +9,7 @@ import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
 import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 import { reason as why } from "../Failure";
+import * as Names from "../Names";
 import { attention, pushed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -689,12 +690,14 @@ const openAgent = Effect.fnUntraced(function* (command: OpenAgent) {
   yield* fs.makeDirectory(briefs, { recursive: true });
   yield* fs.writeFileString(file, brief);
 
+  const listed = yield* Names.find(change.repo);
+
   const fill = (arg: string) =>
     arg
       .replaceAll("{brief}", file)
       .replaceAll("{directory}", change.directory)
       .replaceAll("{repo}", change.repo)
-      .replaceAll("{name}", change.repo.split("/").at(-1) ?? change.repo)
+      .replaceAll("{name}", Names.nameOf(change.repo, listed))
       .replaceAll("{title}", change.title);
 
   const [program = "", ...args] = setup.command.map(fill);
