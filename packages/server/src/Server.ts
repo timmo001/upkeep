@@ -20,6 +20,7 @@ import {
   PubSub,
   Redacted,
   Schedule,
+  Schema,
 } from "effect";
 import {
   HttpMiddleware,
@@ -81,6 +82,12 @@ const defaultLogLines = Api.maxLogLines;
 /** A requested count, between 1 and `max`. */
 const bounded = (limit: number | undefined, fallback: number, max: number) =>
   Math.min(Math.max(limit ?? fallback, 1), max);
+
+const isRunState = Schema.is(Domain.RunState);
+
+/** The run states a comma-separated list names, leaving out any unknown. */
+const runStates = (list: string | undefined) =>
+  list === undefined ? undefined : list.split(",").filter(isRunState);
 
 const AdminAuthorizationLayer = Layer.effect(
   Api.AdminAuthorization,
@@ -771,6 +778,7 @@ const RunsHandlers = HttpApiBuilder.group(
           .runs({
             job: query.job,
             state: query.state,
+            states: runStates(query.states),
             limit: bounded(query.limit, defaultRuns, Api.maxRuns),
             before: query.before,
           })

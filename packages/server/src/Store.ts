@@ -1094,11 +1094,12 @@ export class Store extends Context.Service<
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
-     * queued before it.
+     * queued before it. `states` keeps only runs in one of them.
      */
     runs(filter: {
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
+      readonly states?: ReadonlyArray<Domain.RunState> | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
     }): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
@@ -1715,12 +1716,16 @@ export class Store extends Context.Service<
     const runs = Effect.fn("Store.runs")(function* (filter: {
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
+      readonly states?: ReadonlyArray<Domain.RunState> | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
     }) {
       const conditions = [
         ...(filter.job === undefined ? [] : [sql`job = ${filter.job}`]),
         ...(filter.state === undefined ? [] : [sql`state = ${filter.state}`]),
+        ...(filter.states === undefined || filter.states.length === 0
+          ? []
+          : [sql.in("state", filter.states)]),
         // In the list's own order, so runs queued in the same millisecond
         // aren't skipped or repeated between pages
         ...(filter.before === undefined

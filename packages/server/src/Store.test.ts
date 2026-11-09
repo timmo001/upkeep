@@ -585,6 +585,36 @@ test("runs page with a before cursor, skipping and repeating none", () =>
     }),
   ));
 
+test("runs keep only the states asked for, before a cursor too", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      for (const job of ["ci", "drift", "deps"]) {
+        yield* store.queueRun({ job, trigger: "schedule", release: null });
+      }
+
+      const claimed = Option.getOrThrow(
+        yield* store.claim(["drift"], "desktop"),
+      );
+
+      const all = yield* store.runs({ limit: 10 });
+      const queued = yield* store.runs({ limit: 10, states: ["queued"] });
+
+      const older = yield* store.runs({
+        limit: 10,
+        states: ["queued"],
+        before: all[0]?.id,
+      });
+
+      expect(all).toHaveLength(3);
+      expect(queued.map((each) => each.id)).not.toContain(claimed.id);
+      expect(queued).toHaveLength(2);
+      expect(older.every((each) => each.state === "queued")).toBe(true);
+      expect(older.map((each) => each.id)).not.toContain(all[0]?.id);
+    }),
+  ));
+
 test("a run asked for by hand is taken before older ones", () =>
   run(
     Effect.gen(function* () {
