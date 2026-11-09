@@ -177,7 +177,7 @@ export class UpkeepApp extends LitElement {
       Route.$is("Run")(current);
 
     return html`
-      <gw-app-bar menu-label="Pages" menu-below="900">
+      <gw-app-bar size="wide" menu-label="Pages" menu-below="900">
         <a slot="brand" class="brand" href=${homeHref}
           ><img src=${logo} alt="" width="24" height="24" />Upkeep${
             AsyncResult.isSuccess(this.#version.value)
@@ -255,7 +255,7 @@ export class UpkeepApp extends LitElement {
         >
       </gw-popover>
       <main>
-        <gw-page>
+        <gw-page size="wide">
           ${Route.$match(current, {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
             Attention: () => html`<upkeep-attention></upkeep-attention>`,
