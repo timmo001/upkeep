@@ -21,7 +21,6 @@ import {
 } from "./icons.ts";
 import {
   chosen,
-  drawn,
   empty,
   externalLink,
   impactTone,
@@ -42,10 +41,9 @@ import {
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
-import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import "@timmo001/groundwork-ui/define/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
 
@@ -629,37 +627,45 @@ export class UpkeepReleases extends LitElement {
       ${
         snapshot === null
           ? nothing
-          : html`<gw-section-title
-                >Changes worth a release
-                <span class="muted">${shown.length}</span></gw-section-title
+          : html`<gw-section
+                heading="Changes worth a release"
+                count=${shown.length}
+                storage-key="upkeep.releases.section.changes"
               >
-              ${
-                shown.length === 0
-                  ? empty(
-                      phCheckCircle,
-                      "Nothing since the last release needs one.",
-                    )
-                  : this.#findings(entry, snapshot, shown, "Changes")
-              }
+                ${
+                  shown.length === 0
+                    ? empty(
+                        phCheckCircle,
+                        "Nothing since the last release needs one.",
+                      )
+                    : this.#findings(entry, snapshot, shown, "Changes")
+                }
+              </gw-section>
               ${
                 quiet.length === 0
                   ? nothing
-                  : html`<gw-expansion
-                      heading=${`Quiet changes (${quiet.length})`}
-                      description="Changes the policy says ship nothing, such as docs and tooling"
+                  : html`<gw-section
+                      heading="Quiet changes"
+                      count=${quiet.length}
+                      collapsed
                       storage-key="upkeep.releases.quiet"
-                      .draw=${drawn(() =>
-                        this.#findings(entry, snapshot, quiet, "Quiet changes"),
-                      )}
-                    ></gw-expansion>`
+                    >
+                      <gw-stack gap="s">
+                        <p class="muted">
+                          Changes the policy says ship nothing, such as docs and
+                          tooling
+                        </p>
+                        ${this.#findings(entry, snapshot, quiet, "Quiet changes")}
+                      </gw-stack>
+                    </gw-section>`
               }
-              <gw-section-title
-                >Commits
-                <span class="muted"
-                  >${snapshot.commits.length}</span
-                ></gw-section-title
+              <gw-section
+                heading="Commits"
+                count=${snapshot.commits.length}
+                storage-key="upkeep.releases.section.commits"
               >
-              ${this.#commits(entry, snapshot)}`
+                ${this.#commits(entry, snapshot)}
+              </gw-section>`
       }
     </gw-stack>`;
   }

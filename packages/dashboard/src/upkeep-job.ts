@@ -11,6 +11,7 @@ import { jobActions } from "./upkeep-overview.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "./upkeep-runs.ts";
 
 export class UpkeepJob extends LitElement {
@@ -19,7 +20,7 @@ export class UpkeepJob extends LitElement {
   static override styles = [
     shared,
     css`
-      upkeep-runs {
+      gw-section {
         margin-top: var(--gw-space-4);
       }
     `,
@@ -93,7 +94,9 @@ export class UpkeepJob extends LitElement {
                 once one frees up.
               </gw-alert>`
         }
-        <upkeep-runs .job=${job.id}></upkeep-runs>
+        <gw-section heading="Runs" storage-key="upkeep.job.section.runs">
+          <upkeep-runs .job=${job.id}></upkeep-runs>
+        </gw-section>
       `;
     });
   }

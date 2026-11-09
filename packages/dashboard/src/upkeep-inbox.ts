@@ -35,7 +35,7 @@ import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-card.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
 import "./upkeep-feed.ts";
 import "./upkeep-filters.ts";
@@ -213,33 +213,43 @@ export class UpkeepInbox extends LitElement {
         ${
           needs.length === 0
             ? nothing
-            : html`<gw-stack>
-                <gw-section-title>Needs you</gw-section-title>
-                ${needs.map((entry) => this.#needs(entry, parked))}
-              </gw-stack>`
+            : html`<gw-section
+                heading="Needs you"
+                count=${needs.length}
+                storage-key="upkeep.inbox.section.needs"
+              >
+                <gw-stack>
+                  ${needs.map((entry) => this.#needs(entry, parked))}
+                </gw-stack>
+              </gw-section>`
         }
 
-        <gw-stack>
-          <gw-section-title>What changed</gw-section-title>
-          <upkeep-filters
-            .entries=${others}
-            .titles=${titles}
-            .filters=${this.#filters}
-            @filters-change=${(event: CustomEvent<Filters>) => {
-              this.#filters = event.detail;
-              this.requestUpdate();
-            }}
-          ></upkeep-filters>
-          ${
-            shown.length === 0
-              ? empty(phCheckCircle, "Nothing here with these filters.")
-              : html`<upkeep-feed
-                  storage-key="upkeep.inbox.days"
-                  .entries=${shown}
-                  .titles=${titles}
-                ></upkeep-feed>`
-          }
-        </gw-stack>
+        <gw-section
+          heading="What changed"
+          count=${shown.length}
+          storage-key="upkeep.inbox.section.changes"
+        >
+          <gw-stack>
+            <upkeep-filters
+              .entries=${others}
+              .titles=${titles}
+              .filters=${this.#filters}
+              @filters-change=${(event: CustomEvent<Filters>) => {
+                this.#filters = event.detail;
+                this.requestUpdate();
+              }}
+            ></upkeep-filters>
+            ${
+              shown.length === 0
+                ? empty(phCheckCircle, "Nothing here with these filters.")
+                : html`<upkeep-feed
+                    storage-key="upkeep.inbox.days"
+                    .entries=${shown}
+                    .titles=${titles}
+                  ></upkeep-feed>`
+            }
+          </gw-stack>
+        </gw-section>
       </gw-stack>
     `;
   }

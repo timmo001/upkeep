@@ -38,7 +38,7 @@ import {
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "./upkeep-runs.ts";
 
@@ -125,12 +125,7 @@ export class UpkeepOverview extends LitElement {
   static override styles = [
     shared,
     css`
-      upkeep-runs {
-        margin-top: var(--gw-space-3);
-      }
-
-      .runs {
-        display: block;
+      .section {
         margin-top: var(--gw-space-6);
       }
 
@@ -325,10 +320,20 @@ export class UpkeepOverview extends LitElement {
       ${
         AsyncResult.isFailure(this.#jobs.value)
           ? null
-          : html`<gw-section-title class="runs">Agents</gw-section-title>
-              ${view(this.#workers.value, (list) => this.#agents(list))}
-              <gw-section-title class="runs">Latest runs</gw-section-title>
-              <upkeep-runs groups-collapsed></upkeep-runs>`
+          : html`<gw-section
+                class="section"
+                heading="Agents"
+                storage-key="upkeep.jobs.section.agents"
+              >
+                ${view(this.#workers.value, (list) => this.#agents(list))}
+              </gw-section>
+              <gw-section
+                class="section"
+                heading="Latest runs"
+                storage-key="upkeep.jobs.section.runs"
+              >
+                <upkeep-runs groups-collapsed></upkeep-runs>
+              </gw-section>`
       }
     `;
   }

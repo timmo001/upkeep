@@ -48,7 +48,7 @@ import {
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-list.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
@@ -427,14 +427,23 @@ export class UpkeepRun extends LitElement {
         ${
           current.summary === null
             ? null
-            : html`<gw-section-title>Summary</gw-section-title>
-                ${written(current.summary)}`
+            : html`<gw-section
+                heading="Summary"
+                storage-key="upkeep.run.section.summary"
+              >
+                ${written(current.summary)}
+              </gw-section>`
         }
         ${
           current.changes.length === 0
             ? null
-            : html`<gw-section-title>Commits</gw-section-title>
-                ${changeTable(current.changes)}`
+            : html`<gw-section
+                heading="Commits"
+                count=${current.changes.length}
+                storage-key="upkeep.run.section.commits"
+              >
+                ${changeTable(current.changes)}
+              </gw-section>`
         }
         ${
           current.error === null
@@ -443,21 +452,22 @@ export class UpkeepRun extends LitElement {
                 >${current.error}</gw-alert
               >`
         }
-        <gw-section-title>Log</gw-section-title>
-        ${view(this.#log.value, (lines) =>
-          lines.length === 0
-            ? html`<p class="muted">
-                ${going(current.state) ? "Nothing logged yet." : "No log."}
-              </p>`
-            : html`<gw-list
-                class="log"
-                label="Log"
-                contained
-                estimate="22"
-                .items=${lines}
-                .draw=${drawLine}
-              ></gw-list>`,
-        )}
+        <gw-section heading="Log" storage-key="upkeep.run.section.log">
+          ${view(this.#log.value, (lines) =>
+            lines.length === 0
+              ? html`<p class="muted">
+                  ${going(current.state) ? "Nothing logged yet." : "No log."}
+                </p>`
+              : html`<gw-list
+                  class="log"
+                  label="Log"
+                  contained
+                  estimate="22"
+                  .items=${lines}
+                  .draw=${drawLine}
+                ></gw-list>`,
+          )}
+        </gw-section>
       `,
     );
   }

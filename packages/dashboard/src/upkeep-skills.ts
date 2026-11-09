@@ -16,7 +16,6 @@ import type {
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
-import { plural } from "./entries.ts";
 import {
   phArrowCounterClockwise,
   phCheck,
@@ -53,7 +52,7 @@ import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/gw-code.ts";
 import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
 
@@ -516,28 +515,32 @@ export class UpkeepSkills extends LitElement {
           heading="Skills"
           description="Held skill changes waiting on you, and every repository's skills"
         ></gw-page-header>
-        <gw-section-title>Changes</gw-section-title>
-        ${
-          held.length === 0
-            ? empty(phCheck, "No skill changes are waiting.")
-            : html`<gw-stack gap="s">
-                ${held.map((change) => this.#change(change, page.workers))}
-              </gw-stack>`
-        }
+        <gw-section
+          heading="Changes"
+          count=${held.length}
+          storage-key="upkeep.skills.section.changes"
+        >
+          ${
+            held.length === 0
+              ? empty(phCheck, "No skill changes are waiting.")
+              : html`<gw-stack gap="s">
+                  ${held.map((change) => this.#change(change, page.workers))}
+                </gw-stack>`
+          }
+        </gw-section>
         ${
           ended.length === 0
             ? nothing
-            : html`<gw-expansion
+            : html`<gw-section
                 heading="Ended lately"
-                description=${plural(ended.length, "change")}
+                count=${ended.length}
+                collapsed
                 storage-key="upkeep.skills.ended"
-                .draw=${drawn(
-                  () =>
-                    html`<gw-stack gap="s">
-                      ${ended.map((change) => this.#change(change, page.workers))}
-                    </gw-stack>`,
-                )}
-              ></gw-expansion>`
+              >
+                <gw-stack gap="s">
+                  ${ended.map((change) => this.#change(change, page.workers))}
+                </gw-stack>
+              </gw-section>`
         }
         <gw-input
           class="search"
@@ -567,20 +570,22 @@ export class UpkeepSkills extends LitElement {
                     skill.description.toLowerCase().includes(search),
                 );
 
-                return html`<gw-stack gap="s">
-                  <gw-section-title
-                    >${snapshot.repo}
-                    <span class="muted"
-                      >${plural(snapshot.skills.length, "skill")}, read
-                      ${time(snapshot.checkedAt)}</span
-                    ></gw-section-title
-                  >
-                  ${
-                    shown.length === 0
-                      ? empty(phMagnifyingGlass, "No skill matches.")
-                      : shown.map((skill) => this.#skill(snapshot.repo, skill))
-                  }
-                </gw-stack>`;
+                return html`<gw-section
+                  heading=${snapshot.repo}
+                  count=${snapshot.skills.length}
+                  storage-key=${`upkeep.skills.section.repo.${snapshot.repo}`}
+                >
+                  <gw-stack gap="s">
+                    <span class="muted">Read ${time(snapshot.checkedAt)}</span>
+                    ${
+                      shown.length === 0
+                        ? empty(phMagnifyingGlass, "No skill matches.")
+                        : shown.map((skill) =>
+                            this.#skill(snapshot.repo, skill),
+                          )
+                    }
+                  </gw-stack>
+                </gw-section>`;
               })
         }
       </gw-stack>

@@ -102,7 +102,7 @@ import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/gw-expansion.ts";
 import "@timmo001/groundwork-ui/define/gw-menu-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
-import "@timmo001/groundwork-ui/define/gw-section-title.ts";
+import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
 
@@ -1255,12 +1255,19 @@ export class UpkeepAttention extends LitElement {
 
   /** Standing instructions the agent follows, yours or from your comments. */
   #rules(page: Domain.Attention) {
-    return html`<gw-expansion
-      heading=${`Agent rules (${page.rules.length})`}
-      description="Standing instructions the context agent follows on every run"
+    return html`<gw-section
+      heading="Agent rules"
+      count=${page.rules.length}
+      collapsed
       storage-key=${sectionKey("rules")}
-      .draw=${drawn(() => this.#rulesBody(page))}
-    ></gw-expansion>`;
+    >
+      <gw-stack gap="s">
+        <p class="description">
+          Standing instructions the context agent follows on every run
+        </p>
+        <gw-card>${this.#rulesBody(page)}</gw-card>
+      </gw-stack>
+    </gw-section>`;
   }
 
   #rulesBody(page: Domain.Attention) {
@@ -1410,12 +1417,17 @@ export class UpkeepAttention extends LitElement {
 
     return releases.length === 0
       ? nothing
-      : html`<gw-expansion
-          heading=${`Latest releases (${releases.length})`}
-          description="Of the repositories above, newest first"
+      : html`<gw-section
+          heading="Latest releases"
+          count=${releases.length}
+          collapsed
           storage-key=${sectionKey("releases")}
-          .draw=${drawn(() => this.#releaseTable(page, releases))}
-        ></gw-expansion>`;
+        >
+          <gw-stack gap="s">
+            <p class="description">Of the repositories above, newest first</p>
+            ${this.#releaseTable(page, releases)}
+          </gw-stack>
+        </gw-section>`;
   }
 
   #releaseTable(
@@ -1524,32 +1536,35 @@ export class UpkeepAttention extends LitElement {
       },
     ];
 
-    return html`<gw-expansion
-      heading=${`Unreleased changes (${waiting.length})`}
-      description="Repositories with changes worth a release, reviewed on the Releases page"
+    return html`<gw-section
+      heading="Unreleased changes"
+      count=${waiting.length}
+      collapsed
       storage-key=${sectionKey("unreleased")}
-      .draw=${drawn(
-        () =>
-          html`<gw-stack gap="s">
-            <gw-table
-              class="unreleased"
-              label="Unreleased changes"
-              contained
-              row-key="id"
-              search-label="Search repositories"
-              .columns=${columns}
-              .rows=${waiting.map((entry) => ({
-                id: entry.repo,
-                name: entry.name,
-                suggestion: entry.snapshot?.suggestion ?? "",
-                next: entry.nextVersion ?? "",
-                since: entry.snapshot?.releaseTag ?? "",
-              }))}
-            ></gw-table>
-            <a href=${releasesHref}>Every repository on the Releases page</a>
-          </gw-stack>`,
-      )}
-    ></gw-expansion>`;
+    >
+      <gw-stack gap="s">
+        <p class="description">
+          Repositories with changes worth a release, reviewed on the Releases
+          page
+        </p>
+        <gw-table
+          class="unreleased"
+          label="Unreleased changes"
+          contained
+          row-key="id"
+          search-label="Search repositories"
+          .columns=${columns}
+          .rows=${waiting.map((entry) => ({
+            id: entry.repo,
+            name: entry.name,
+            suggestion: entry.snapshot?.suggestion ?? "",
+            next: entry.nextVersion ?? "",
+            since: entry.snapshot?.releaseTag ?? "",
+          }))}
+        ></gw-table>
+        <a href=${releasesHref}>Every repository on the Releases page</a>
+      </gw-stack>
+    </gw-section>`;
   }
 
   /** What went over the last week, whatever the scope, as a history. */
@@ -1558,12 +1573,19 @@ export class UpkeepAttention extends LitElement {
 
     return gone.length === 0
       ? nothing
-      : html`<gw-expansion
-          heading=${`Gone (${gone.length})`}
-          description="Closed, or no longer involving you, over the last week"
+      : html`<gw-section
+          heading="Gone"
+          count=${gone.length}
+          collapsed
           storage-key=${sectionKey("gone")}
-          .draw=${drawn(() => changeTable(gone, "Gone"))}
-        ></gw-expansion>`;
+        >
+          <gw-stack gap="s">
+            <p class="description">
+              Closed, or no longer involving you, over the last week
+            </p>
+            ${changeTable(gone, "Gone")}
+          </gw-stack>
+        </gw-section>`;
   }
 
   #changes(page: Domain.Attention, scope: Scope) {
@@ -1753,86 +1775,103 @@ export class UpkeepAttention extends LitElement {
                 ${
                   pinned.length === 0
                     ? nothing
-                    : html`<gw-stack gap="s">
-                        <gw-section-title
-                          >Today (${pinned.length})</gw-section-title
-                        >
-                        <p class="description">Groups you set to today</p>
-                        ${pinned.map((block) => this.#block(block, page.since))}
-                      </gw-stack>`
+                    : html`<gw-section
+                        heading="Today"
+                        count=${pinned.length}
+                        storage-key=${sectionKey("today")}
+                      >
+                        <gw-stack gap="s">
+                          <p class="description">Groups you set to today</p>
+                          ${pinned.map((block) => this.#block(block, page.since))}
+                        </gw-stack>
+                      </gw-section>`
                 }
                 ${sections.map((section) => {
                   const items = of(section.id);
 
-                  return html`<gw-stack gap="s">
-                    <gw-section-title
-                      >${section.heading}
-                      (${count(section.id)})</gw-section-title
-                    >
-                    <p class="description">${section.description}</p>
-                    ${placed(section.id).map((block) =>
-                      this.#block(block, page.since),
-                    )}
-                    ${
-                      items.length === 0
-                        ? nothing
-                        : html`<gw-card
-                            ><ul class="items">
-                              ${items.map((item) => this.#item(item, page.since))}
-                            </ul></gw-card
-                          >`
-                    }
-                  </gw-stack>`;
+                  return html`<gw-section
+                    heading=${section.heading}
+                    count=${count(section.id)}
+                    storage-key=${sectionKey(section.id)}
+                  >
+                    <gw-stack gap="s">
+                      <p class="description">${section.description}</p>
+                      ${placed(section.id).map((block) =>
+                        this.#block(block, page.since),
+                      )}
+                      ${
+                        items.length === 0
+                          ? nothing
+                          : html`<gw-card
+                              ><ul class="items">
+                                ${items.map((item) => this.#item(item, page.since))}
+                              </ul></gw-card
+                            >`
+                      }
+                    </gw-stack>
+                  </gw-section>`;
                 })}
                 ${folded.map((section) => {
                   const items = of(section.id);
 
-                  return html`<gw-expansion
-                    heading=${`${section.heading} (${count(section.id)})`}
-                    description=${section.description}
+                  return html`<gw-section
+                    heading=${section.heading}
+                    count=${count(section.id)}
+                    collapsed
                     storage-key=${sectionKey(section.id)}
-                    .draw=${drawn(
-                      () =>
-                        html`<gw-stack gap="s">
-                          ${placed(section.id).map((block) =>
-                            this.#block(block, page.since),
-                          )}
-                          <ul class="items">
-                            ${items.map((item) => this.#item(item, page.since))}
-                          </ul>
-                        </gw-stack>`,
-                    )}
-                  ></gw-expansion>`;
+                  >
+                    <gw-stack gap="s">
+                      <p class="description">${section.description}</p>
+                      ${placed(section.id).map((block) =>
+                        this.#block(block, page.since),
+                      )}
+                      ${
+                        items.length === 0
+                          ? nothing
+                          : html`<gw-card
+                              ><ul class="items">
+                                ${items.map((item) => this.#item(item, page.since))}
+                              </ul></gw-card
+                            >`
+                      }
+                    </gw-stack>
+                  </gw-section>`;
                 })}
                 ${
                   parked.length === 0
                     ? nothing
-                    : html`<gw-expansion
-                        heading=${`Parked (${parked.length})`}
-                        description="Groups put away for now"
+                    : html`<gw-section
+                        heading="Parked"
+                        count=${parked.length}
+                        collapsed
                         storage-key=${sectionKey("parked")}
-                        .draw=${drawn(
-                          () =>
-                            html`<gw-stack gap="s">
-                              ${parked.map((block) => this.#block(block, page.since))}
-                            </gw-stack>`,
-                        )}
-                      ></gw-expansion>`
+                      >
+                        <gw-stack gap="s">
+                          <p class="description">Groups put away for now</p>
+                          ${parked.map((block) => this.#block(block, page.since))}
+                        </gw-stack>
+                      </gw-section>`
                 }
                 ${
                   hidden.length === 0
                     ? nothing
-                    : html`<gw-expansion
-                        heading=${`Hidden (${hidden.length})`}
-                        description="Each comes back once anything about it changes"
+                    : html`<gw-section
+                        heading="Hidden"
+                        count=${hidden.length}
+                        collapsed
                         storage-key=${sectionKey("hidden")}
-                        .draw=${drawn(
-                          () =>
-                            html`<ul class="items">
+                      >
+                        <gw-stack gap="s">
+                          <p class="description">
+                            Each comes back once anything about it changes
+                          </p>
+                          <gw-card
+                            ><ul class="items">
                               ${hidden.map((item) => this.#item(item, page.since))}
-                            </ul>`,
-                        )}
-                      ></gw-expansion>`
+                            </ul></gw-card
+                          >
+                        </gw-stack>
+                      </gw-section>`
                 }
                 ${this.#unreleasedSection()} ${this.#releases(page, shown)}
                 ${this.#gone(page)} ${this.#rules(page)}
@@ -1852,10 +1891,9 @@ export class UpkeepAttention extends LitElement {
         <gw-card loading lines="2"></gw-card>
         ${sections.map(
           (section) =>
-            html`<gw-stack gap="s">
-              <gw-section-title>${section.heading}</gw-section-title>
+            html`<gw-section heading=${section.heading}>
               <gw-card loading lines="3"></gw-card>
-            </gw-stack>`,
+            </gw-section>`,
         )}
       </gw-stack>`,
     );
