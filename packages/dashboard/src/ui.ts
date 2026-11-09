@@ -255,12 +255,16 @@ export const agentLabel = (agent: Domain.AgentModel) =>
 export const jobName = (id: string) =>
   Catalogue.jobs.find((job) => job.id === id)?.name ?? capitalise(id);
 
+/** A run state's name, such as `Handed off`. */
+export const stateLabel = (state: Domain.RunState) =>
+  states[state].label ?? capitalise(state);
+
 export const stateBadge = (state: Domain.RunState) =>
   html`<gw-badge
     size="small"
     icon=${states[state].path}
     tone=${states[state].tone}
-    >${states[state].label ?? capitalise(state)}</gw-badge
+    >${stateLabel(state)}</gw-badge
   >`;
 
 const signOut = () => registry.set(token, "");
