@@ -10,7 +10,7 @@ import { evidenceId, highestImpact } from "@upkeep/api/releases";
 import type { ReleaseRepo, ReleaseRule } from "../settings";
 
 /** Bump when a policy classifies differently, so old comparisons go stale. */
-export const policyVersion = 13;
+export const policyVersion = 14;
 
 export type Policy = NonNullable<ReleaseRepo["policy"]>;
 

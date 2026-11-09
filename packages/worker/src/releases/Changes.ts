@@ -202,13 +202,15 @@ const lockGraph = (source: string | null, settings: Settings): LockGraph => {
   const errors = new Set<string>();
   const queue: Array<{ key: string; role: Domain.DependencyRole }> = [];
 
+  // A key nests package names, keeping a scope with its name: `a/@s/b/c`
+  // is `a`, `@s/b` and `c`
   const resolve = (name: string, parent: string) => {
-    for (
-      let scope = parent;
-      scope !== "";
-      scope = scope.includes("/") ? scope.slice(0, scope.lastIndexOf("/")) : ""
-    ) {
-      if (`${scope}/${name}` in packages) return `${scope}/${name}`;
+    const scopes = parent.match(/(@[^/]+\/)?[^/]+/g) ?? [];
+
+    for (let depth = scopes.length; depth > 0; depth--) {
+      const key = [...scopes.slice(0, depth), name].join("/");
+
+      if (key in packages) return key;
     }
 
     return name in packages ? name : undefined;
@@ -239,6 +241,13 @@ const lockGraph = (source: string | null, settings: Settings): LockGraph => {
 
   for (const [workspace, value] of Object.entries(workspaces)) {
     const manifest = object(value);
+    const own = manifest["name"];
+
+    // A workspace's own dependencies nest under its package name
+    const parent =
+      workspace !== "" && Predicate.isString(own) && own in packages
+        ? own
+        : workspace;
 
     for (const field of [
       "dependencies",
@@ -248,7 +257,7 @@ const lockGraph = (source: string | null, settings: Settings): LockGraph => {
       for (const name of Object.keys(values(manifest, field)))
         enqueue(
           name,
-          workspace,
+          parent,
           field === "devDependencies"
             ? buildDependency(name, settings)
               ? "build"
@@ -345,6 +354,14 @@ export const bunLockChanges = (
 
     if (canonical(a) === canonical(b)) continue;
 
+    const record = next.packages[key] ?? old.packages[key];
+
+    const first = Array.isArray(record) ? record[0] : undefined;
+    const locator = Predicate.isString(first) ? first : key;
+
+    // A workspace's own record follows its package.json, compared on its own
+    if (locator.includes("@workspace:")) continue;
+
     const roles = [old.roles.get(key), next.roles.get(key)];
 
     const role: Domain.DependencyRole = roles.includes("runtime")
@@ -354,11 +371,6 @@ export const bunLockChanges = (
         : roles.includes("development") && errors.length === 0
           ? "development"
           : "unknown";
-
-    const record = next.packages[key] ?? old.packages[key];
-
-    const first = Array.isArray(record) ? record[0] : undefined;
-    const locator = Predicate.isString(first) ? first : key;
 
     const name = locator.slice(0, locator.lastIndexOf("@")) || key;
 
