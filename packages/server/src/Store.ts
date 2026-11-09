@@ -1,10 +1,12 @@
 /**
  * The server's state in SQLite: runs and their logs, the latest release seen
  * of each repository, the repositories it tracks, the inbox of what changed,
- * and the hashes of the tokens it's issued.
+ * each repository's release comparison and your choices on it, and the
+ * hashes of the tokens it's issued.
  */
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun";
 import { Api, Catalogue, Domain } from "@upkeep/api";
+import * as Releases from "@upkeep/api/releases";
 import {
   Array as Arr,
   Clock,
@@ -16,6 +18,7 @@ import {
   Option,
   Path,
   PubSub,
+  Result,
   Schema,
   type Scope,
   Stream,
@@ -647,6 +650,20 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`CREATE INDEX regression_decisions_model ON regression_decisions (model, at)`;
     yield* sql`CREATE INDEX regression_decisions_at ON regression_decisions (at)`;
   }),
+  // Each repository's last release comparison from the unreleased job, and
+  // your impact choices on it, kept apart so a failed scan loses neither
+  "0033_release_reviews": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE release_reviews (
+        repo TEXT PRIMARY KEY COLLATE NOCASE,
+        scan TEXT,
+        decisions TEXT NOT NULL,
+        at INTEGER NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -793,6 +810,15 @@ const decodeSkillChanges = Schema.decodeUnknownEffect(
 const decodeSnapshots = Schema.decodeUnknownEffect(
   Schema.Array(
     Schema.Struct({ snapshot: Schema.fromJsonString(Domain.SkillsSnapshot) }),
+  ),
+);
+
+const decodeReleaseReviews = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      scan: Schema.NullOr(Schema.fromJsonString(Domain.ReleaseScan)),
+      decisions: Schema.fromJsonString(Domain.ReleaseDecisions),
+    }),
   ),
 );
 
@@ -1206,6 +1232,31 @@ export class Store extends Context.Service<
     putSkills(snapshot: Domain.SkillsSnapshot): Effect.Effect<void, StoreError>;
     /** The Skills page: every repository's skills, changes and workers. */
     skillsPage(): Effect.Effect<Domain.SkillsPage, StoreError>;
+    /**
+     * Keep a repository's release comparison as the worker read it, with the
+     * choices that still apply. An incomplete or failed one keeps the last
+     * complete comparison, marked stale.
+     */
+    putRelease(scan: Domain.ReleaseScan): Effect.Effect<void, StoreError>;
+    /** The Releases page: each repository tracked for the unreleased job. */
+    releasesPage(): Effect.Effect<Domain.ReleasesPage, StoreError>;
+    /** One repository on the Releases page. */
+    release(
+      repo: string,
+    ): Effect.Effect<Domain.ReleaseEntry, Api.ReleaseNotFound | StoreError>;
+    /**
+     * Choose an impact for some findings, or `overall`, on the comparison
+     * `snapshot`, which must still be the one shown.
+     */
+    reviewRelease(
+      repo: string,
+      snapshot: string,
+      targets: ReadonlyArray<string>,
+      impact: Domain.Impact | "auto",
+    ): Effect.Effect<
+      Domain.ReleaseEntry,
+      Api.ReleaseNotFound | Api.ReleaseStale | StoreError
+    >;
     /** Keep the Omarchy theme `worker`'s desktop switched to, replacing the last. */
     putTheme(
       theme: Domain.OmarchyTheme,
@@ -2320,6 +2371,172 @@ export class Store extends Context.Service<
           launch,
         })),
       };
+    });
+
+    /** A repository's stored comparison and choices, if it has any. */
+    const releaseReview = Effect.fnUntraced(function* (repo: string) {
+      const [row] = yield* sql`
+        SELECT scan, decisions FROM release_reviews WHERE repo = ${repo}
+      `.pipe(Effect.flatMap(decodeReleaseReviews));
+
+      return Option.fromNullishOr(row);
+    });
+
+    const putRelease = Effect.fn("Store.putRelease")(function* (
+      scan: Domain.ReleaseScan,
+    ) {
+      const at = yield* Clock.currentTimeMillis;
+      const stored = yield* releaseReview(scan.repo);
+      const previous = Option.getOrNull(stored);
+      const decisions = previous?.decisions ?? Releases.noDecisions;
+      const kept = previous?.scan?.snapshot ?? null;
+
+      const accepted =
+        scan.snapshot === null
+          ? { snapshot: kept, decisions, error: scan.error }
+          : Releases.accept(kept, decisions, scan.snapshot);
+
+      const next: Domain.ReleaseScan = {
+        ...scan,
+        snapshot: accepted.snapshot,
+        error: scan.error ?? accepted.error,
+      };
+
+      yield* sql`
+        INSERT INTO release_reviews ${sql.insert({
+          repo: scan.repo,
+          scan: JSON.stringify(next),
+          decisions: JSON.stringify(accepted.decisions),
+          at,
+        })}
+        ON CONFLICT (repo) DO UPDATE
+        SET scan = excluded.scan, decisions = excluded.decisions,
+          at = excluded.at
+      `;
+    }, Effect.mapError(storeError));
+
+    /**
+     * The repositories tracked for the unreleased job, by lower-case name, to
+     * the name each shows by.
+     */
+    const releaseRepos = Effect.fnUntraced(function* () {
+      return new Map(
+        (yield* repos())
+          .filter(({ jobs }) => jobs.includes(Catalogue.unreleased.id))
+          .map(({ repo, name, title }) => [repo.toLowerCase(), name ?? title]),
+      );
+    });
+
+    /** A stored comparison as the page shows it, by its tracked name. */
+    const releaseEntry = (
+      scan: Domain.ReleaseScan,
+      decisions: Domain.ReleaseDecisions,
+      name: string | null | undefined,
+      now: number,
+    ) =>
+      Releases.entry(
+        name === null || name === undefined ? scan : { ...scan, name },
+        decisions,
+        now,
+      );
+
+    const releasesPage = Effect.fn("Store.releasesPage")(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const tracked = yield* releaseRepos();
+
+      const rows = yield* sql`
+        SELECT scan, decisions FROM release_reviews
+        WHERE scan IS NOT NULL ORDER BY repo
+      `.pipe(Effect.flatMap(decodeReleaseReviews), Effect.mapError(storeError));
+
+      return {
+        repos: rows.flatMap(({ scan, decisions }) =>
+          scan === null || !tracked.has(scan.repo.toLowerCase())
+            ? []
+            : [
+                releaseEntry(
+                  scan,
+                  decisions,
+                  tracked.get(scan.repo.toLowerCase()),
+                  now,
+                ),
+              ],
+        ),
+        workers: (yield* agents()).map(({ worker, at, launch }) => ({
+          worker,
+          at,
+          launch,
+        })),
+      };
+    });
+
+    const release = Effect.fn("Store.release")(function* (repo: string) {
+      const now = yield* Clock.currentTimeMillis;
+      const tracked = yield* releaseRepos();
+
+      const stored = yield* releaseReview(repo).pipe(
+        Effect.mapError(storeError),
+      );
+
+      if (
+        Option.isNone(stored) ||
+        stored.value.scan === null ||
+        !tracked.has(repo.toLowerCase())
+      )
+        return yield* new Api.ReleaseNotFound({ repo });
+
+      return releaseEntry(
+        stored.value.scan,
+        stored.value.decisions,
+        tracked.get(repo.toLowerCase()),
+        now,
+      );
+    });
+
+    const reviewRelease = Effect.fn("Store.reviewRelease")(function* (
+      repo: string,
+      snapshot: string,
+      targets: ReadonlyArray<string>,
+      impact: Domain.Impact | "auto",
+    ) {
+      const current = yield* release(repo);
+      const shown = current.snapshot;
+
+      if (shown === null || shown.id !== snapshot)
+        return yield* new Api.ReleaseStale({
+          repo,
+          reason: "The comparison changed since the page was read; look again",
+        });
+
+      if (current.stale || !shown.complete)
+        return yield* new Api.ReleaseStale({
+          repo,
+          reason:
+            "The comparison is stale or incomplete; refresh it before choosing impacts",
+        });
+
+      const stored = yield* releaseReview(repo).pipe(
+        Effect.mapError(storeError),
+      );
+
+      const decisions = Option.match(stored, {
+        onNone: () => Releases.noDecisions,
+        onSome: (row) => row.decisions,
+      });
+
+      const reviewed = Releases.review(shown, decisions, targets, impact);
+
+      if (Result.isFailure(reviewed))
+        return yield* new Api.ReleaseStale({ repo, reason: reviewed.failure });
+
+      yield* sql`
+        UPDATE release_reviews
+        SET decisions = ${JSON.stringify(reviewed.success)},
+          at = ${yield* Clock.currentTimeMillis}
+        WHERE repo = ${repo}
+      `.pipe(Effect.mapError(storeError));
+
+      return yield* release(repo);
     });
 
     const putTheme = Effect.fn("Store.putTheme")(function* (
@@ -4177,6 +4394,10 @@ export class Store extends Context.Service<
       setSkillChangeState: announce(touches("skills"), setSkillChangeState),
       putSkills: announce(touches("skills"), putSkills),
       skillsPage,
+      putRelease: announce(touches("releases"), putRelease),
+      releasesPage,
+      release,
+      reviewRelease: announce(touches("releases"), reviewRelease),
       putTheme: announce(touches("theme"), putTheme),
       theme,
       recordAttention: announce(touches("attention"), recordAttention),

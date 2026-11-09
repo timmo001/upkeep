@@ -7,6 +7,7 @@
  */
 import { BunHttpServer } from "@effect/platform-bun";
 import { Api, Catalogue, Domain, EventJobs } from "@upkeep/api";
+import * as Releases from "@upkeep/api/releases";
 import { bundleDashboard } from "@upkeep/dashboard/bundle" with { type: "macro" };
 import {
   Clock,
@@ -312,12 +313,13 @@ const heal = Effect.fn("heal")(function* (
   consumers: ReadonlyArray<string>,
 ) {
   // A command or machine job that failed shows on its run, with nothing for
-  // an agent to fix in a repository, and a change you asked for is yours to
-  // follow up
+  // an agent to fix in a repository, and a change or release you asked for
+  // is yours to follow up
   if (
     run.job === Catalogue.heal.id ||
     run.job === Catalogue.command.id ||
     run.job === Catalogue.change.id ||
+    run.job === Catalogue.releasePublish.id ||
     run.command?.kind === "machine" ||
     (run.state !== "failed" && run.state !== "handed-off")
   )
@@ -880,8 +882,8 @@ const counted = (parts: ReadonlyArray<string | null>) =>
 
 /**
  * Upkeep's one status: what needs you (inbox entries that need a person,
- * such as a heal that asked or a parked job, and skill changes waiting for
- * approval), the parked jobs and the live workers.
+ * such as a heal that asked or a parked job, skill changes waiting for
+ * approval and releases suggested), the parked jobs and the live workers.
  */
 export const status = Effect.fn("status")(function* () {
   const store = yield* Store;
@@ -913,10 +915,38 @@ export const status = Effect.fn("status")(function* () {
       at: change.at,
     }));
 
-  const needs = [...entries, ...changes].toSorted((a, b) => b.at - a.at);
+  // A complete, current comparison whose suggestion reaches the repository's
+  // minimum, once per suggestion, as the worker tells each title once
+  const releases: ReadonlyArray<Domain.NeedsYou> =
+    (yield* store.releasesPage()).repos.flatMap((entry) =>
+      entry.snapshot === null ||
+      entry.stale ||
+      !entry.snapshot.complete ||
+      !entry.needsRelease ||
+      !entry.notify.enabled ||
+      !Releases.atLeast(entry.snapshot.suggestion, entry.notify.minimumImpact)
+        ? []
+        : [
+            {
+              kind: "release" as const,
+              title: `${entry.name}: ${entry.snapshot.suggestion} release suggested`,
+              path: `releases/${entry.repo}`,
+              at: entry.snapshot.checkedAt,
+            },
+          ],
+    );
 
+  const needs = [...entries, ...changes, ...releases].toSorted(
+    (a, b) => b.at - a.at,
+  );
+
+  // A suggested release is there to be told about, not something wrong
   const health: Domain.Health =
-    workers.length === 0 ? "degraded" : needs.length > 0 ? "warning" : "ok";
+    workers.length === 0
+      ? "degraded"
+      : entries.length + changes.length > 0
+        ? "warning"
+        : "ok";
 
   const summary =
     needs.length === 0
@@ -930,6 +960,9 @@ export const status = Effect.fn("status")(function* () {
           changes.length === 0
             ? null
             : `${changes.length} skill ${changes.length === 1 ? "change" : "changes"} waiting`,
+          releases.length === 0
+            ? null
+            : `${releases.length} ${releases.length === 1 ? "release" : "releases"} suggested`,
           workers.length === 0 ? "no worker live" : null,
         ]);
 
@@ -1334,6 +1367,11 @@ const WorkHandlers = HttpApiBuilder.group(
           .pipe(Effect.catchTag("StoreError", Effect.die)),
       skillCommand: ({ payload }) => queueSkillCommand(store, payload),
       putSkills: ({ payload }) => store.putSkills(payload).pipe(Effect.orDie),
+      putRelease: ({ payload }) => store.putRelease(payload).pipe(Effect.orDie),
+      release: ({ params }) =>
+        store
+          .release(`${params.owner}/${params.name}`)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
       putTheme: Effect.fn(function* ({ payload }) {
         const worker = yield* Api.CurrentWorker;
 
@@ -1604,6 +1642,118 @@ const SkillsHandlers = HttpApiBuilder.group(
   }),
 );
 
+/**
+ * The Releases page's actions. Each is bound to the comparison the page
+ * showed, so one read again since, or changed by a choice, is refused.
+ */
+const ReleasesHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "releases",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    /** The repository's entry, as long as it still shows `snapshot`. */
+    const shown = Effect.fnUntraced(function* (repo: string, snapshot: string) {
+      const entry = yield* store
+        .release(repo)
+        .pipe(Effect.catchTag("StoreError", Effect.die));
+
+      if (entry.snapshot?.id !== snapshot)
+        return yield* new Api.ReleaseStale({
+          repo,
+          reason: "The comparison changed since the page was read; look again",
+        });
+
+      return entry;
+    });
+
+    const queueCommand = (
+      job: Domain.JobId,
+      repo: string,
+      command: Domain.Command,
+    ) =>
+      store
+        .queueRun({ job, trigger: "manual", release: null, repo, command })
+        .pipe(
+          Effect.tap((run) =>
+            Effect.logInfo(`Queued ${command.kind} for ${repo}`).pipe(
+              Effect.annotateLogs({ run: run.id }),
+            ),
+          ),
+          Effect.orDie,
+        );
+
+    return handlers.handleAll({
+      get: () => store.releasesPage().pipe(Effect.orDie),
+      review: ({ params, payload }) =>
+        store
+          .reviewRelease(
+            `${params.owner}/${params.name}`,
+            payload.snapshot,
+            payload.targets,
+            payload.impact,
+          )
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      refresh: Effect.fn(function* ({ params }) {
+        const repo = `${params.owner}/${params.name}`;
+
+        yield* store
+          .release(repo)
+          .pipe(Effect.catchTag("StoreError", Effect.die));
+
+        return yield* store
+          .queueRun({
+            job: Catalogue.unreleased.id,
+            trigger: "manual",
+            release: null,
+            repo,
+          })
+          .pipe(Effect.orDie);
+      }),
+      publish: Effect.fn(function* ({ params, payload }) {
+        const repo = `${params.owner}/${params.name}`;
+        const entry = yield* shown(repo, payload.snapshot);
+
+        if (entry.recipe === null)
+          return yield* new Api.ReleaseStale({
+            repo,
+            reason: "Publishing isn't set up for this repository",
+          });
+
+        if (entry.nextVersion !== payload.tag)
+          return yield* new Api.ReleaseStale({
+            repo,
+            reason:
+              entry.nextVersion === null
+                ? (entry.versionError ?? "There's no version to release")
+                : `The release would now be ${entry.nextVersion}; look again`,
+          });
+
+        return yield* queueCommand(Catalogue.releasePublish.id, repo, {
+          kind: "release-publish",
+          repo,
+          snapshot: payload.snapshot,
+          tag: payload.tag,
+          notes: payload.notes,
+          notesMode: payload.notesMode,
+        });
+      }),
+      agent: Effect.fn(function* ({ params, payload }) {
+        const repo = `${params.owner}/${params.name}`;
+
+        yield* shown(repo, payload.snapshot);
+
+        return yield* queueCommand(Catalogue.command.id, repo, {
+          kind: "release-agent",
+          worker: payload.worker,
+          repo,
+          snapshot: payload.snapshot,
+        });
+      }),
+    });
+  }),
+);
+
 const SessionsHandlers = HttpApiBuilder.group(
   Api.Api,
   "sessions",
@@ -1672,6 +1822,7 @@ const apiRoutes = (
       WorkHandlers,
       ReposHandlers,
       SkillsHandlers,
+      ReleasesHandlers,
       SessionsHandlers,
       ThemeHandlers,
       TokensHandlers,
