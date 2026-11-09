@@ -71,9 +71,10 @@ upkeep status --bar-json
 the bar, the OpenCode footer and agents all read, so each shows the same
 count. It's `ok`, `warning` while anything needs you, or `degraded` while no
 worker has asked for work in the last half hour. What needs you is each inbox
-entry that needs a person, such as a heal that asked or a parked job, and each
-skill change waiting for your approval, with the dashboard page to deal with
-it. `--json` adds the `bar` and `footer` lines, and `--bar-json` prints only
+entry that needs a person, such as a heal that asked or a parked job, each
+skill change waiting for your approval, and each release suggested (see
+[Releases](#releases)), which alone doesn't make it `warning`, with the
+dashboard page to deal with it. `--json` adds the `bar` and `footer` lines, and `--bar-json` prints only
 the bar's: a wrench and the count, empty when nothing needs you, a tooltip
 listing what does, and an `upkeep-<health>` class.
 
@@ -148,6 +149,9 @@ inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 **Attention** is what needs you on GitHub, by section, with what changed
 since you last looked on any device, and a Work, Personal or All filter. See
 [Attention](#attention).
+
+**Releases** compares each repository with its last stable release, suggests
+the release its changes need, and publishes it. See [Releases](#releases).
 
 **Jobs** lists the jobs with their last run and whether they're parked or
 paused, then the latest runs; press anywhere in a run's row to open it. Each
@@ -568,6 +572,8 @@ The same change can be asked for through the API, as the `change` command:
 | Job                 | Runs             | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `releases`          | Every 30 minutes | Reads the latest release of each repository I own tracked for it, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                                                                                                                                                                                                          |
+| `unreleased`        | Every 15 minutes | Compares each repository tracked for it with its last stable release, classifies every change by its policy and suggests the release it needs, for the Releases page. See [Releases](#releases).                                                                                                                                                                                                                                                                           |
+| `release-publish`   | On request       | Publishes a release confirmed on the Releases page: sets the version, runs the repository's commands, pushes the version commit and tag, and creates the GitHub release. Never healed. See [Releases](#releases).                                                                                                                                                                                                                                                          |
 | `watch`             | Every 15 minutes | Reads the last 48 hours of commits on each tracked repository's default branch and adds the ones the inbox doesn't have: your own, merged Renovate and Dependabot updates, and anyone else's. A commit that only moves versions, lockfiles, pins, submodules or tool versions is marked routine, and so is a bot's commit that touches no source code. It also reads each repository's title, and its [name](#names) when the worker opts in. See [Dashboard](#dashboard). |
 | `labels`            | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                                                                                                                                                                                          |
 | `bump`              | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. Pin consumers start at once and npm consumers as their packages land; four are checked and pushed at a time, and watching CI doesn't hold one of the four.                                      |
@@ -1154,3 +1160,100 @@ with the folder holding them:
   }
 }
 ```
+
+### Releases
+
+Every 15 minutes the `unreleased` job compares each repository tracked for it
+with its last stable release: the latest one GitHub marks latest, ignoring
+drafts and pre-releases, or the whole history before the first. It fetches the
+release's tag and the watched branch into a bare clone in `upkeep/unreleased`
+in the XDG cache directory and reads every net change from Git objects alone,
+without a checkout: each file, the dependencies and metadata behind a
+`package.json`, Bun lockfile or `go.mod` change, and the commits since.
+
+A policy gives each change an impact, from `none` for docs, tests and tooling
+to `patch` for anything that ships. `application` covers most repositories;
+`oxlint-rules` and `system-bridge` know those projects' shipped content,
+including the upstream changes behind `oxlint-rules`' vendored submodule. A
+repository's `overrides` come first, the first match winning, and
+`sourceMinorThreshold` suggests a minor release once that many lines of
+shipped source changed, leaving out `sourceExcludes`. The highest impact is
+the suggestion. A comparison with evidence missing, such as a lockfile it
+can't read, says so and is never a claim that no release is needed.
+
+The Releases page lists each repository with its last release, what it
+suggests and the next version. Opening one shows its changes worth a release,
+the quiet ones folded away, and its commits. Choose sets a change's impact,
+and the overall menu sets the whole comparison's; your choices are kept on
+the server and stay while the evidence they were made on does. A comparison
+that couldn't be read again stays as it was, marked stale, and nothing can be
+chosen or published on it until Compare again reads it afresh. The Attention
+page lists the repositories with unreleased changes, linking here.
+
+The next version follows the repository's `versioning`: `semver` by default,
+moved by the suggestion from `0.1.0` (`1.0.0` for a major) before the first
+release; `calver`, `YYYYMMDD.N` on the UTC date; or `fork` and `fork-base-js`,
+the upstream's version with the fork's own suffix and count, such as
+`2.1.0-me.0`, the upstream's version being its newest plain SemVer tag in the
+branch's history, or for `fork-base-js` the one in its `package.json` where
+the branch last merged it.
+
+A repository with a `publish` recipe has Publish: a popover lists each step
+and takes notes to put before GitHub's generated notes or in their place. The
+`release-publish` job checks the comparison and version are still the ones you
+confirmed, then, in a worktree of the comparison's commit, sets the version in
+each of `versionFiles` (a JSON manifest's top-level `version`, or a
+`setup.py`'s literal one), runs the `commands` and checks they changed nothing
+beyond the version and `generatedFiles`. The version commit, when there is
+one, and the tag go in one atomic push, and the GitHub release is created with
+the notes, which starts the repository's release workflows. It runs with the
+worker's own Git and GitHub login, checks GitHub hasn't moved on before each
+step, and a failure is never healed. Prepare in an agent instead opens an
+agent through the worker's `attention.launch`, briefed with the comparison, to
+prepare and publish the release with you.
+
+A suggestion at or above `notify.minimumImpact`, `patch` by default, needs
+you, so [notifications](#notifications) tell you once for each suggestion;
+it doesn't turn the status to `warning`. Each repository's settings go in the
+worker's config file, by `owner/name`; one tracked without any takes every
+default, on its default branch:
+
+```json
+{
+  "releases": {
+    "repos": {
+      "owner/package": {
+        "branch": "main",
+        "policy": "application",
+        "versioning": "semver",
+        "sourceMinorThreshold": 50,
+        "sourceExcludes": ["**/*.md", ".github/**"],
+        "overrides": [
+          {
+            "paths": ["src/**"],
+            "impact": "patch",
+            "reason": "Published source changed"
+          },
+          { "paths": ["**"], "impact": "none", "reason": "Nothing else ships" }
+        ],
+        "publish": {
+          "versionFiles": ["package.json", "jsr.json"],
+          "generatedFiles": ["bun.lock"],
+          "commands": [["mise", "run", "check"]]
+        },
+        "notify": { "minimumImpact": "minor" }
+      },
+      "owner/fork": {
+        "versioning": "fork",
+        "fork": { "upstream": "upstream/project", "suffix": "me" }
+      }
+    }
+  }
+}
+```
+
+An override matches on any of `paths` (globs, matching a renamed file's old
+path too), `changeTypes`, `dependencies`, `roles` (`runtime`, `peer`,
+`development`, `build` or `unknown`), `submodules` and `subjects`, regular
+expressions for the subjects of the commits whose content is still in the
+change; its fields must all match, and any value in one.
