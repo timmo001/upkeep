@@ -3,9 +3,9 @@
 Keeps my repositories and their consumers up to date, and shows what needs
 doing: a worker that runs jobs, and a web dashboard built on groundwork. The
 first build was tracked in timmo001/upkeep#1, now closed, with its working
-document attached; read it for why things are the way they are. New work gets
-its own issue. Open decisions are the issues labelled Needs Decision, and work
-that depends on one waits for it.
+document attached; read it for why things are the way they are. Open
+decisions are the issues labelled Needs Decision, and work that depends on one
+waits for it.
 
 ## Stack
 
@@ -54,7 +54,7 @@ Changes made here are pushed as they land, with no go-ahead needed. Once
 
 1. Commit the session's own changes through `dot git commit`, leaving other
    sessions' work alone, and push.
-2. Tick the change off on its issue, with a link to the commit.
+2. When the change has an issue, tick it off there, with a link to the commit.
 3. When the server or dashboard needs the change, release the Home Assistant
    app and install it, without asking, through the `upkeep-release` skill.
 4. Report what landed and anything flagged.
