@@ -50,7 +50,10 @@ on `main`, follow the installed release.
 ## Change the package
 
 Make shared changes in the [Groundwork repository](https://github.com/timmo001/groundwork)
-rather than copying files into one site. Check a component, theme or config
+rather than copying files into one site, following `groundwork-changes`: move
+the session into a local Groundwork checkout first and back to the site after
+the release, and add each change as an option with today's behavior as its
+default so every site can still set its own. Check a component, theme or config
 change by building a site against a packed tarball: linked installs break
 Astro's style compilation.
 
