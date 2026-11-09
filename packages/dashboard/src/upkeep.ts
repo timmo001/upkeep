@@ -687,24 +687,7 @@ export const refreshRelease = UpkeepApi.runtime.fn((repo: string) =>
   ).pipe(asDefects, afterReleases),
 );
 
-/** Publish the release the page showed, at the tag it showed. */
-export const publishRelease = UpkeepApi.runtime.fn(
-  ({
-    repo,
-    ...payload
-  }: {
-    readonly repo: string;
-    readonly snapshot: string;
-    readonly tag: string;
-    readonly notes: string | null;
-    readonly notesMode: "prepend" | "replace";
-  }) =>
-    UpkeepApi.use((client) =>
-      client.releases.publish({ params: repoParams(repo), payload }),
-    ).pipe(asDefects, afterReleases),
-);
-
-/** Open an agent to prepare the release, on the worker given. */
+/** Open an agent to prepare and publish the release, on the worker given. */
 export const releaseAgent = UpkeepApi.runtime.fn(
   ({
     repo,

@@ -2,8 +2,9 @@
  * The unreleased job: for each repository tracked for it, compare its
  * watched branch with its last stable release, classify every net change by
  * its policy and settings, and send the comparison to the server for the
- * Releases page, where you review it and publish. A repository that can't be
- * read is sent with why, so the page keeps its last comparison as stale.
+ * Releases page, where you review it and hand it to an agent to publish. A
+ * repository that can't be read is sent with why, so the page keeps its last
+ * comparison as stale.
  * Each one is read from a bare clone in the cache, without a checkout.
  */
 import { Api, Repository } from "@timmo001/effect-gh";
@@ -14,6 +15,7 @@ import {
   Config,
   Effect,
   FileSystem,
+  Option,
   Path,
   Result,
   Schema,
@@ -25,14 +27,13 @@ import {
   settingsOf,
   type Settings,
 } from "../releases/Policy";
-import { latestStable, readRecipe } from "../releases/Publish";
 import { Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as SettingsFile from "../settings";
 import { skipped } from "../Worker";
 
 /** Where the job keeps its clones and what it read of submodules' upstreams. */
-export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
+const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
   Config.orElse(() =>
     Config.String("HOME").pipe(Config.map((home) => `${home}/.cache`)),
   ),
@@ -40,7 +41,7 @@ export const cacheRoot = Config.String("XDG_CACHE_HOME").pipe(
 );
 
 /** A repository's settings, matched without regard to case. */
-export const settingsFor = (
+const settingsFor = (
   settings: SettingsFile.Settings,
   repo: string,
 ): SettingsFile.ReleaseRepo | undefined =>
@@ -49,10 +50,7 @@ export const settingsFor = (
   )?.[1];
 
 /** A bare clone of the repository in the cache, made the first time. */
-export const bareClone = Effect.fnUntraced(function* (
-  repo: string,
-  root: string,
-) {
+const bareClone = Effect.fnUntraced(function* (repo: string, root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = path.join(root, "clones", `${repo}.git`);
@@ -68,6 +66,64 @@ export const bareClone = Effect.fnUntraced(function* (
   }
 
   return directory;
+});
+
+const StableRelease = Schema.Struct({
+  tag_name: Schema.String,
+  draft: Schema.Boolean,
+  prerelease: Schema.Boolean,
+  published_at: Schema.NullOr(Schema.String),
+});
+
+const ReleaseList = Schema.Array(
+  Schema.Struct({ draft: Schema.Boolean, prerelease: Schema.Boolean }),
+);
+
+/**
+ * A repository's latest stable release, or null when it has never had one.
+ * GitHub answers 404 both when there's none and when no stable release is
+ * marked latest, so the list tells them apart.
+ */
+const latestStable = Effect.fnUntraced(function* (repo: string) {
+  const latest = yield* Api.json(
+    { endpoint: `repos/${repo}/releases/latest`, method: "GET" },
+    StableRelease,
+  ).pipe(
+    Effect.map(Option.some),
+    Effect.catchIf(
+      (error) => /\b404\b|Not Found/.test(why(error)),
+      () => Effect.succeed(Option.none()),
+    ),
+  );
+
+  if (Option.isSome(latest)) {
+    if (
+      latest.value.draft ||
+      latest.value.prerelease ||
+      latest.value.published_at === null
+    )
+      return yield* new ReleaseError({
+        message: "No published stable release is available",
+      });
+
+    return latest.value;
+  }
+
+  const pages = yield* Api.pages(
+    {
+      endpoint: `repos/${repo}/releases`,
+      method: "GET",
+      query: { per_page: 100 },
+    },
+    ReleaseList,
+  );
+
+  if (pages.flat().some((release) => !release.draft && !release.prerelease))
+    return yield* new ReleaseError({
+      message: "GitHub has stable releases, but none is marked as the latest",
+    });
+
+  return null;
 });
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
@@ -288,12 +344,7 @@ const compare = Effect.fnUntraced(function* (
     errors,
   };
 
-  const recipe =
-    config?.publish === undefined
-      ? null
-      : yield* readRecipe(clone, head, config.publish);
-
-  return { snapshot, recipe };
+  return snapshot;
 });
 
 /** Read one repository for the page, with why when it couldn't be. */
@@ -331,8 +382,7 @@ const scan = Effect.fnUntraced(function* (
       enabled: config?.notify?.enabled ?? true,
       minimumImpact: config?.notify?.minimumImpact ?? "patch",
     },
-    recipe: Result.isSuccess(read) ? read.success.recipe : null,
-    snapshot: Result.isSuccess(read) ? read.success.snapshot : null,
+    snapshot: Result.isSuccess(read) ? read.success : null,
     error: Result.isFailure(read) ? why(read.failure) : null,
     attemptedAt,
   } satisfies Domain.ReleaseScan;

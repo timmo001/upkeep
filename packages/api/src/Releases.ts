@@ -460,6 +460,5 @@ export const entry = (
     versionError: Result.isFailure(version) ? version.failure : null,
     versioning: scan.versioning,
     notify: scan.notify,
-    recipe: scan.recipe,
   };
 };

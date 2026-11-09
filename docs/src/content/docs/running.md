@@ -151,7 +151,8 @@ since you last looked on any device, and a Work, Personal or All filter. See
 [Attention](#attention).
 
 **Releases** compares each repository with its last stable release, suggests
-the release its changes need, and publishes it. See [Releases](#releases).
+the release its changes need, and hands it to an agent to publish. See
+[Releases](#releases).
 
 **Jobs** lists the jobs with their last run and whether they're parked or
 paused, then the latest runs; press anywhere in a run's row to open it. Each
@@ -573,7 +574,6 @@ The same change can be asked for through the API, as the `change` command:
 | ------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `releases`          | Every 30 minutes | Reads the latest release of each repository I own tracked for it, skipping forks and archived ones, and queues the jobs that run on a new one. A first sighting is only recorded.                                                                                                                                                                                                                                                                                          |
 | `unreleased`        | Every 15 minutes | Compares each repository tracked for it with its last stable release, classifies every change by its policy and suggests the release it needs, for the Releases page. See [Releases](#releases).                                                                                                                                                                                                                                                                           |
-| `release-publish`   | On request       | Publishes a release confirmed on the Releases page: sets the version, runs the repository's commands, pushes the version commit and tag, and creates the GitHub release. Never healed. See [Releases](#releases).                                                                                                                                                                                                                                                          |
 | `watch`             | Every 15 minutes | Reads the last 48 hours of commits on each tracked repository's default branch and adds the ones the inbox doesn't have: your own, merged Renovate and Dependabot updates, and anyone else's. A commit that only moves versions, lockfiles, pins, submodules or tool versions is marked routine, and so is a bot's commit that touches no source code. It also reads each repository's title, and its [name](#names) when the worker opts in. See [Dashboard](#dashboard). |
 | `labels`            | Daily at 04:00   | Brings each repository's labels in line with groundwork's conventions. Old names are renamed in place through aliases, so issues keep their labels. A label the conventions don't know is deleted when nothing uses it, and otherwise left and listed in the log.                                                                                                                                                                                                          |
 | `bump`              | On a new release | Rolls the release out to the repositories that use it, found through code search: workflow and action pins of the released repository, and `package.json` dependencies on the packages it publishes. Each one is checked, pushed to its default branch and its CI watched. Pin consumers start at once and npm consumers as their packages land; four are checked and pushed at a time, and watching CI doesn't hold one of the four.                                      |
@@ -1182,7 +1182,8 @@ the suggestion. A comparison with evidence missing, such as a lockfile it
 can't read, says so and is never a claim that no release is needed.
 
 The Releases page lists each repository with its last release, what it
-suggests and the next version. Opening one shows its changes worth a release,
+suggests and the next version, and Compare all again reads every one of them
+afresh. Opening one shows its changes worth a release,
 the quiet ones folded away, and its commits. Choose sets a change's impact,
 and the overall menu sets the whole comparison's; your choices are kept on
 the server and stay while the evidence they were made on does. A comparison
@@ -1198,19 +1199,11 @@ the upstream's version with the fork's own suffix and count, such as
 branch's history, or for `fork-base-js` the one in its `package.json` where
 the branch last merged it.
 
-A repository with a `publish` recipe has Publish: a popover lists each step
-and takes notes to put before GitHub's generated notes or in their place. The
-`release-publish` job checks the comparison and version are still the ones you
-confirmed, then, in a worktree of the comparison's commit, sets the version in
-each of `versionFiles` (a JSON manifest's top-level `version`, or a
-`setup.py`'s literal one), runs the `commands` and checks they changed nothing
-beyond the version and `generatedFiles`. The version commit, when there is
-one, and the tag go in one atomic push, and the GitHub release is created with
-the notes, which starts the repository's release workflows. It runs with the
-worker's own Git and GitHub login, checks GitHub hasn't moved on before each
-step, and a failure is never healed. Prepare in an agent instead opens an
-agent through the worker's `attention.launch`, briefed with the comparison, to
-prepare and publish the release with you.
+Release in an agent opens one through the worker's `attention.launch`, briefed
+with the comparison and your choices. It follows the repository's own release
+procedure and skills, writes the release notes from what ships, and checks
+the version, title and notes with you before it commits, tags or publishes
+anything, then watches the workflows the release starts.
 
 A suggestion at or above `notify.minimumImpact`, `patch` by default, needs
 you, so [notifications](#notifications) tell you once for each suggestion;
@@ -1236,11 +1229,6 @@ default, on its default branch:
           },
           { "paths": ["**"], "impact": "none", "reason": "Nothing else ships" }
         ],
-        "publish": {
-          "versionFiles": ["package.json", "jsr.json"],
-          "generatedFiles": ["bun.lock"],
-          "commands": [["mise", "run", "check"]]
-        },
         "notify": { "minimumImpact": "minor" }
       },
       "owner/fork": {

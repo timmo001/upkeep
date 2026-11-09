@@ -26,18 +26,6 @@ export const unreleased: Job = {
   tracked: true,
 };
 
-export const releasePublish: Job = {
-  id: "release-publish",
-  name: "Publish release",
-  description:
-    "On request from the Releases page, publish a repository's release: set its version, run its checks, push the commit and tag, and create the GitHub release",
-  schedule: null,
-  onRelease: false,
-  lane: "repos",
-  tracked: false,
-  trackedAs: unreleased.id,
-};
-
 export const labels: Job = {
   id: "labels",
   name: "Labels",
@@ -331,7 +319,6 @@ export const trackingJob = (job: Job) =>
 export const jobs: ReadonlyArray<Job> = [
   releases,
   unreleased,
-  releasePublish,
   watch,
   attention,
   labels,

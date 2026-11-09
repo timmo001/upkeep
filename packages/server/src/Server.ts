@@ -313,13 +313,12 @@ const heal = Effect.fn("heal")(function* (
   consumers: ReadonlyArray<string>,
 ) {
   // A command or machine job that failed shows on its run, with nothing for
-  // an agent to fix in a repository, and a change or release you asked for
-  // is yours to follow up
+  // an agent to fix in a repository, and a change you asked for is yours to
+  // follow up
   if (
     run.job === Catalogue.heal.id ||
     run.job === Catalogue.command.id ||
     run.job === Catalogue.change.id ||
-    run.job === Catalogue.releasePublish.id ||
     run.command?.kind === "machine" ||
     (run.state !== "failed" && run.state !== "handed-off")
   )
@@ -1709,34 +1708,6 @@ const ReleasesHandlers = HttpApiBuilder.group(
             repo,
           })
           .pipe(Effect.orDie);
-      }),
-      publish: Effect.fn(function* ({ params, payload }) {
-        const repo = `${params.owner}/${params.name}`;
-        const entry = yield* shown(repo, payload.snapshot);
-
-        if (entry.recipe === null)
-          return yield* new Api.ReleaseStale({
-            repo,
-            reason: "Publishing isn't set up for this repository",
-          });
-
-        if (entry.nextVersion !== payload.tag)
-          return yield* new Api.ReleaseStale({
-            repo,
-            reason:
-              entry.nextVersion === null
-                ? (entry.versionError ?? "There's no version to release")
-                : `The release would now be ${entry.nextVersion}; look again`,
-          });
-
-        return yield* queueCommand(Catalogue.releasePublish.id, repo, {
-          kind: "release-publish",
-          repo,
-          snapshot: payload.snapshot,
-          tag: payload.tag,
-          notes: payload.notes,
-          notesMode: payload.notesMode,
-        });
       }),
       agent: Effect.fn(function* ({ params, payload }) {
         const repo = `${params.owner}/${params.name}`;

@@ -1,22 +1,15 @@
 /**
  * `upkeep-releases`: each repository tracked for the unreleased job against
  * its last stable release, with the release its changes suggest; and one
- * repository's comparison, where you choose impacts for its changes, publish
- * the release or hand it to an agent to prepare.
+ * repository's comparison, where you choose impacts for its changes and hand
+ * the release to an agent, which writes its notes and publishes it.
  */
-import type { Domain } from "@upkeep/api";
-import "@timmo001/groundwork-ui/define/gw-input.ts";
-import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
-import "@timmo001/groundwork-ui/define/gw-popover.ts";
-import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
-import "@timmo001/groundwork-ui/define/gw-segmented.ts";
-import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
+import { Catalogue, type Domain } from "@upkeep/api";
 import type {
   TableColumn,
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
-import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
 import {
@@ -24,7 +17,6 @@ import {
   phArrowLeft,
   phCheckCircle,
   phRobot,
-  phRocketLaunch,
   phTag,
 } from "./icons.ts";
 import {
@@ -38,13 +30,13 @@ import {
 } from "./ui.ts";
 import { type CellSize, cell } from "./upkeep-cell.ts";
 import {
-  publishRelease,
   refreshRelease,
   releaseAgent,
   releaseHref,
   releasesHref,
   releasesPage,
   reviewRelease,
+  runJob,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
@@ -131,8 +123,7 @@ export class UpkeepReleases extends LitElement {
         margin: 0;
       }
 
-      dd ul,
-      .steps {
+      dd ul {
         margin: 0;
         padding-left: 1.25em;
       }
@@ -157,14 +148,6 @@ export class UpkeepReleases extends LitElement {
   declare repo: string | undefined;
 
   readonly #page = new AtomController(this, () => releasesPage, always);
-
-  #publishing: Domain.ReleaseEntry | undefined;
-
-  #popover: GwPopover | undefined;
-
-  #notes: GwInput | undefined;
-
-  #mode: "prepend" | "replace" = "prepend";
 
   constructor() {
     super();
@@ -291,7 +274,17 @@ export class UpkeepReleases extends LitElement {
             ? "What changed since each repository's last stable release"
             : `${needs === 0 ? "No repository has" : `${plural(needs, "repository", "repositories")} ${needs === 1 ? "has" : "have"}`} changes worth a release`
         }
-      ></gw-page-header>
+      >
+        <gw-button
+          slot="actions"
+          size="small"
+          appearance="outlined"
+          variant="neutral"
+          icon=${phArrowClockwise}
+          @click=${() => registry.set(runJob, Catalogue.unreleased.id)}
+          >Compare all again</gw-button
+        >
+      </gw-page-header>
       ${
         page.repos.length === 0
           ? empty(
@@ -479,137 +472,10 @@ export class UpkeepReleases extends LitElement {
     ></gw-table>`;
   }
 
-  /** The steps publishing takes, as the worker will take them. */
-  #steps(entry: Domain.ReleaseEntry, snapshot: Domain.ReleaseSnapshot) {
-    const recipe = entry.recipe;
-    const tag = entry.nextVersion ?? "";
-    const version = tag.replace(/^v/, "");
-
-    if (recipe === null) return [];
-
-    const changed = recipe.versionFiles.filter(
-      (file) => file.before !== version,
-    );
-
-    return [
-      `Start from ${entry.branch} at ${snapshot.head.slice(0, 7)}, in a worktree on the worker.`,
-      ...recipe.versionFiles.map((file) =>
-        file.error !== null
-          ? `${file.path}: ${file.error}`
-          : `${file.path}: ${file.before ?? "?"} → ${version}${file.before === version ? " (already set)" : ""}`,
-      ),
-      ...recipe.commands.map((command) => `Run ${command.join(" ")}`),
-      ...(changed.length > 0
-        ? [
-            `Commit ${changed.map((file) => file.path).join(", ")}${recipe.generatedFiles.length > 0 ? `, with ${recipe.generatedFiles.join(", ")} where the commands regenerate them,` : ""} as "Release ${tag}".`,
-            `Push that commit to ${entry.branch} and tag ${tag}, in one atomic push.`,
-          ]
-        : [`Tag ${tag} at ${snapshot.head.slice(0, 7)}; nothing to commit.`]),
-      `Create the GitHub release ${tag}, with notes GitHub generates ${snapshot.releaseTag === null ? "from the whole history" : `since ${snapshot.releaseTag}`}, and any notes you add.`,
-      "The release starts the repository's workflows; follow them on GitHub.",
-    ];
-  }
-
-  #publishPopover() {
-    const entry = this.#publishing;
-    const snapshot = entry?.snapshot ?? null;
-
-    return html`<gw-popover
-      heading=${entry === undefined ? "Publish" : `Publish ${entry.name} ${entry.nextVersion ?? ""}`}
-      ${ref((element) => {
-        this.#popover = element instanceof GwPopover ? element : undefined;
-      })}
-      @close=${() => this.#published()}
-    >
-      ${
-        entry === undefined || snapshot === null
-          ? nothing
-          : html`<gw-stack gap="s">
-              <ol class="steps">
-                ${this.#steps(entry, snapshot).map((step) => html`<li>${step}</li>`)}
-              </ol>
-              <gw-input
-                multiline
-                rows="5"
-                label="Release notes, optional"
-                ${ref((element) => {
-                  this.#notes =
-                    element instanceof GwInput ? element : undefined;
-                })}
-              ></gw-input>
-              <gw-segmented
-                size="small"
-                label="Your notes"
-                value=${this.#mode}
-                .options=${[
-                  { value: "prepend", label: "Before GitHub's" },
-                  { value: "replace", label: "Instead of GitHub's" },
-                ]}
-                @change=${(event: Event) => {
-                  const value =
-                    event.currentTarget instanceof GwSegmented
-                      ? event.currentTarget.value
-                      : "";
-
-                  this.#mode = value === "replace" ? "replace" : "prepend";
-                }}
-              ></gw-segmented>
-            </gw-stack>`
-      }
-      <gw-button
-        slot="actions"
-        size="small"
-        appearance="plain"
-        variant="neutral"
-        value="cancel"
-        >Cancel</gw-button
-      >
-      <gw-button
-        slot="actions"
-        size="small"
-        value="publish"
-        icon=${phRocketLaunch}
-        >Publish</gw-button
-      >
-    </gw-popover>`;
-  }
-
-  #publish(event: Event, entry: Domain.ReleaseEntry) {
-    this.#publishing = entry;
-    this.#mode = "prepend";
-
-    if (this.#notes !== undefined) this.#notes.value = "";
-
-    this.requestUpdate();
-    this.#popover?.show(
-      event.currentTarget instanceof Element ? event.currentTarget : undefined,
-    );
-  }
-
-  #published() {
-    const entry = this.#publishing;
-    const notes = this.#notes?.value.trim() ?? "";
-
-    this.#publishing = undefined;
-
-    if (
-      this.#popover?.returnValue !== "publish" ||
-      entry?.snapshot === null ||
-      entry === undefined ||
-      entry.nextVersion === null
-    )
-      return;
-
-    registry.set(publishRelease, {
-      repo: entry.repo,
-      snapshot: entry.snapshot.id,
-      tag: entry.nextVersion,
-      notes: notes === "" ? null : notes,
-      notesMode: this.#mode,
-    });
-  }
-
-  /** The actions on a comparison: read it again, publish it, or hand it on. */
+  /**
+   * The actions on a comparison: read it again, choose its impact, or hand
+   * it to an agent to release.
+   */
   #actions(
     entry: Domain.ReleaseEntry,
     snapshot: Domain.ReleaseSnapshot | null,
@@ -620,12 +486,6 @@ export class UpkeepReleases extends LitElement {
     const launchers = workers.filter(
       (worker) => worker.launch && now - worker.at < upFor,
     );
-
-    const ready =
-      snapshot !== null &&
-      !entry.stale &&
-      snapshot.complete &&
-      entry.nextVersion !== null;
 
     return html`<gw-row gap="s">
       <gw-button
@@ -651,23 +511,13 @@ export class UpkeepReleases extends LitElement {
             )
       }
       ${
-        entry.recipe !== null && ready
-          ? html`<gw-button
-              size="small"
-              icon=${phRocketLaunch}
-              @click=${(event: Event) => this.#publish(event, entry)}
-              >Publish ${entry.nextVersion}</gw-button
-            >`
-          : nothing
-      }
-      ${
         snapshot !== null && launchers.length > 0
           ? html`<gw-menu-button
               size="small"
-              appearance="outlined"
+              appearance="accent"
               icon=${phRobot}
-              label="Prepare in an agent"
-              heading="Prepare on"
+              label="Release in an agent"
+              heading="Release on"
               .items=${launchers.map((worker) => ({
                 value: worker.worker,
                 label: worker.worker,
@@ -782,17 +632,6 @@ export class UpkeepReleases extends LitElement {
                 </ul>`,
               )
         }
-        ${
-          entry.recipe === null
-            ? fact(
-                "Publishing",
-                html`<span class="muted"
-                  >not set up; add a publish recipe to the worker's settings, or
-                  prepare it in an agent</span
-                >`,
-              )
-            : nothing
-        }
       </dl>
       ${this.#actions(entry, snapshot, page.workers)}
       ${
@@ -833,15 +672,12 @@ export class UpkeepReleases extends LitElement {
     </gw-stack>`;
   }
 
-  #render(page: Domain.ReleasesPage) {
-    return html`${
-      this.repo === undefined ? this.#list(page) : this.#detail(page, this.repo)
-    }
-    ${this.#publishPopover()}`;
-  }
-
   override render() {
-    return view(this.#page.value, (page) => this.#render(page));
+    return view(this.#page.value, (page) =>
+      this.repo === undefined
+        ? this.#list(page)
+        : this.#detail(page, this.repo),
+    );
   }
 }
 

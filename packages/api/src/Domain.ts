@@ -785,29 +785,10 @@ export const Versioning = Schema.Literals([
 export type Versioning = typeof Versioning.Type;
 
 /**
- * How a repository publishes a release from Upkeep: its version files, as
- * the branch has them, the commands that prepare and check it, and the files
- * those commands may regenerate. A version file that can't be read says why.
- */
-export const ReleaseRecipe = Schema.Struct({
-  versionFiles: Schema.Array(
-    Schema.Struct({
-      path: Schema.String,
-      before: Schema.NullOr(Schema.String),
-      error: Schema.NullOr(Schema.String),
-    }),
-  ),
-  commands: Schema.Array(Schema.Array(Schema.String)),
-  generatedFiles: Schema.Array(Schema.String),
-});
-
-export type ReleaseRecipe = typeof ReleaseRecipe.Type;
-
-/**
  * What the unreleased job read of one repository, with the settings the page
- * needs: its name and branch, how it numbers releases, when to tell you and
- * how to publish. `snapshot` is as classified, before your review; null when
- * the comparison failed, which `error` says.
+ * needs: its name and branch, how it numbers releases and when to tell you.
+ * `snapshot` is as classified, before your review; null when the comparison
+ * failed, which `error` says.
  */
 export const ReleaseScan = Schema.Struct({
   repo: RepoName,
@@ -819,7 +800,6 @@ export const ReleaseScan = Schema.Struct({
     Schema.Struct({ upstream: Schema.String, suffix: Schema.String }),
   ),
   notify: Schema.Struct({ enabled: Schema.Boolean, minimumImpact: Impact }),
-  recipe: Schema.NullOr(ReleaseRecipe),
   snapshot: Schema.NullOr(ReleaseSnapshot),
   error: Schema.NullOr(Schema.String),
   attemptedAt: Schema.Finite,
@@ -846,7 +826,6 @@ export const ReleaseEntry = Schema.Struct({
   versionError: Schema.NullOr(Schema.String),
   versioning: Versioning,
   notify: ReleaseScan.fields.notify,
-  recipe: Schema.NullOr(ReleaseRecipe),
 });
 
 export type ReleaseEntry = typeof ReleaseEntry.Type;
@@ -867,8 +846,8 @@ export type ReleasesPage = typeof ReleasesPage.Type;
  * `ask-inbox` has that session ask you in the Plannotator Inbox there, and
  * `release-agent` opens an agent to prepare a release on the worker named.
  * The `skill-*` commands run as the `skill-change` job instead, `change` as
- * the `change` job, `release-publish` as the `release-publish` job, and
- * `machine` names the worker a machine job's run is for.
+ * the `change` job, and `machine` names the worker a machine job's run is
+ * for.
  */
 export const Command = Schema.Union([
   Schema.Struct({
@@ -969,19 +948,6 @@ export const Command = Schema.Union([
       Schema.isMinLength(1),
       Schema.isMaxLength(4000),
     ),
-  }),
-  /**
-   * Publish a repository's release: the comparison and tag you confirmed on
-   * the Releases page, which the worker checks are still current. `notes`
-   * go before GitHub's generated notes, or replace them.
-   */
-  Schema.Struct({
-    kind: Schema.Literal("release-publish"),
-    repo: RepoName,
-    snapshot: Schema.String,
-    tag: Schema.String,
-    notes: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20000))),
-    notesMode: Schema.Literals(["prepend", "replace"]),
   }),
   /**
    * Open an agent to prepare a repository's release, with its comparison as

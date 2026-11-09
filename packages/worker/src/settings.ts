@@ -157,18 +157,7 @@ const ReleaseRule = Schema.Struct({
 
 export type ReleaseRule = typeof ReleaseRule.Type;
 
-/** A JSON manifest's path, or a `setup.py` with a literal version. */
-const VersionFile = Schema.Union([
-  Schema.String,
-  Schema.Struct({
-    path: Schema.String,
-    format: Schema.Literal("python-setup"),
-  }),
-]);
-
-export type VersionFile = typeof VersionFile.Type;
-
-/** How the unreleased job reads one repository, and how it's released. */
+/** How the unreleased job reads one repository. */
 const ReleaseRepo = Schema.Struct({
   /** The branch to compare with its last stable release; the default branch by default. */
   branch: Schema.optionalKey(Schema.String),
@@ -204,20 +193,6 @@ const ReleaseRepo = Schema.Struct({
   sourceExcludes: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Rules applied before the policy's own, the first match winning. */
   overrides: Schema.optionalKey(Schema.Array(ReleaseRule)),
-  /**
-   * How to publish from the Releases page: the version files that must
-   * carry the new version, the commands that prepare and check it, as
-   * argument lists, and the tracked files they may regenerate, such as a
-   * lockfile, which go in the version commit. Without it, the page can only
-   * hand a release to an agent.
-   */
-  publish: Schema.optionalKey(
-    Schema.Struct({
-      versionFiles: Schema.Array(VersionFile),
-      generatedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
-      commands: Schema.Array(Schema.Array(Schema.String)),
-    }),
-  ),
   /**
    * Whether a suggested release needs you, through `notify`, and from what
    * impact; on, from `patch`, by default.

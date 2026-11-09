@@ -1200,7 +1200,7 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: ReleaseScan,
       success: HttpApiSchema.NoContent,
     }),
-    /** A repository on the Releases page, for publishing or an agent's brief. */
+    /** A repository on the Releases page, for an agent's brief. */
     HttpApiEndpoint.get("release", "/releases/:owner/:name", {
       params: { owner: Schema.String, name: Schema.String },
       success: ReleaseEntry,
@@ -1372,22 +1372,7 @@ export class ReleasesGroup extends HttpApiGroup.make("releases")
       success: Run,
       error: ReleaseNotFound,
     }),
-    /**
-     * Publish the release the page showed, at the tag it showed, on any
-     * worker. Refused when either has changed since.
-     */
-    HttpApiEndpoint.post("publish", "/:owner/:name/publish", {
-      params: ReleaseTarget,
-      payload: Schema.Struct({
-        snapshot: Schema.String,
-        tag: Schema.String,
-        notes: Schema.NullOr(Schema.String.check(Schema.isMaxLength(20000))),
-        notesMode: Schema.Literals(["prepend", "replace"]),
-      }),
-      success: Run,
-      error: [ReleaseNotFound, ReleaseStale],
-    }),
-    /** Open an agent to prepare the release, on the worker named. */
+    /** Open an agent to prepare and publish the release, on the worker named. */
     HttpApiEndpoint.post("agent", "/:owner/:name/agent", {
       params: ReleaseTarget,
       payload: Schema.Struct({
@@ -1404,7 +1389,7 @@ export class ReleasesGroup extends HttpApiGroup.make("releases")
     OpenApi.annotations({
       title: "Releases",
       description:
-        "What changed since each repository's last stable release, the release it needs, and publishing it",
+        "What changed since each repository's last stable release, the release it needs, and an agent to publish it",
     }),
   ) {}
 

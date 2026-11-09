@@ -664,6 +664,19 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // Releases are published by an agent now, so the release-publish job and
+  // its command are gone: its runs keep their history without the command,
+  // which no longer decodes, and any still waiting are cancelled
+  "0034_drop_release_publish": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* Clock.currentTimeMillis;
+
+    yield* sql`
+      UPDATE runs SET state = 'cancelled', finished_at = ${now}
+      WHERE job = 'release-publish' AND state IN ('queued', 'running')
+    `;
+    yield* sql`UPDATE runs SET command = NULL WHERE job = 'release-publish'`;
+  }),
 });
 
 const RunRow = Schema.Struct({
