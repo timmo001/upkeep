@@ -329,8 +329,8 @@ export class UpkeepReleases extends LitElement {
   ) {
     const byId = new Map(findings.map((finding) => [finding.id, finding]));
 
-    // The change and why both wrap and share the spare width, so a long
-    // reason reads in full rather than in an ellipsis
+    // The change and why both wrap, and why takes the spare width, so a long
+    // reason reads in full rather than in an ellipsis or a sliver
     const draw =
       (
         content: (finding: Domain.ReleaseFinding) => TemplateResult | string,
@@ -346,7 +346,6 @@ export class UpkeepReleases extends LitElement {
       {
         id: "detail",
         header: "Change",
-        wide: true,
         cell: draw(
           (finding) =>
             finding.evidenceUrl === undefined
