@@ -48,4 +48,5 @@ export const handlers: Handlers = {
   "up-repos": () => machine("repos"),
   "up-tools": () => machine("tools"),
   "up-plugins": () => machine("plugins"),
+  "up-first-party": () => machine("first-party"),
 };

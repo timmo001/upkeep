@@ -291,6 +291,13 @@ export const upPlugins = machine(
   "20 5 * * *",
 );
 
+export const upFirstParty = machine(
+  "first-party",
+  "First-party packages",
+  "Upgrade the packages from the signed first-party Arch repository without a password, and restart the services still running an old binary",
+  "35 * * * *",
+);
+
 /** The machine jobs, in the order a worker catching up runs them. */
 export const machineJobs: ReadonlyArray<Job> = [
   upDotfiles,
@@ -298,6 +305,7 @@ export const machineJobs: ReadonlyArray<Job> = [
   upRepos,
   upTools,
   upPlugins,
+  upFirstParty,
 ];
 
 /**
