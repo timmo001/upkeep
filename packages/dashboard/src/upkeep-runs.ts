@@ -14,7 +14,7 @@ import type {
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import { keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
-import type { Domain } from "@upkeep/api";
+import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
 import { ref } from "lit/directives/ref.js";
@@ -137,6 +137,9 @@ const optionsOf = (filter: RunFilter, list: ReadonlyArray<Domain.Run>) => {
     .toSorted((a, b) => a.label.localeCompare(b.label));
 };
 
+/** The state every job's runs leave out until someone changes the filter. */
+const leftOut: Domain.RunState = "skipped";
+
 const sameValues = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
   a.length === b.length && a.every((value) => b.includes(value));
 
@@ -218,6 +221,9 @@ export class UpkeepRuns extends LitElement {
   /** The runs each older page was loaded before, oldest page last. */
   #cursors: string[] = [];
 
+  /** The states the older pages keep, all of them when empty. */
+  #states: ReadonlyArray<string> = [];
+
   /** Each older page's subscription, which keeps it loaded. */
   #pages: Array<() => void> = [];
 
@@ -234,7 +240,15 @@ export class UpkeepRuns extends LitElement {
 
     this.#pages = [];
     this.#cursors = [];
+    this.#states = [];
     this.#kept = new Map();
+  }
+
+  /** An older page's runs, as loaded so far. */
+  #page(before: string) {
+    return registry.get(
+      olderRuns(olderRunsKey(this.job, before, this.#states)),
+    );
   }
 
   override willUpdate(changed: Map<PropertyKey, unknown>) {
@@ -249,7 +263,7 @@ export class UpkeepRuns extends LitElement {
   /** The older pages' runs loaded so far, oldest page last. */
   #older() {
     return this.#cursors.flatMap((before) => {
-      const page = registry.get(olderRuns(olderRunsKey(this.job, before)));
+      const page = this.#page(before);
 
       return AsyncResult.isSuccess(page) ? page.value : [];
     });
@@ -281,26 +295,49 @@ export class UpkeepRuns extends LitElement {
 
     if (last === undefined) return latest.length >= runsPage;
 
-    const page = registry.get(olderRuns(olderRunsKey(this.job, last)));
+    const page = this.#page(last);
 
     if (AsyncResult.isSuccess(page)) return page.value.length >= runsPage;
 
     return !AsyncResult.isFailure(page);
   }
 
-  /** Loads the page of runs before the oldest shown, once. */
-  #loadOlder(all: ReadonlyArray<Domain.Run>) {
+  /**
+   * Loads the page of runs before the oldest shown, once, in only the
+   * `states` the table shows, so a filter that hides most runs doesn't page
+   * through all of them to fill the view.
+   */
+  #loadOlder(all: ReadonlyArray<Domain.Run>, states: ReadonlyArray<string>) {
+    // Pages loaded for other states hold the wrong runs, so they start again
+    if (!sameValues(states, this.#states)) {
+      this.#resetPages();
+      this.#states = states;
+    }
+
     const oldest = all.at(-1);
 
     if (oldest === undefined || this.#cursors.includes(oldest.id)) return;
 
     this.#cursors = [...this.#cursors, oldest.id];
     this.#pages.push(
-      registry.subscribe(olderRuns(olderRunsKey(this.job, oldest.id)), () =>
-        this.requestUpdate(),
+      registry.subscribe(
+        olderRuns(olderRunsKey(this.job, oldest.id, states)),
+        () => this.requestUpdate(),
       ),
     );
     this.requestUpdate();
+  }
+
+  /**
+   * The states the server keeps for older pages: the ones chosen, every one
+   * but those the default leaves out, or all of them (empty).
+   */
+  #serverStates(chosen: ReadonlyArray<string> | undefined) {
+    if (chosen !== undefined) return chosen;
+
+    return this.job === ""
+      ? Domain.RunState.literals.filter((state) => state !== leftOut)
+      : [];
   }
 
   #laneOf(job: string) {
@@ -323,7 +360,7 @@ export class UpkeepRuns extends LitElement {
    */
   #defaultOf(filter: RunFilter, values: ReadonlyArray<string>) {
     return filter.id === "states" && this.job === ""
-      ? values.filter((value) => value !== "skipped")
+      ? values.filter((value) => value !== leftOut)
       : [];
   }
 
@@ -336,12 +373,19 @@ export class UpkeepRuns extends LitElement {
     keep(this.#storageKey, {
       [filter.id]: sameValues(value, fallback) ? null : value,
     });
+
+    // Older pages were loaded for the states shown before
+    if (filter.id === "states") this.#resetPages();
+
     this.requestUpdate();
   }
 
   /** Takes a filter off, back to its default. */
   #off(filter: RunFilter) {
     keep(this.#storageKey, { [filter.id]: null });
+
+    if (filter.id === "states") this.#resetPages();
+
     this.requestUpdate();
   }
 
@@ -453,6 +497,9 @@ export class UpkeepRuns extends LitElement {
         shown: options.length > 1 || chosen !== undefined,
       };
     });
+
+    // Older pages come from the server in only the states shown
+    const states = this.#serverStates(textsOf(kept?.["states"]));
 
     const list = all.filter((run) =>
       filters.every(({ filter, value }) => {
@@ -581,7 +628,7 @@ export class UpkeepRuns extends LitElement {
       search-label="Search runs"
       empty-label="No runs match the filters"
       .more=${more}
-      @more=${() => this.#loadOlder(all)}
+      @more=${() => this.#loadOlder(all, states)}
       .columns=${columns}
       .rows=${list.map((run) => ({
         id: run.id,

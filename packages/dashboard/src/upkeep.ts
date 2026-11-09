@@ -119,25 +119,34 @@ export const runs = Atom.family((job: string) =>
 );
 
 /**
- * A page of older runs, of every job or one, queued before the run `before`,
+ * A page of older runs, of every job or one, queued before the run `before`
+ * and in one of the states when any are given,
  * loaded as a list of runs scrolls. Keyed by both, as a family takes one key
  * (see `olderRunsKey`). Not refreshed by the server's changes: runs this old have
  * finished, and the latest page keeps up with the rest.
  */
 export const olderRuns = Atom.family((key: string) => {
-  const [job = "", before = ""] = key.split("\n");
+  const [job = "", before = "", states = ""] = key.split("\n");
+
+  const query = { before, limit: runsPage };
+
+  const withStates = states === "" ? query : { ...query, states };
 
   return UpkeepApi.query("runs", "list", {
-    query:
-      job === ""
-        ? { before, limit: runsPage }
-        : { job, before, limit: runsPage },
+    query: job === "" ? withStates : { ...withStates, job },
   });
 });
 
-/** The key `olderRuns` takes: the job and run ids, which hold no line breaks. */
-export const olderRunsKey = (job: string, before: string) =>
-  `${job}\n${before}`;
+/**
+ * The key `olderRuns` takes: the job, the run to load before, and the states
+ * to keep (all of them when empty), so a list filtered by state pages through
+ * only the runs it shows. None of them holds a line break.
+ */
+export const olderRunsKey = (
+  job: string,
+  before: string,
+  states: ReadonlyArray<string>,
+) => `${job}\n${before}\n${states.join(",")}`;
 
 /** The tracked repositories, with their titles and jobs. */
 export const repos = UpkeepApi.query("repos", "list", {
