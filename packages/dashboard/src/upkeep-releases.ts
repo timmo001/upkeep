@@ -289,7 +289,7 @@ export class UpkeepReleases extends LitElement {
         description=${
           page.repos.length === 0
             ? "What changed since each repository's last stable release"
-            : `${needs === 0 ? "No repository has" : `${plural(needs, "repository")} ${needs === 1 ? "has" : "have"}`} changes worth a release`
+            : `${needs === 0 ? "No repository has" : `${plural(needs, "repository", "repositories")} ${needs === 1 ? "has" : "have"}`} changes worth a release`
         }
       ></gw-page-header>
       ${
