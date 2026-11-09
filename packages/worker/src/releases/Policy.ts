@@ -10,7 +10,7 @@ import { evidenceId, highestImpact } from "@upkeep/api/releases";
 import type { ReleaseRepo, ReleaseRule } from "../settings";
 
 /** Bump when a policy classifies differently, so old comparisons go stale. */
-export const policyVersion = 14;
+export const policyVersion = 15;
 
 export type Policy = NonNullable<ReleaseRepo["policy"]>;
 
@@ -55,6 +55,10 @@ const quietPaths = [
   "**/mlc_config.json",
   "**/pitchfork.toml",
   "**/PKGBUILD",
+  "**/.mise/locks/**",
+  "**/tooling.yml",
+  "**/sync.json",
+  "**/sync.lock.json",
 ];
 
 const quiet: ReleaseRule = {
@@ -69,6 +73,14 @@ const omarchyPlugin: ReleaseRule = {
   paths: omarchyPluginPaths,
   impact: "none",
   reason: "Omarchy plugin is published separately and pinned by commit",
+};
+
+const opencodePluginPaths = ["**/opencode-plugin", "**/opencode-plugin/**"];
+
+const opencodePlugin: ReleaseRule = {
+  paths: opencodePluginPaths,
+  impact: "none",
+  reason: "OpenCode plugin loads from the default branch, not a release",
 };
 
 /** Build dependencies whose output System Bridge ships. */
@@ -89,8 +101,8 @@ const glob = (pattern: string, path: string) =>
  * as a file change but isn't read for dependencies.
  */
 export const separatelyPublished = (path: string, policy: Policy) =>
-  [...quietPaths, ...omarchyPluginPaths].some((pattern) =>
-    glob(pattern, path),
+  [...quietPaths, ...omarchyPluginPaths, ...opencodePluginPaths].some(
+    (pattern) => glob(pattern, path),
   ) ||
   (policy === "system-bridge" && (path === "docs" || path.startsWith("docs/")));
 
@@ -130,6 +142,7 @@ const presets: Record<Policy, ReadonlyArray<ReleaseRule>> = {
   application: [
     quiet,
     omarchyPlugin,
+    opencodePlugin,
     tests,
     ...dependencies,
     {
@@ -173,6 +186,7 @@ const presets: Record<Policy, ReadonlyArray<ReleaseRule>> = {
   "oxlint-rules": [
     quiet,
     omarchyPlugin,
+    opencodePlugin,
     tests,
     ...dependencies,
     {
@@ -218,10 +232,17 @@ const presets: Record<Policy, ReadonlyArray<ReleaseRule>> = {
   "system-bridge": [
     quiet,
     omarchyPlugin,
+    opencodePlugin,
     {
       paths: ["docs/**"],
       impact: "none",
       reason: "Separately deployed docs",
+    },
+    {
+      paths: ["nix/package.nix"],
+      impact: "none",
+      reason:
+        "Nix package hashes follow the lockfile; Nix builds from a commit",
     },
     tests,
     {
