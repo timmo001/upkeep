@@ -239,14 +239,21 @@ loop. A run that ends while the server is restarting keeps trying to report
 how it ended for about a minute, so it isn't left running until it's lost. A
 worker reads GitHub through `gh`, logged in as whoever runs it.
 
-A worker runs jobs in five lanes at once, one run per lane, so a long job
-doesn't hold up the others: heals in one, the quick API-only jobs
-(`releases`, `watch`, `labels` and `notifications`) in another, the jobs that
-clone and push to repositories in a third, where they take turns, what the
-dashboard asks for, such as starting an agent, in a fourth, and the
-[machine jobs](#machines) that keep the worker's own machine current in the
-last. The command lane is held the same way, so a click is picked up straight
-away.
+A worker runs jobs in six lanes at once, one run per lane, so a long job
+doesn't hold up the others: heals in one, the quick jobs that read APIs or ask
+an agent for a few lines (such as `releases`, `watch`, `labels` and
+`notifications`) in another, the jobs that clone and push to repositories in a
+third, where they take turns, the jobs that only read repositories or run
+their checks (`unreleased`, `ci` and `drift-review`) in a fourth, so they don't
+wait behind a long push, what the dashboard asks for, such as starting an
+agent, in a fifth, and the [machine jobs](#machines) that keep the worker's own
+machine current in the last. The command lane is held the same way, so a click
+is picked up straight away.
+
+In each lane a run you asked for by hand goes first, then the oldest. A run
+for every repository takes over the runs for one repository of the same job
+still waiting, in the oldest one's place, rather than doing them again after
+them.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in

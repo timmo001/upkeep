@@ -22,7 +22,7 @@ export const unreleased: Job = {
     "Compare each repository's branch with its last stable release, classify what changed and suggest the release it needs, for the Releases page",
   schedule: "*/15 * * * *",
   onRelease: false,
-  lane: "repos",
+  lane: "checks",
   tracked: true,
 };
 
@@ -99,7 +99,7 @@ export const driftReview: Job = {
     "On request, have an agent review each repository as a whole against the current release of every tool in its tooling.yml, for what it's still missing, not only what changed since the last review",
   schedule: null,
   onRelease: false,
-  lane: "repos",
+  lane: "checks",
   tracked: false,
   trackedAs: drift.id,
 };
@@ -133,7 +133,7 @@ export const ci: Job = {
     "Read the latest CI on each repository's default branch: run the checks of a red one here and fail with both, so a heal fixes it forward",
   schedule: "30 * * * *",
   onRelease: false,
-  lane: "repos",
+  lane: "checks",
   tracked: true,
 };
 

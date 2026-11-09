@@ -46,6 +46,7 @@ import "./upkeep-runs.ts";
 const laneLabels = new Map<string, string>([
   ["quick", "Quick lane: short jobs"],
   ["repos", "Repositories lane: jobs that change repositories"],
+  ["checks", "Checks lane: jobs that read repositories without pushing"],
   ["heal", "Heal lane: fixes for failed runs"],
   ["command", "Command lane: what the dashboard asks for"],
   ["machine", "Machine lane: keeping each worker's own machine current"],
