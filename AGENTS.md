@@ -32,10 +32,6 @@ waits for it.
   it is and, where it isn't obvious, why it's there: a `/** */` block before
   the imports in TypeScript, the file's own comment syntax elsewhere. Skip
   generated files, data files and one-line configs.
-- Track public work in issues with sub-issues and blocked-by relationships set;
-  plans, research and decisions are attached to the issue, and so are ideas and
-  feature requests. Private work can stay in whatever tool fits until it lands
-  on a public repo.
 
 ## Development
 
