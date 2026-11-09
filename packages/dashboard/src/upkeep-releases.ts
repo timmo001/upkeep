@@ -199,7 +199,7 @@ export class UpkeepReleases extends LitElement {
     const reviewable = !entry.stale && snapshot.complete;
 
     return html`<gw-menu-button
-      size="xs"
+      size="small"
       appearance="plain"
       label=${label}
       heading=${label}
@@ -360,7 +360,7 @@ export class UpkeepReleases extends LitElement {
         searchable: false,
         cell: draw(
           (finding) =>
-            html`<gw-chip size="xs" tone=${impactTone[finding.impact]}
+            html`<gw-chip size="small" tone=${impactTone[finding.impact]}
                 >${finding.impact}</gw-chip
               >${
                 finding.reviewed
@@ -368,7 +368,7 @@ export class UpkeepReleases extends LitElement {
                       >chosen, was ${finding.automaticImpact}</span
                     >`
                   : nothing
-              }${finding.complete ? nothing : html` <gw-chip size="xs" tone="warning">incomplete</gw-chip>`}
+              }${finding.complete ? nothing : html` <gw-chip size="small" tone="warning">incomplete</gw-chip>`}
               ${this.#impactMenu(
                 "Choose",
                 entry,
@@ -377,7 +377,7 @@ export class UpkeepReleases extends LitElement {
                 finding.impact,
                 finding.reviewed,
               )}`,
-          { width: "14rem", wrap: true },
+          { width: "11rem", wrap: true },
         ),
       },
       {
