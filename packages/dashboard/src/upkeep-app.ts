@@ -21,6 +21,8 @@ import {
   inbox,
   jobsHref,
   live,
+  releasesHref,
+  releasesPage,
   reposHref,
   Route,
   route,
@@ -37,6 +39,7 @@ import "./upkeep-attention.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";
 import "./upkeep-overview.ts";
+import "./upkeep-releases.ts";
 import "./upkeep-repo.ts";
 import "./upkeep-repos.ts";
 import "./upkeep-run.ts";
@@ -103,6 +106,8 @@ export class UpkeepApp extends LitElement {
 
   readonly #skills = new AtomController(this, () => skillsPage);
 
+  readonly #releases = new AtomController(this, () => releasesPage);
+
   readonly #desktopTheme = new AtomController(this, () => desktopTheme);
 
   // Keeps the server's changes coming for as long as the dashboard is open
@@ -121,6 +126,15 @@ export class UpkeepApp extends LitElement {
     return AsyncResult.isSuccess(result)
       ? result.value.changes.filter((change) => change.state === "waiting")
           .length
+      : 0;
+  }
+
+  /** How many repositories have changes worth a release, for the menu. */
+  #unreleased() {
+    const result = this.#releases.value;
+
+    return AsyncResult.isSuccess(result)
+      ? result.value.repos.filter((entry) => entry.needsRelease).length
       : 0;
   }
 
@@ -154,6 +168,9 @@ export class UpkeepApp extends LitElement {
     const onAttention = Route.$is("Attention")(current);
     const onSkills = Route.$is("Skills")(current);
 
+    const onReleases =
+      Route.$is("Releases")(current) || Route.$is("Release")(current);
+
     const onJobs =
       Route.$is("Jobs")(current) ||
       Route.$is("Job")(current) ||
@@ -181,6 +198,7 @@ export class UpkeepApp extends LitElement {
         ${this.#link(homeHref, "Inbox", onInbox, this.#unread())}
         ${this.#link(attentionHref, "Attention", onAttention)}
         ${this.#link(skillsHref, "Skills", onSkills, this.#waiting())}
+        ${this.#link(releasesHref, "Releases", onReleases, this.#unreleased())}
         ${this.#link(reposHref, "Repositories", onRepos)}
         ${this.#link(jobsHref, "Jobs", onJobs)}
         <gw-theme-picker
@@ -242,6 +260,9 @@ export class UpkeepApp extends LitElement {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
             Attention: () => html`<upkeep-attention></upkeep-attention>`,
             Skills: () => html`<upkeep-skills></upkeep-skills>`,
+            Releases: () => html`<upkeep-releases></upkeep-releases>`,
+            Release: ({ repo }) =>
+              html`<upkeep-releases .repo=${repo}></upkeep-releases>`,
             Repos: () => html`<upkeep-repos></upkeep-repos>`,
             Repo: ({ repo }) => html`<upkeep-repo .repo=${repo}></upkeep-repo>`,
             Jobs: () => html`<upkeep-overview></upkeep-overview>`,

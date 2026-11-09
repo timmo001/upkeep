@@ -84,6 +84,9 @@ import {
   linkAttention,
   markNotificationRead,
   openAttention,
+  releaseHref,
+  releasesHref,
+  releasesPage,
   removeRule,
   removeWait,
   repos,
@@ -565,6 +568,8 @@ export class UpkeepAttention extends LitElement {
   ];
 
   readonly #attention = new AtomController(this, () => attention, always);
+
+  readonly #unreleased = new AtomController(this, () => releasesPage);
 
   readonly #jobs = new AtomController(this, () => jobs, always);
 
@@ -1462,6 +1467,84 @@ export class UpkeepAttention extends LitElement {
     ></gw-table>`;
   }
 
+  /**
+   * The repositories whose changes since their last release are worth one,
+   * each linking to its comparison on the Releases page.
+   */
+  #unreleasedSection() {
+    const result = this.#unreleased.value;
+
+    const waiting = AsyncResult.isSuccess(result)
+      ? result.value.repos.filter((entry) => entry.needsRelease)
+      : [];
+
+    if (waiting.length === 0) return nothing;
+
+    const draw = drawFrom(new Map(waiting.map((entry) => [entry.repo, entry])));
+
+    const columns: TableColumn[] = [
+      {
+        id: "name",
+        header: "Repository",
+        wide: true,
+        cell: draw(
+          (entry) =>
+            html`<a class="row-link" href=${releaseHref(entry.repo)}
+              >${entry.name}</a
+            >`,
+          "fill",
+        ),
+      },
+      {
+        id: "suggestion",
+        header: "Suggests",
+        cell: draw(
+          (entry) =>
+            `${entry.snapshot?.suggestion ?? ""}${entry.stale ? ", stale" : ""}`,
+          { width: "8rem" },
+        ),
+      },
+      {
+        id: "next",
+        header: "Next",
+        cell: draw((entry) => entry.nextVersion ?? "", { width: "9rem" }),
+      },
+      {
+        id: "since",
+        header: "Since",
+        cell: draw((entry) => entry.snapshot?.releaseTag ?? "none yet", {
+          width: "9rem",
+        }),
+      },
+    ];
+
+    return html`<gw-expansion
+      heading=${`Unreleased changes (${waiting.length})`}
+      description="Repositories with changes worth a release, reviewed on the Releases page"
+      storage-key=${sectionKey("unreleased")}
+      .draw=${drawn(
+        () =>
+          html`<gw-stack gap="s">
+            <gw-table
+              label="Unreleased changes"
+              contained
+              row-key="id"
+              search-label="Search repositories"
+              .columns=${columns}
+              .rows=${waiting.map((entry) => ({
+                id: entry.repo,
+                name: entry.name,
+                suggestion: entry.snapshot?.suggestion ?? "",
+                next: entry.nextVersion ?? "",
+                since: entry.snapshot?.releaseTag ?? "",
+              }))}
+            ></gw-table>
+            <a href=${releasesHref}>Every repository on the Releases page</a>
+          </gw-stack>`,
+      )}
+    ></gw-expansion>`;
+  }
+
   /** What went over the last week, whatever the scope, as a history. */
   #gone(page: Domain.Attention) {
     const gone = page.changes.filter((change) => change.gone);
@@ -1744,8 +1827,8 @@ export class UpkeepAttention extends LitElement {
                         )}
                       ></gw-expansion>`
                 }
-                ${this.#releases(page, shown)} ${this.#gone(page)}
-                ${this.#rules(page)}
+                ${this.#unreleasedSection()} ${this.#releases(page, shown)}
+                ${this.#gone(page)} ${this.#rules(page)}
               `
         }
       </gw-stack>

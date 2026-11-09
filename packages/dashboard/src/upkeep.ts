@@ -73,6 +73,8 @@ const workersKey = ["workers"];
 
 const themeKey = ["theme"];
 
+const releasesKey = ["releases"];
+
 /** Requests that couldn't be made or understood are defects, as in queries. */
 const asDefects = <A, E, R>(
   effect: Effect.Effect<
@@ -392,6 +394,8 @@ const touched = (change: Domain.StateChange) => {
       return workersKey;
     case "theme":
       return themeKey;
+    case "releases":
+      return releasesKey;
   }
 };
 
@@ -402,6 +406,7 @@ const everything = [
   ...skillsKey,
   ...workersKey,
   ...themeKey,
+  ...releasesKey,
 ];
 
 /**
@@ -640,10 +645,86 @@ export const requestSkillChange = UpkeepApi.runtime.fn(
     ),
 );
 
+/** The Releases page: each repository's comparison with its last release. */
+export const releasesPage = UpkeepApi.query("releases", "get", {
+  reactivityKeys: [...releasesKey, ...runsKey],
+});
+
+const afterReleases = Effect.ensuring(
+  Reactivity.invalidate([...releasesKey, ...runsKey]),
+);
+
+/** `owner` and `name` of a repository, for the API's paths. */
+const repoParams = (repo: string) => {
+  const [owner = "", name = ""] = repo.split("/");
+
+  return { owner, name };
+};
+
+/**
+ * Choose an impact for findings, or `overall`, or clear the choice with
+ * `auto`, on the comparison the page showed.
+ */
+export const reviewRelease = UpkeepApi.runtime.fn(
+  ({
+    repo,
+    ...payload
+  }: {
+    readonly repo: string;
+    readonly snapshot: string;
+    readonly targets: ReadonlyArray<string>;
+    readonly impact: Domain.Impact | "auto";
+  }) =>
+    UpkeepApi.use((client) =>
+      client.releases.review({ params: repoParams(repo), payload }),
+    ).pipe(asDefects, afterReleases),
+);
+
+/** Compare a repository with its last release again, now. */
+export const refreshRelease = UpkeepApi.runtime.fn((repo: string) =>
+  UpkeepApi.use((client) =>
+    client.releases.refresh({ params: repoParams(repo) }),
+  ).pipe(asDefects, afterReleases),
+);
+
+/** Publish the release the page showed, at the tag it showed. */
+export const publishRelease = UpkeepApi.runtime.fn(
+  ({
+    repo,
+    ...payload
+  }: {
+    readonly repo: string;
+    readonly snapshot: string;
+    readonly tag: string;
+    readonly notes: string | null;
+    readonly notesMode: "prepend" | "replace";
+  }) =>
+    UpkeepApi.use((client) =>
+      client.releases.publish({ params: repoParams(repo), payload }),
+    ).pipe(asDefects, afterReleases),
+);
+
+/** Open an agent to prepare the release, on the worker given. */
+export const releaseAgent = UpkeepApi.runtime.fn(
+  ({
+    repo,
+    ...payload
+  }: {
+    readonly repo: string;
+    readonly snapshot: string;
+    readonly worker: string;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.releases.agent({ params: repoParams(repo), payload }),
+    ).pipe(asDefects, afterReleases),
+);
+
 export type Route = Data.TaggedEnum<{
   Inbox: {};
   Attention: {};
   Skills: {};
+  Releases: {};
+  Release: { readonly repo: string };
   Repos: {};
   Repo: { readonly repo: string };
   Jobs: {};
@@ -666,6 +747,12 @@ const skillsPattern = new URLPattern({ pathname: "/skills{/}?" });
 
 const repoPattern = new URLPattern({ pathname: "/repos/:owner/:name" });
 
+const releasesPattern = new URLPattern({ pathname: "/releases{/}?" });
+
+const releasePattern = new URLPattern({
+  pathname: "/releases/:owner/:name",
+});
+
 const jobPattern = new URLPattern({ pathname: "/jobs/:id" });
 
 const runPattern = new URLPattern({ pathname: "/runs/:id" });
@@ -682,6 +769,16 @@ const parseRoute = (): Route => {
   if (attentionPattern.test({ pathname: path })) return Route.Attention();
 
   if (skillsPattern.test({ pathname: path })) return Route.Skills();
+
+  if (releasesPattern.test({ pathname: path })) return Route.Releases();
+
+  const release = releasePattern.exec({ pathname: path })?.pathname.groups;
+
+  if (release?.["owner"] !== undefined && release["name"] !== undefined) {
+    return Route.Release({
+      repo: `${decodeURIComponent(release["owner"])}/${decodeURIComponent(release["name"])}`,
+    });
+  }
 
   const repo = repoPattern.exec({ pathname: path })?.pathname.groups;
 
@@ -773,6 +870,12 @@ export const reposHref = "repos";
 export const attentionHref = "attention";
 
 export const skillsHref = "skills";
+
+export const releasesHref = "releases";
+
+/** A repository's release comparison, by `owner/name`. */
+export const releaseHref = (repo: string) =>
+  `releases/${repo.split("/").map(encodeURIComponent).join("/")}`;
 
 /** A tracked repository's page, by `owner/name`. */
 export const repoHref = (repo: string) =>
