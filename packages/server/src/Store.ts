@@ -1088,7 +1088,8 @@ export class Store extends Context.Service<
     /**
      * Queue a run, unless one of the same job for the same release is still
      * waiting, which is returned instead. A run for one repository is also
-     * covered by a waiting run for every repository.
+     * covered by a waiting run for every repository, and a run for every
+     * repository takes over the waiting runs for one, in the oldest's place.
      */
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
     runs(filter: {
@@ -1108,7 +1109,10 @@ export class Store extends Context.Service<
     >;
     /** When each job last had a run queued by its schedule, by job. */
     lastScheduled(): Effect.Effect<ReadonlyMap<string, number>, StoreError>;
-    /** Take the oldest waiting run of one of these jobs for a worker. */
+    /**
+     * Take the oldest waiting run of one of these jobs for a worker, one run
+     * by hand before the rest.
+     */
     claim(
       jobs: ReadonlyArray<string>,
       worker: string,
@@ -1613,17 +1617,21 @@ export class Store extends Context.Service<
 
         const scope = repo ?? null;
 
-        // Repositories are matched ignoring case, as GitHub does, and a run
-        // for every repository covers one for a single repository
-        const waiting = yield* selectRuns(sql`
-          SELECT * FROM runs
-          WHERE job = ${job}
+        const same = sql`
+          job = ${job}
             AND state = 'queued'
             AND coalesce(release_repo, '') = ${release?.repo ?? ""}
             AND coalesce(release_tag, '') = ${release?.tag ?? ""}
             AND coalesce(command, '') = ${commandColumn ?? ""}
             AND coalesce(heal_of, '') = ${heal?.of ?? ""}
             AND coalesce(heal_target, '') = ${heal === undefined ? "" : targetColumn(heal.target)}
+        `;
+
+        // Repositories are matched ignoring case, as GitHub does, and a run
+        // for every repository covers one for a single repository
+        const waiting = yield* selectRuns(sql`
+          SELECT * FROM runs
+          WHERE ${same}
             AND (
               scope_repo IS NULL
               OR lower(scope_repo) = ${scope?.toLowerCase() ?? ""}
@@ -1633,6 +1641,40 @@ export class Store extends Context.Service<
         `);
 
         if (waiting[0] !== undefined) return waiting[0];
+
+        // A run for every repository would only do again what the waiting
+        // runs for one do, so the oldest becomes it and the rest go. A manual
+        // one stays manual, so it keeps its place ahead of the others.
+        if (scope === null) {
+          const scoped = yield* selectRuns(sql`
+            SELECT * FROM runs
+            WHERE ${same} AND scope_repo IS NOT NULL
+            ORDER BY queued_at, id
+          `);
+
+          const [oldest, ...rest] = scoped;
+
+          if (oldest !== undefined) {
+            const manual =
+              trigger === "manual" ||
+              scoped.some((each) => each.trigger === "manual");
+
+            if (rest.length > 0)
+              yield* sql`DELETE FROM runs WHERE ${sql.in(
+                "id",
+                rest.map((each) => each.id),
+              )}`;
+
+            const [widened] = yield* selectRuns(sql`
+              UPDATE runs
+              SET scope_repo = NULL, trigger = ${manual ? "manual" : trigger}
+              WHERE id = ${oldest.id}
+              RETURNING *
+            `);
+
+            if (widened !== undefined) return widened;
+          }
+        }
 
         const [created] = yield* selectRuns(sql`
           INSERT INTO runs ${sql.insert({
@@ -1764,7 +1806,8 @@ export class Store extends Context.Service<
               -- A command for one worker waits for that one
               AND coalesce(json_extract(command, '$.worker'), ${worker})
                 = ${worker}
-            ORDER BY queued_at, id LIMIT 1
+            -- What someone asked for goes before what started itself
+            ORDER BY trigger = 'manual' DESC, queued_at, id LIMIT 1
           )
           RETURNING *
         `);

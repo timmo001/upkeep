@@ -326,12 +326,17 @@ export class UpkeepRun extends LitElement {
     const inLane = all.filter((item) => laneOf(item.job) === lane);
     const running = inLane.filter((item) => item.state === "running");
 
+    // A run asked for by hand goes before the rest, then the oldest first
+    const asked = (item: Domain.Run) => item.trigger === "manual";
+
     const ahead = inLane.filter(
       (item) =>
         item.state === "queued" &&
         item.id !== current.id &&
-        (item.queuedAt < current.queuedAt ||
-          (item.queuedAt === current.queuedAt && item.id < current.id)),
+        (asked(item) !== asked(current)
+          ? asked(item)
+          : item.queuedAt < current.queuedAt ||
+            (item.queuedAt === current.queuedAt && item.id < current.id)),
     ).length;
 
     return html`

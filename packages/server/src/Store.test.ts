@@ -509,7 +509,7 @@ test("a run for one repository reuses a waiting run for it or for every reposito
       const queue = (repo: string | null = null) =>
         store.queueRun({
           job: "watch",
-          trigger: "manual",
+          trigger: "event",
           release: null,
           repo,
         });
@@ -523,10 +523,60 @@ test("a run for one repository reuses a waiting run for it or for every reposito
       expect(first.repo).toBe("timmo001/a");
       expect(again.id).toBe(first.id);
       expect(other.id).not.toBe(first.id);
-      // A run for one repository doesn't cover every repository
-      expect(all.id).not.toBe(first.id);
       expect(all.repo).toBeNull();
       expect(later.id).toBe(all.id);
+    }),
+  ));
+
+test("a run for every repository takes over the waiting runs for one", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const queue = (
+        repo: string | null,
+        trigger: "event" | "manual" | "schedule",
+      ) => store.queueRun({ job: "ci", trigger, release: null, repo });
+
+      const first = yield* queue("timmo001/a", "event");
+      const second = yield* queue("timmo001/b", "manual");
+      const all = yield* queue(null, "schedule");
+
+      // It takes the oldest's place, and stays manual for the one asked for
+      expect(all.id).toBe(first.id);
+      expect(all.repo).toBeNull();
+      expect(all.trigger).toBe("manual");
+      expect((yield* store.run(second.id).pipe(Effect.flip))._tag).toBe(
+        "RunNotFound",
+      );
+      expect(
+        (yield* store.runs({ job: "ci", state: "queued", limit: 10 })).map(
+          (each) => each.id,
+        ),
+      ).toEqual([first.id]);
+    }),
+  ));
+
+test("a run asked for by hand is taken before older ones", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "drift",
+        trigger: "schedule",
+        release: null,
+      });
+
+      const asked = yield* store.queueRun({
+        job: "deps",
+        trigger: "manual",
+        release: null,
+      });
+
+      const claimed = yield* store.claim(["drift", "deps"], "desktop");
+
+      expect(Option.getOrThrow(claimed).id).toBe(asked.id);
     }),
   ));
 
