@@ -73,3 +73,24 @@ test("a workflow run reads CI only once it completes on the default branch", () 
   expect(run("main", "requested")).toEqual([]);
   expect(run("fix", "completed")).toEqual([]);
 });
+
+test("a successful package publish upgrades every worker's first-party packages", () => {
+  const publish = (name: string, conclusion: string) =>
+    jobs(
+      push("timmo001/arch-repo", [], {
+        event: "workflow_run",
+        action: "completed",
+        ref: null,
+        workflow: { name, branch: "main", conclusion },
+      }),
+    );
+
+  expect(publish("Publish package", "success")).toEqual([
+    "ci:timmo001/arch-repo",
+    "up-first-party:all",
+  ]);
+  expect(publish("Publish package", "failure")).toEqual([
+    "ci:timmo001/arch-repo",
+  ]);
+  expect(publish("Lint", "success")).toEqual(["ci:timmo001/arch-repo"]);
+});

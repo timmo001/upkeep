@@ -22,6 +22,15 @@ export const renovateConfigFiles: ReadonlyArray<string> = [
   ".renovaterc.json5",
 ];
 
+/**
+ * The repository that publishes the first-party Arch packages, and the
+ * workflow that publishes them. Each successful publish has every worker
+ * upgrade its own machine.
+ */
+export const packageRepository = "arch-repo";
+
+export const packageWorkflow = "Publish package";
+
 /** A run an event asks for: for its repository, or for every one. */
 export interface EventRun {
   readonly job: JobId;
@@ -37,7 +46,9 @@ export interface EventRun {
  *   copies from it; `skill-consumers` on the skills repository; and `deps`
  *   or `drift` when it changed the dependency config or `tooling.yml`, or
  *   more paths than the event lists;
- * - a workflow run completing on the default branch: `ci` for the repository.
+ * - a workflow run completing on the default branch: `ci` for the repository,
+ *   and `up-first-party` on every worker when it's a successful publish of
+ *   the first-party Arch packages.
  *
  * Upkeep's own pushes come back too. Each is cheap: watch already knows its
  * commits, and deps and drift only run again when a push changed their
@@ -80,7 +91,14 @@ export const runsFor = (event: GitHubEvent): ReadonlyArray<EventRun> => {
     event.defaultBranch !== null &&
     event.workflow?.branch === event.defaultBranch
   )
-    return [{ job: Catalogue.ci.id, ...own }];
+    return [
+      { job: Catalogue.ci.id, ...own },
+      ...(name === packageRepository &&
+      event.workflow.name === packageWorkflow &&
+      event.workflow.conclusion === "success"
+        ? [{ job: Catalogue.upFirstParty.id, repo: null }]
+        : []),
+    ];
 
   return [];
 };

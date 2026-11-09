@@ -2096,7 +2096,8 @@ const eventLine = (event: Domain.GitHubEvent) =>
  * finished workflow run queues the runs `EventJobs.runsFor` asks for, on a
  * tracked repository only: one narrowed to the repository needs it tracked
  * for the job (or at all, for watch). A waiting run is reused, so a burst of
- * pushes queues one. Returns the runs queued.
+ * pushes queues one. A machine job, such as the first-party upgrade after a
+ * package publish, is queued on every live worker. Returns the runs queued.
  */
 const handleEvent = Effect.fn("handleEvent")(function* (
   event: Domain.GitHubEvent,
@@ -2127,6 +2128,15 @@ const handleEvent = Effect.fn("handleEvent")(function* (
     const job = Option.getOrNull(findJob(id));
 
     if (job === null) continue;
+
+    // A machine job runs on every live worker, as on its schedule
+    if (job.machine === true) {
+      const run = yield* queueMachine(job.id, "event");
+
+      if (Option.isSome(run)) queued.push(run.value);
+
+      continue;
+    }
 
     // A narrowed run only goes to a job the repository is tracked for; a run
     // of the whole job, such as sync on a groundwork push, needs neither
