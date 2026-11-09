@@ -483,6 +483,12 @@ export class UpkeepAttention extends LitElement {
         white-space: nowrap;
       }
 
+      /* The unreleased changes' row links cover their rows, which only a
+         positioned row holds */
+      .unreleased::part(row) {
+        position: relative;
+      }
+
       .since-links > a + a {
         margin-inline-start: var(--gw-space-3);
       }
@@ -1526,6 +1532,7 @@ export class UpkeepAttention extends LitElement {
         () =>
           html`<gw-stack gap="s">
             <gw-table
+              class="unreleased"
               label="Unreleased changes"
               contained
               row-key="id"

@@ -36,7 +36,7 @@ import {
   time,
   view,
 } from "./ui.ts";
-import { cell } from "./upkeep-cell.ts";
+import { type CellSize, cell } from "./upkeep-cell.ts";
 import {
   publishRelease,
   refreshRelease,
@@ -139,6 +139,11 @@ export class UpkeepReleases extends LitElement {
 
       gw-table {
         --gw-table-max-height: 32rem;
+      }
+
+      /* A row link covers its row, which only a positioned row holds */
+      gw-table::part(row) {
+        position: relative;
       }
 
       .muted {
@@ -324,18 +329,17 @@ export class UpkeepReleases extends LitElement {
   ) {
     const byId = new Map(findings.map((finding) => [finding.id, finding]));
 
+    // The change and why both wrap and share the spare width, so a long
+    // reason reads in full rather than in an ellipsis
     const draw =
       (
         content: (finding: Domain.ReleaseFinding) => TemplateResult | string,
-        width: string | undefined,
+        size: CellSize | undefined,
       ) =>
       (row: TableRow) => {
         const finding = byId.get(String(row.id));
 
-        return cell(
-          finding === undefined ? "" : content(finding),
-          width === undefined ? "fill" : { width, wrap: true },
-        );
+        return cell(finding === undefined ? "" : content(finding), size);
       };
 
     const columns: TableColumn[] = [
@@ -374,12 +378,13 @@ export class UpkeepReleases extends LitElement {
                 finding.impact,
                 finding.reviewed,
               )}`,
-          "14rem",
+          { width: "14rem", wrap: true },
         ),
       },
       {
         id: "reason",
         header: "Why",
+        wide: true,
         cell: draw(
           (finding) =>
             finding.subjects === undefined || finding.subjects.length === 0
