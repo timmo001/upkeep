@@ -713,6 +713,13 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `;
   }),
+  // The agent session an entry is about, as JSON, so a permission prompt's
+  // entry can open the session waiting on it
+  "0037_entry_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE entries ADD COLUMN session TEXT`;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -948,6 +955,7 @@ const EntryRow = Schema.Struct({
   placedBy: Schema.optionalKey(Schema.Unknown),
   you: Schema.Number,
   items: Schema.optionalKey(Schema.Unknown),
+  session: Schema.NullOr(Schema.fromJsonString(Domain.EntrySession)),
 });
 
 const decodeEntries = Schema.decodeUnknownEffect(Schema.Array(EntryRow));
@@ -1117,11 +1125,21 @@ const parkedKey = (job: string) => `needs:parked:${job}`;
 const promptPrefix = (worker: string) => `needs:permission:${worker}:`;
 
 /** A prompt's entry, saying which agent waits and what it wants to do. */
-const promptEntry = (worker: string, prompt: Domain.PermissionPrompt) => ({
-  key: `${promptPrefix(worker)}${prompt.id}`,
-  title: `${prompt.title ?? "An agent"} is waiting on permission`,
-  detail: `Wants ${prompt.resources.length === 0 ? prompt.action : `${prompt.action}: ${prompt.resources.join(", ")}`}, in ${prompt.directory} on ${worker}`,
-});
+const promptEntry = (worker: string, prompt: Domain.PermissionPrompt) => {
+  const title = prompt.title ?? "An agent";
+
+  return {
+    key: `${promptPrefix(worker)}${prompt.id}`,
+    title: `${title} is waiting on permission`,
+    detail: `Wants ${prompt.resources.length === 0 ? prompt.action : `${prompt.action}: ${prompt.resources.join(", ")}`}, in ${prompt.directory} on ${worker}`,
+    session: {
+      worker,
+      session: prompt.session,
+      directory: prompt.directory,
+      title,
+    },
+  };
+};
 
 /** An entry for something that needs a person, by its key. */
 export interface Needs {
@@ -3738,6 +3756,7 @@ export class Store extends Context.Service<
         readonly routine: boolean;
         readonly you: boolean;
         readonly at: number;
+        readonly session?: Domain.EntrySession | null;
       },
       replace: boolean,
     ) {
@@ -3758,6 +3777,7 @@ export class Store extends Context.Service<
           lastAt: entry.at,
           // Your own doing is history you already know, so start read
           readAt: entry.you ? entry.at : null,
+          session: entry.session == null ? null : JSON.stringify(entry.session),
         })}
         ON CONFLICT (key) DO UPDATE SET
           title = ${replace ? sql`excluded.title` : sql`entries.title`},
@@ -3765,6 +3785,7 @@ export class Store extends Context.Service<
           url = coalesce(entries.url, excluded.url),
           job = coalesce(excluded.job, entries.job),
           run = coalesce(excluded.run, entries.run),
+          session = coalesce(excluded.session, entries.session),
           routine = entries.routine AND excluded.routine,
           you = entries.you OR excluded.you,
           count = entries.count + 1,
@@ -3891,13 +3912,19 @@ export class Store extends Context.Service<
         for (const entry of entries) {
           if (raised.has(entry.key)) continue;
 
+          // A heal's agent links its run, which says what it's working on
+          const [heal] = yield* sql<{ id: string }>`
+            SELECT id FROM runs WHERE heal_session = ${entry.session.session}
+            ORDER BY queued_at DESC LIMIT 1
+          `;
+
           yield* upsertEntry(
             {
               ...entry,
               kind: "needs",
               url: null,
               job: null,
-              run: null,
+              run: heal?.id ?? null,
               routine: false,
               you: false,
               at: now,
@@ -3999,14 +4026,14 @@ export class Store extends Context.Service<
     // entry's run is read separately, for the inbox
     const entryColumns = sql`
       id, key, kind, title, detail, url, job, run, routine, you, count,
-      first_at, last_at, read_at, NULL AS run_job
+      first_at, last_at, read_at, session, NULL AS run_job
     `;
 
     const inbox = Effect.fn("Store.inbox")(function* (since: number) {
       const entries = yield* selectEntries(sql`
         SELECT
           id, key, kind, title, detail, url, job, run, routine, you, count,
-          first_at, last_at, read_at,
+          first_at, last_at, read_at, session,
           (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
         FROM entries
         WHERE dismissed_at IS NULL AND (last_at >= ${since} OR read_at IS NULL)
@@ -4056,6 +4083,10 @@ export class Store extends Context.Service<
           SELECT key FROM entries WHERE id = ${id}
         `;
 
+        // A permission prompt only links the run its agent works for, which
+        // the prompt going doesn't settle
+        if (row?.key.startsWith("needs:permission:") === true) return entry;
+
         const heal = /^needs:heal:(.+):(\w+)$/.exec(row?.key ?? "");
 
         yield* sql`
@@ -4101,7 +4132,7 @@ export class Store extends Context.Service<
         const [entry] = yield* selectEntries(sql`
           SELECT
             id, key, kind, title, detail, url, job, run, routine, you, count,
-            first_at, last_at, read_at,
+            first_at, last_at, read_at, session,
             (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
           FROM entries
           WHERE id = ${id}

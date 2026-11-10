@@ -18,7 +18,7 @@ import {
   phPlayPause,
   phX,
 } from "./icons.ts";
-import { empty, jobName, shared, time, view } from "./ui.ts";
+import { agentSession, empty, jobName, shared, time, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import {
   dismissEntry,
@@ -97,6 +97,11 @@ export class UpkeepInbox extends LitElement {
 
     return html`<gw-alert tone="warning" heading=${entry.title}>
       ${entry.detail ?? ""}
+      ${
+        entry.session === null
+          ? nothing
+          : html`<div>${agentSession(entry.session)}</div>`
+      }
       <div class="when">
         ${entry.count > 1 ? `${entry.count} times, last ` : ""}${time(entry.lastAt)}
       </div>

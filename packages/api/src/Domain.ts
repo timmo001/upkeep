@@ -1155,6 +1155,16 @@ export const InboxRule = Schema.Struct({
 
 export interface InboxRule extends Schema.Schema.Type<typeof InboxRule> {}
 
+/** An agent's OpenCode session an entry is about, and the worker it's on. */
+export const EntrySession = Schema.Struct({
+  worker: Schema.String,
+  session: Schema.String,
+  directory: Schema.String,
+  title: Schema.String,
+});
+
+export interface EntrySession extends Schema.Schema.Type<typeof EntrySession> {}
+
 /**
  * One thing in the inbox: the same change across every repository it
  * reached, or something that needs a person. It's unread until it's read,
@@ -1173,6 +1183,8 @@ export const Entry = Schema.Struct({
   run: Schema.NullOr(Schema.String),
   /** The job of that run, while the run is kept. */
   runJob: Schema.NullOr(JobId),
+  /** For an agent waiting on you: its session, to open it. */
+  session: Schema.NullOr(EntrySession),
   /** Only routine changes, or moved there, so it's folded away. */
   routine: Schema.Boolean,
   /** Who decided `routine`. */

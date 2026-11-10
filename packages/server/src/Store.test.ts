@@ -1612,6 +1612,13 @@ test("a permission prompt needs you once, until it's answered", () =>
 
       const desk = entries.find((entry) => entry.detail?.endsWith("on desk"));
 
+      expect(desk?.session).toEqual({
+        worker: "desk",
+        session: "ses_1",
+        directory: "/work/a",
+        title: "Fix the build",
+      });
+
       yield* store.dismiss(desk?.id ?? "");
       yield* store.putPrompts("desk", [prompt("per_1"), prompt("per_2")]);
 
