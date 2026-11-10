@@ -11,6 +11,10 @@ ConditionPathExists=%h/.config/upkeep/worker.env
 Type=simple
 EnvironmentFile=%h/.config/upkeep/worker.env
 ExecStart=/usr/bin/upkeep worker
+# A reload is a drain, so a tool that reloads stale units, such as
+# `dot up first-party`, lets the runs in hand finish instead of cutting them
+# off with a restart.
+ExecReload=/usr/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=30
 # After an upgrade the worker drains, finishing its runs, then exits with 75

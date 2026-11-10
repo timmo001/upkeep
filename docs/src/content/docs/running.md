@@ -681,8 +681,9 @@ user may start without a password. Each package's own install script restarts
 its user service, except `upkeep-git`'s: it sends the worker a SIGHUP, and the
 worker drains. It takes no new runs, finishes the ones it has, this one among
 them, and exits with 75, which `upkeep-worker.service` restarts on the new
-binary. A stop or `systemctl --user restart` still cuts its runs off. A
-successful publish in that repository queues it on every worker straight
+binary. `systemctl --user reload upkeep-worker` drains it the same way, so
+reload it rather than restart it; a stop or `systemctl --user restart` still
+cuts its runs off. A successful publish in that repository queues it on every worker straight
 away.
 
 A worker the server refuses as [older than itself](#workers) can't take that
