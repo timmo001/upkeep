@@ -8,7 +8,16 @@
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
-import { Config, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
+import {
+  Config,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Path,
+  Schedule,
+  Schema,
+} from "effect";
 import { reason as why } from "../Failure";
 import * as Lane from "../Lane";
 import * as Names from "../Names";
@@ -272,7 +281,11 @@ const collect = Effect.fnUntraced(function* (
   return { patch, subject };
 });
 
-/** Push the checkout's HEAD, rebasing onto the branch when it moved. */
+/**
+ * Push the checkout's HEAD, rebasing onto the branch when it moved. Skill
+ * changes run side by side and often finish together, so the branch can move
+ * again between the rebase and the push; that's tried a few more times.
+ */
 const push = Effect.fnUntraced(function* (branch: string, options: Options) {
   const attempt = run(
     "git",
@@ -286,7 +299,10 @@ const push = Effect.fnUntraced(function* (branch: string, options: Options) {
         "git",
         ["pull", "--rebase", "--quiet", "origin", branch],
         options,
-      ).pipe(Effect.andThen(attempt)),
+      ).pipe(
+        Effect.andThen(attempt),
+        Effect.retry({ schedule: Schedule.exponential("2 seconds"), times: 4 }),
+      ),
     ),
   );
 
