@@ -2,8 +2,9 @@
  * Runs as the GitHub App. The jobs that work across repositories on their
  * own, such as bumps and syncs, run their `gh` and `git` calls with an
  * installation token the server hands out, so bulk work counts against the
- * App's rate limit and shows as the App. Heals, agents and the jobs that read
- * what involves you keep the machine's login, as does bump's code search.
+ * App's rate limit and shows as the App, and their commits credit the App's
+ * bot as co-author. Heals, agents and the jobs that read what involves you
+ * keep the machine's login, as does bump's code search.
  * Without an App on the server, or with a server too old to have one, every
  * job uses the machine's login.
  */
@@ -52,6 +53,24 @@ const retryMs = 5 * 60_000;
 export const Account = Context.Reference<Option.Option<string>>(
   "@upkeep/worker/GitHubApp/Account",
   { defaultValue: () => Option.none() },
+);
+
+/**
+ * The App's bot, credited with `Co-authored-by` on the commits a run that
+ * acts as the App makes on its own. Work that waits for you, such as a skill
+ * change, runs with the machine's login and is credited to you alone.
+ */
+export const CoAuthor = Context.Reference<Option.Option<string>>(
+  "@upkeep/worker/GitHubApp/CoAuthor",
+  { defaultValue: () => Option.none() },
+);
+
+/** `git commit`'s arguments for crediting the bot, when the run has one. */
+export const coAuthorTrailer = Effect.map(CoAuthor, (coAuthor) =>
+  Option.match(coAuthor, {
+    onNone: (): ReadonlyArray<string> => [],
+    onSome: (who) => ["--trailer", `Co-authored-by: ${who}`],
+  }),
 );
 
 /**
@@ -191,6 +210,7 @@ export const make = Effect.gen(function* () {
       spawning,
       ghLayer().pipe(Layer.provide(spawning)),
       Layer.succeed(Account, Option.some(token.value.account)),
+      Layer.succeed(CoAuthor, Option.fromUndefinedOr(token.value.coAuthor)),
       Layer.succeed(MachineGh, Option.some(machine)),
     );
   });

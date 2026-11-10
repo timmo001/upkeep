@@ -134,11 +134,15 @@ export interface GitHubEvent extends Schema.Schema.Type<typeof GitHubEvent> {}
  * An installation token for the GitHub App, which a worker runs its jobs'
  * `gh` and `git` calls with, when it expires, and the account the App is
  * installed on, which stands in for `GET /user`, since the token can't read it.
+ * `coAuthor` is the App's bot as a commit's `Co-authored-by` names it, such as
+ * `upkeep[bot] <123+upkeep[bot]@users.noreply.github.com>`, when the server
+ * could look it up.
  */
 export const GitHubToken = Schema.Struct({
   token: Schema.String,
   expiresAt: Schema.Finite,
   account: Schema.String,
+  coAuthor: Schema.optionalKey(Schema.String),
 });
 
 export interface GitHubToken extends Schema.Schema.Type<typeof GitHubToken> {}

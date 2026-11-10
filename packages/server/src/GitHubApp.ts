@@ -1,7 +1,8 @@
 /**
  * The GitHub App's installation tokens. Workers run their jobs' own `gh` and
  * `git` calls with one, so bulk work counts against the App's rate limit and
- * shows as the App, while heals and coding agents keep the machine's login.
+ * shows as the App, with the App's bot credited as co-author on its commits,
+ * while heals and coding agents keep the machine's login.
  * The server holds the App's private key and mints a token when the one it
  * has is within ten minutes of expiring; without the App set up, there's no
  * token and workers use their machine's login as before.
@@ -46,6 +47,10 @@ const AccessToken = Schema.Struct({
   token: Schema.String,
   expires_at: Schema.String,
 });
+
+const App = Schema.Struct({ slug: Schema.String });
+
+const BotUser = Schema.Struct({ id: Schema.Finite, login: Schema.String });
 
 export class GitHubApp extends Context.Service<
   GitHubApp,
@@ -216,6 +221,50 @@ const make = Effect.fnUntraced(function* (options: {
     return { id: chosen.id, account: chosen.account.login };
   });
 
+  /**
+   * The App's bot as a `Co-authored-by` trailer names it, read once: the App
+   * JWT reads its slug, and the new installation token its bot account's ID,
+   * which GitHub's noreply address needs.
+   */
+  const coAuthor = yield* SynchronizedRef.make(Option.none<string>());
+
+  const lookUpCoAuthor = (token: string) =>
+    SynchronizedRef.modifyEffect(coAuthor, (held) =>
+      Option.isSome(held)
+        ? Effect.succeed([held, held] as const)
+        : Effect.gen(function* () {
+            const { slug } = yield* asApp(HttpClientRequest.get("/app")).pipe(
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(App)),
+            );
+
+            const bot = yield* http
+              .execute(
+                HttpClientRequest.bearerToken(
+                  HttpClientRequest.get(
+                    `/users/${encodeURIComponent(`${slug}[bot]`)}`,
+                  ),
+                  token,
+                ),
+              )
+              .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(BotUser)));
+
+            const found = Option.some(
+              `${bot.login} <${bot.id}+${bot.login}@users.noreply.github.com>`,
+            );
+
+            return [found, found] as const;
+          }).pipe(
+            // Tokens matter more than the credit, so a failed lookup is
+            // tried again with the next token
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Couldn't look up the GitHub App's bot, so commits go without its co-author credit",
+                cause,
+              ).pipe(Effect.as([Option.none<string>(), held] as const)),
+            ),
+          ),
+    );
+
   const mint = Effect.gen(function* () {
     const { id, account } = yield* installation;
 
@@ -223,11 +272,18 @@ const make = Effect.fnUntraced(function* (options: {
       HttpClientRequest.post(`/app/installations/${id}/access_tokens`),
     ).pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(AccessToken)));
 
-    return {
-      token: minted.token,
-      expiresAt: Date.parse(minted.expires_at),
-      account,
-    } satisfies Domain.GitHubToken;
+    const token = minted.token;
+    const expiresAt = Date.parse(minted.expires_at);
+
+    return Option.match(yield* lookUpCoAuthor(token), {
+      onNone: (): Domain.GitHubToken => ({ token, expiresAt, account }),
+      onSome: (coAuthor): Domain.GitHubToken => ({
+        token,
+        expiresAt,
+        account,
+        coAuthor,
+      }),
+    });
   }).pipe(
     Effect.catchTags({
       HttpClientError: (error) =>

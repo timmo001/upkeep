@@ -825,7 +825,11 @@ export const commitAndPush = Effect.fnUntraced(function* (
   )
     yield* run("mise", ["run", "install:hooks"], options);
 
-  yield* run("git", ["commit", "--quiet", "-m", message], options);
+  yield* run(
+    "git",
+    ["commit", "--quiet", "-m", message, ...(yield* GitHubApp.coAuthorTrailer)],
+    options,
+  );
 
   yield* push.pipe(
     Effect.catch(() =>

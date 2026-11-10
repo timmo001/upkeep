@@ -413,7 +413,13 @@ export const driftRepository = Effect.fnUntraced(function* (
     yield* run("git", ["add", "--", ...changed], options);
     yield* run(
       "git",
-      ["commit", "--quiet", "-m", `Update ${tool.repo} to ${tag}`],
+      [
+        "commit",
+        "--quiet",
+        "-m",
+        `Update ${tool.repo} to ${tag}`,
+        ...(yield* GitHubApp.coAuthorTrailer),
+      ],
       options,
     );
 
