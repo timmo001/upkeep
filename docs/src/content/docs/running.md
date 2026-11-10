@@ -693,7 +693,10 @@ user may start without a password. Each package's own install script restarts
 its user service, except `upkeep-git`'s: it sends the worker a SIGHUP, and the
 worker drains. It takes no new runs, finishes the ones it has, this one among
 them, and exits with 75, which `upkeep-worker.service` restarts on the new
-binary. `systemctl --user reload upkeep-worker` drains it the same way, so
+binary. A drain waits 15 minutes at most, so a long run such as a full `deps`
+doesn't hold up every other job: what's still going then is interrupted, and
+the server puts it back at the front of the queue. A run interrupted a second
+time fails. `systemctl --user reload upkeep-worker` drains it the same way, so
 reload it rather than restart it; a stop or `systemctl --user restart` still
 cuts its runs off. A successful publish in that repository queues it on every worker straight
 away.

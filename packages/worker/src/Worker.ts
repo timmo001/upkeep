@@ -6,7 +6,8 @@
  * keeps going through a failed job or a server restart. A run that fails while
  * GitHub's rate limit is spent runs again once it resets, and no lane takes
  * new work until then. Asked to drain, such as after an upgrade, it finishes
- * the runs it has and stops, rather than cutting them off.
+ * the runs it has and stops, rather than cutting them off, unless they take
+ * longer than the drain's limit.
  */
 import type { Gh } from "@timmo001/effect-gh";
 import { Api, Catalogue, Client, Domain } from "@upkeep/api";
@@ -104,6 +105,12 @@ export interface WorkOptions {
    * it can start again on the new binary.
    */
   readonly drain?: Effect.Effect<void>;
+  /**
+   * How long a drain waits for the runs in hand, 15 minutes by default, so a
+   * long run doesn't hold up every other job. What's still going then is
+   * interrupted, and the server puts it back at the front of the queue.
+   */
+  readonly drainLimit?: Duration.Input;
 }
 
 /** The server stopped counting the run as this worker's, so it stops. */
@@ -575,8 +582,21 @@ export const work = Effect.fn("Worker.work")(function* (
     Effect.andThen(Effect.logInfo("Drained: every run has finished")),
   );
 
+  // Past the drain's limit, the lanes' runs are interrupted by losing the
+  // race, and the ones beside them here
+  const cutOff = Deferred.await(draining).pipe(
+    Effect.andThen(Effect.sleep(options.drainLimit ?? "15 minutes")),
+    Effect.andThen(
+      Effect.logInfo(
+        "Still draining at the limit: interrupting the runs left, so they run again",
+      ),
+    ),
+    Effect.andThen(FiberSet.clear(beside)),
+    Effect.andThen(FiberSet.awaitEmpty(beside)),
+  );
+
   return yield* Effect.raceFirst(
-    working,
+    Effect.raceFirst(working, cutOff),
     Effect.all([notify, Theme.follow, Prompts.follow], {
       concurrency: "unbounded",
       discard: true,
