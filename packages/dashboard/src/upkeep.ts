@@ -119,16 +119,50 @@ export const runs = Atom.family((job: string) =>
 );
 
 /**
- * A page of older runs, of every job or one, queued before the run `before`
- * and in one of the states when any are given,
- * loaded as a list of runs scrolls. Keyed by both, as a family takes one key
- * (see `olderRunsKey`). Not refreshed by the server's changes: runs this old have
- * finished, and the latest page keeps up with the rest.
+ * A local day, `YYYY-MM-DD`, as the times it runs from and up to, so a day
+ * that a clock change makes shorter or longer still covers all of it.
+ */
+export const dayRange = (day: string) => {
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+
+  return {
+    since: new Date(year, month - 1, date).getTime(),
+    until: new Date(year, month - 1, date + 1).getTime(),
+  };
+};
+
+/** The query for one local day's runs, or none for every day. */
+const dayQuery = (day: string) => (day === "" ? {} : dayRange(day));
+
+/**
+ * The latest runs of one local day, of every job or one, keyed by both as
+ * `job\nday`. Refreshed by the server's changes, as today's still move.
+ */
+export const runsOn = Atom.family((key: string) => {
+  const [job = "", day = ""] = key.split("\n");
+
+  const query = { limit: runsPage, ...dayQuery(day) };
+
+  return UpkeepApi.query("runs", "list", {
+    query: job === "" ? query : { ...query, job },
+    reactivityKeys: runsKey,
+  });
+});
+
+/** The key `runsOn` takes. Neither part holds a line break. */
+export const runsOnKey = (job: string, day: string) => `${job}\n${day}`;
+
+/**
+ * A page of older runs, of every job or one, queued before the run `before`,
+ * in one of the states when any are given and on the day when one is, loaded
+ * as a list of runs scrolls. Keyed by all of them, as a family takes one key
+ * (see `olderRunsKey`). Not refreshed by the server's changes: runs this old
+ * have finished, and the latest page keeps up with the rest.
  */
 export const olderRuns = Atom.family((key: string) => {
-  const [job = "", before = "", states = ""] = key.split("\n");
+  const [job = "", before = "", states = "", day = ""] = key.split("\n");
 
-  const query = { before, limit: runsPage };
+  const query = { before, limit: runsPage, ...dayQuery(day) };
 
   const withStates = states === "" ? query : { ...query, states };
 
@@ -138,15 +172,17 @@ export const olderRuns = Atom.family((key: string) => {
 });
 
 /**
- * The key `olderRuns` takes: the job, the run to load before, and the states
- * to keep (all of them when empty), so a list filtered by state pages through
- * only the runs it shows. None of them holds a line break.
+ * The key `olderRuns` takes: the job, the run to load before, the states to
+ * keep (all of them when empty), so a list filtered by state pages through
+ * only the runs it shows, and the day, or every day when empty. None of them
+ * holds a line break.
  */
 export const olderRunsKey = (
   job: string,
   before: string,
   states: ReadonlyArray<string>,
-) => `${job}\n${before}\n${states.join(",")}`;
+  day: string,
+) => `${job}\n${before}\n${states.join(",")}\n${day}`;
 
 /** The tracked repositories, with their titles and jobs. */
 export const repos = UpkeepApi.query("repos", "list", {

@@ -603,7 +603,9 @@ export class RunsGroup extends HttpApiGroup.make("runs")
      * The latest runs, newest first. With `before`, a run's id, the page of
      * runs queued before it, for loading older runs as a list scrolls. With
      * `states`, a comma-separated list, only runs in one of them, so a list
-     * filtered by state pages through only what it shows.
+     * filtered by state pages through only what it shows. `since` and
+     * `until`, in milliseconds, keep the runs queued from one up to the
+     * other, such as a single day's.
      */
     HttpApiEndpoint.get("list", "/", {
       query: {
@@ -612,6 +614,8 @@ export class RunsGroup extends HttpApiGroup.make("runs")
         states: Schema.optional(Schema.String),
         limit: Schema.optional(Schema.Int),
         before: Schema.optional(Schema.String),
+        since: Schema.optional(Schema.Int),
+        until: Schema.optional(Schema.Int),
       },
       success: Schema.Array(Run),
     }),

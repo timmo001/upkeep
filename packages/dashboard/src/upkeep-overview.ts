@@ -334,7 +334,7 @@ export class UpkeepOverview extends LitElement {
                 heading="Latest runs"
                 storage-key="upkeep.jobs.section.runs"
               >
-                <upkeep-runs groups-collapsed></upkeep-runs>
+                <upkeep-runs></upkeep-runs>
               </gw-section>`
       }
     `;

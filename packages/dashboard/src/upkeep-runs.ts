@@ -1,11 +1,12 @@
 /**
- * `upkeep-runs`: the latest runs, of every job or the one in `job`, grouped
- * by day and kept up to date while it's on screen. A run's whole row opens
- * it, with its log. Beside the table's search, a Filters button opens a
+ * `upkeep-runs`: the latest runs, of every job or the one in `job`, as one
+ * list, newest first, kept up to date while it's on screen. A run's whole row
+ * opens it, with its log. Beside the table's search, a Filters button opens a
  * sheet of filters, as the inbox's does, each on shown as a chip that takes
- * it off. The filters are kept with the table's own view state, in
- * groundwork's shared store. Older runs load a page at a time as the table
- * scrolls to its end.
+ * it off. A date there narrows the list to one day's runs, which the server
+ * picks, so any day can be looked at without scrolling back to it. The
+ * filters are kept with the table's own view state, in groundwork's shared
+ * store. Older runs load a page at a time as the table scrolls to its end.
  */
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
@@ -13,7 +14,8 @@ import type {
   TableColumn,
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
-import { keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
+import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
+import { isText, keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
@@ -22,6 +24,7 @@ import { always, AtomController, registry } from "./AtomController.ts";
 import {
   phBookBookmark,
   phBriefcase,
+  phCalendarBlank,
   phCheckCircle,
   phClockCounterClockwise,
   phFunnelSimple,
@@ -50,10 +53,13 @@ import {
   olderRunsKey,
   runHref,
   runs,
+  runsOn,
+  runsOnKey,
   runsPage,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
+import "@timmo001/groundwork-ui/define/gw-input.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
@@ -151,7 +157,7 @@ const release = (run: Domain.Run) =>
       ? ""
       : externalLink(`https://github.com/${run.repo}`, run.repo);
 
-/** The local day a time falls on, as `YYYY-MM-DD`, which groups runs. */
+/** The local day a time falls on, as `YYYY-MM-DD`, as the date filter keeps it. */
 const dayOf = (millis: number) => {
   const date = new Date(millis);
 
@@ -168,21 +174,32 @@ const dayFormat = new Intl.DateTimeFormat(undefined, {
   month: "long",
 });
 
-/** A day's heading: Today, Yesterday, or its date. */
-const dayLabel = (day: string) => {
-  if (day === dayOf(Date.now())) return "Today";
+/** Today's and yesterday's dates, which the date filter offers by name. */
+const today = () => dayOf(Date.now());
 
-  if (day === dayOf(Date.now() - 24 * 60 * 60 * 1000)) return "Yesterday";
+const yesterday = () => {
+  const date = new Date();
+
+  return dayOf(date.setDate(date.getDate() - 1));
+};
+
+/** A day's name in the date filter's chip: Today, Yesterday, or its date. */
+const dayLabel = (day: string) => {
+  if (day === today()) return "Today";
+
+  if (day === yesterday()) return "Yesterday";
 
   const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
 
   return dayFormat.format(new Date(year, month - 1, date));
 };
 
+/** Whether text is a date the filter can use, `YYYY-MM-DD`. */
+const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+
 export class UpkeepRuns extends LitElement {
   static override properties = {
     job: {},
-    groupsCollapsed: { type: Boolean, attribute: "groups-collapsed" },
   };
 
   static override styles = [
@@ -197,24 +214,47 @@ export class UpkeepRuns extends LitElement {
       gw-sheet {
         --gw-filter-inset: var(--gw-space-4);
       }
+
+      .date {
+        display: grid;
+        gap: var(--gw-space-2);
+        padding-inline: var(--gw-filter-inset);
+      }
+
+      .date .quick {
+        display: flex;
+        gap: var(--gw-space-2);
+      }
     `,
   ];
 
   /** The job to show the runs of, or every job's when empty. */
   declare job: string;
 
-  /** Starts with every day folded away. */
-  declare groupsCollapsed: boolean;
-
   #sheet: GwSheet | undefined;
 
   constructor() {
     super();
     this.job = "";
-    this.groupsCollapsed = false;
   }
 
-  readonly #runs = new AtomController(this, () => runs(this.job), always);
+  /** The day the list is narrowed to, `YYYY-MM-DD`, or every day when empty. */
+  get #day() {
+    const kept = keptAt(this.#storageKey)?.["day"];
+
+    return isText(kept) && isDay(kept) ? kept : "";
+  }
+
+  // One day's runs come from the server, so a day long past shows without
+  // paging back to it
+  readonly #runs = new AtomController(
+    this,
+    () =>
+      this.#day === ""
+        ? runs(this.job)
+        : runsOn(runsOnKey(this.job, this.#day)),
+    always,
+  );
 
   readonly #jobs = new AtomController(this, () => jobs, always);
 
@@ -247,7 +287,7 @@ export class UpkeepRuns extends LitElement {
   /** An older page's runs, as loaded so far. */
   #page(before: string) {
     return registry.get(
-      olderRuns(olderRunsKey(this.job, before, this.#states)),
+      olderRuns(olderRunsKey(this.job, before, this.#states, this.#day)),
     );
   }
 
@@ -321,7 +361,7 @@ export class UpkeepRuns extends LitElement {
     this.#cursors = [...this.#cursors, oldest.id];
     this.#pages.push(
       registry.subscribe(
-        olderRuns(olderRunsKey(this.job, oldest.id, states)),
+        olderRuns(olderRunsKey(this.job, oldest.id, states, this.#day)),
         () => this.requestUpdate(),
       ),
     );
@@ -389,6 +429,48 @@ export class UpkeepRuns extends LitElement {
     this.requestUpdate();
   }
 
+  /** Narrows the list to one day's runs, or every day's with none. */
+  #setDay(day: string) {
+    keep(this.#storageKey, { day: isDay(day) ? day : null });
+
+    // Older pages were loaded for the day shown before
+    this.#resetPages();
+    this.requestUpdate();
+  }
+
+  /** The date filter: a date to pick, with today and yesterday a click away. */
+  #dateFilter() {
+    const day = this.#day;
+
+    const quick = (label: string, value: string) =>
+      html`<gw-button
+        size="xs"
+        appearance=${day === value ? "accent" : "outlined"}
+        variant=${day === value ? "brand" : "neutral"}
+        @click=${() => this.#setDay(day === value ? "" : value)}
+        >${label}</gw-button
+      >`;
+
+    return html`<div class="date">
+      <gw-input
+        type="date"
+        label="Date"
+        icon=${phCalendarBlank}
+        max=${today()}
+        .value=${day}
+        @input=${(event: Event) =>
+          this.#setDay(
+            event.currentTarget instanceof GwInput
+              ? event.currentTarget.value
+              : "",
+          )}
+      ></gw-input>
+      <div class="quick">
+        ${quick("Today", today())} ${quick("Yesterday", yesterday())}
+      </div>
+    </div>`;
+  }
+
   /**
    * The Filters button beside the table's search, counting the filters that
    * are on, with a chip for each that takes it off, and the sheet it opens,
@@ -409,15 +491,31 @@ export class UpkeepRuns extends LitElement {
     }>,
   ) {
     const on = filters.filter((each) => each.on);
+    const day = this.#day;
+    const count = on.length + (day === "" ? 0 : 1);
 
     return html`<gw-button
         slot="toolbar"
-        appearance=${on.length > 0 ? "accent" : "outlined"}
-        variant=${on.length > 0 ? "brand" : "neutral"}
+        appearance=${count > 0 ? "accent" : "outlined"}
+        variant=${count > 0 ? "brand" : "neutral"}
         icon=${phFunnelSimple}
         @click=${() => this.#sheet?.toggle()}
-        >${on.length > 0 ? `Filters (${on.length})` : "Filters"}</gw-button
+        >${count > 0 ? `Filters (${count})` : "Filters"}</gw-button
       >
+      ${
+        day === ""
+          ? null
+          : html`<gw-button
+              slot="toolbar"
+              size="xs"
+              appearance="outlined"
+              variant="neutral"
+              icon=${phX}
+              label=${`Remove ${dayLabel(day)}`}
+              @click=${() => this.#setDay("")}
+              >${dayLabel(day)}</gw-button
+            >`
+      }
       ${on.map(({ filter, options, value }) => {
         const [only] = value;
 
@@ -445,6 +543,7 @@ export class UpkeepRuns extends LitElement {
           this.#sheet = element instanceof GwSheet ? element : undefined;
         })}
       >
+        ${this.#dateFilter()}
         ${filters.flatMap(({ filter, options, value, fallback, shown }) =>
           shown
             ? [
@@ -471,8 +570,8 @@ export class UpkeepRuns extends LitElement {
   }
 
   /**
-   * The runs as a table, newest first, grouped by the day each was queued,
-   * with skeleton rows and the next page loading at its end while `more`.
+   * The runs as a table, newest first, with skeleton rows and the next page
+   * loading at its end while `more`.
    */
   #table(all: ReadonlyArray<Domain.Run>, more: boolean) {
     const kept = keptAt(this.#storageKey);
@@ -596,11 +695,6 @@ export class UpkeepRuns extends LitElement {
         ),
       },
       {
-        id: "day",
-        header: "Day",
-        groupLabel: (value) => dayLabel(String(value)),
-      },
-      {
         id: "queued",
         header: "Queued",
         searchable: false,
@@ -620,8 +714,6 @@ export class UpkeepRuns extends LitElement {
     return html`<gw-table
       storage-key=${this.#storageKey}
       label="Runs"
-      group="day"
-      ?groups-collapsed=${this.groupsCollapsed}
       contained
       row-key="id"
       search="always"
@@ -644,7 +736,6 @@ export class UpkeepRuns extends LitElement {
             ? (run.repo ?? "")
             : `${run.release.repo}@${run.release.tag}`,
         worker: run.worker ?? "",
-        day: dayOf(run.queuedAt),
         queued: run.queuedAt,
       }))}
     >
@@ -656,7 +747,8 @@ export class UpkeepRuns extends LitElement {
     return view(this.#runs.value, (latest) => {
       const all = this.#merged(latest);
 
-      return all.length === 0
+      // A day with no runs keeps the table, so its filter can be changed
+      return all.length === 0 && this.#day === ""
         ? empty(phClockCounterClockwise, "No runs yet.")
         : this.#table(all, this.#hasMore(latest));
     });

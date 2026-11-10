@@ -1094,7 +1094,8 @@ export class Store extends Context.Service<
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
-     * queued before it. `states` keeps only runs in one of them.
+     * queued before it. `states` keeps only runs in one of them, and `since`
+     * and `until` only those queued from one time up to the other.
      */
     runs(filter: {
       readonly job?: string | undefined;
@@ -1102,6 +1103,8 @@ export class Store extends Context.Service<
       readonly states?: ReadonlyArray<Domain.RunState> | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
+      readonly since?: number | undefined;
+      readonly until?: number | undefined;
     }): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     run(id: string): Effect.Effect<Domain.Run, Api.RunNotFound | StoreError>;
     /** The latest run of each job that has one. */
@@ -1719,9 +1722,17 @@ export class Store extends Context.Service<
       readonly states?: ReadonlyArray<Domain.RunState> | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
+      readonly since?: number | undefined;
+      readonly until?: number | undefined;
     }) {
       const conditions = [
         ...(filter.job === undefined ? [] : [sql`job = ${filter.job}`]),
+        ...(filter.since === undefined
+          ? []
+          : [sql`queued_at >= ${filter.since}`]),
+        ...(filter.until === undefined
+          ? []
+          : [sql`queued_at < ${filter.until}`]),
         ...(filter.state === undefined ? [] : [sql`state = ${filter.state}`]),
         ...(filter.states === undefined || filter.states.length === 0
           ? []

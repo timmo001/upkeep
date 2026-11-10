@@ -159,8 +159,11 @@ the release its changes need, and hands it to an agent to publish. See
 [Releases](#releases).
 
 **Jobs** lists the jobs with their last run and whether they're parked or
-paused, then the latest runs; press anywhere in a run's row to open it. Each
-run shows its summary, its commits, its
+paused, then the latest runs as one list, newest first; press anywhere in a
+run's row to open it. Its filters narrow the runs by state, job, trigger,
+repository and worker, and by date: today, yesterday or any day before, which
+loads that day's runs straight away. Each run shows its summary, its commits,
+its
 heal record and its log, which follows the run as it goes. Jobs can be run,
 paused or unparked, and runs cancelled, from there.
 
