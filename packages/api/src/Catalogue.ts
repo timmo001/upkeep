@@ -148,6 +148,17 @@ export const watch: Job = {
   tracked: false,
 };
 
+export const timeline: Job = {
+  id: "timeline",
+  name: "Activity",
+  description:
+    "Read what happened on GitHub for the Activity page: everyone's issues, pull requests, reviews, comments and releases in the tracked repositories, yours anywhere, and others' on your issues and pull requests",
+  schedule: "*/15 * * * *",
+  onRelease: false,
+  lane: "quick",
+  tracked: false,
+};
+
 export const skillConsumers: Job = {
   id: "skill-consumers",
   name: "Skill consumers",
@@ -328,6 +339,7 @@ export const jobs: ReadonlyArray<Job> = [
   releases,
   unreleased,
   watch,
+  timeline,
   attention,
   labels,
   bump,

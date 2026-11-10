@@ -17,6 +17,7 @@ import { skillConsumers, skillUpdates } from "./jobs/skills";
 import { stalledUpdates } from "./jobs/stalled-updates";
 import { summary } from "./jobs/summary";
 import { sync } from "./jobs/sync";
+import { timeline } from "./jobs/timeline";
 import { unreleased } from "./jobs/unreleased";
 import { watch } from "./jobs/watch";
 import type { Handlers } from "./Worker";
@@ -25,6 +26,7 @@ export const handlers: Handlers = {
   releases: () => releases(),
   unreleased: () => unreleased(),
   watch: () => watch(),
+  timeline: () => timeline(),
   attention: () => attention(),
   labels: () => labels(),
   bump: (release) => bump(release),

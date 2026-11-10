@@ -8,7 +8,8 @@
  * rest are grouped by repository and day. A commit is routine when it only
  * moves versions, lockfiles, pins or tool versions. It also reads each
  * repository's title from its README, and, when the worker opts in with its
- * `names` setting, the names to show them by, for the dashboard.
+ * `names` setting, the names to show them by, for the dashboard. The commits
+ * it reads go to the Activity page too.
  */
 import { Api } from "@timmo001/effect-gh";
 import type { Api as UpkeepApi, Domain } from "@upkeep/api";
@@ -334,6 +335,22 @@ export const watch = Effect.fnUntraced(function* () {
 
   const added = yield* reporter.seen(
     changes.filter((change) => change !== null),
+  );
+
+  // The Activity page lists them too, each once however often it's sent
+  yield* reporter.timeline(
+    login,
+    found.map(({ repo, commit }) => ({
+      id: `commit:${repo.toLowerCase()}@${commit.sha}`,
+      kind: "commit",
+      action: "committed",
+      repo,
+      actor: commit.author?.login ?? null,
+      at: Date.parse(commit.commit.committer?.date ?? "") || 0,
+      title: commit.commit.message.split("\n")[0] ?? commit.sha,
+      url: commit.html_url,
+      subject: null,
+    })),
   );
 
   // Titles change rarely, but reading them each run keeps a rename in step,

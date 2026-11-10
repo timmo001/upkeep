@@ -78,6 +78,18 @@ export class Reporter extends Context.Service<
     readonly seen: (
       commits: ReadonlyArray<Domain.Change>,
     ) => Effect.Effect<number, unknown>;
+    /**
+     * Keep what happened on GitHub for the Activity page, read as `login`.
+     * Returns how many items were new.
+     */
+    readonly timeline: (
+      login: string,
+      items: ReadonlyArray<Domain.TimelineItem>,
+    ) => Effect.Effect<number, unknown>;
+    /** Which of these Activity items are already kept. */
+    readonly timelineKnown: (
+      ids: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<string>, unknown>;
     /** Send what the attention job found. */
     readonly attention: (snapshot: Api.AttentionSnapshot) => Effect.Effect<
       {
@@ -222,6 +234,32 @@ export class Reporter extends Context.Service<
 
             return added;
           }),
+          timeline: Effect.fnUntraced(function* (login, items) {
+            let added = 0;
+
+            for (const batch of Arr.chunksOf(items, Api.maxTimelineItems)) {
+              const result = yield* client.work.timeline({
+                payload: { login, items: batch },
+              });
+
+              added += result.added;
+            }
+
+            return added;
+          }),
+          timelineKnown: Effect.fnUntraced(function* (ids) {
+            const known: Array<string> = [];
+
+            for (const batch of Arr.chunksOf(ids, Api.maxTimelineItems)) {
+              const result = yield* client.work.timelineKnown({
+                payload: { ids: batch },
+              });
+
+              known.push(...result.known);
+            }
+
+            return known;
+          }),
           attention: (snapshot) => client.work.attention({ payload: snapshot }),
           attentionPage: () => client.work.attentionPage(),
           attentionContext: (context) =>
@@ -292,6 +330,12 @@ export class Reporter extends Context.Service<
             Effect.provide(RunLog.RunLog.console),
             Effect.as(commits.length),
           ),
+        timeline: (_, items) =>
+          RunLog.info(`Would add ${items.length} items to Activity`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+            Effect.as(items.length),
+          ),
+        timelineKnown: () => Effect.succeed([]),
         attention: (snapshot) =>
           RunLog.info(
             `Would send ${snapshot.items.length} attention items${snapshot.complete ? "" : ", not all of them"}`,
