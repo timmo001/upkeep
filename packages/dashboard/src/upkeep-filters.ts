@@ -291,7 +291,7 @@ export class UpkeepFilters extends LitElement {
           ${chips.map(
             (chip) =>
               html`<gw-button
-                size="xs"
+                size="small"
                 appearance="outlined"
                 variant="neutral"
                 icon=${phX}
@@ -346,6 +346,7 @@ export class UpkeepFilters extends LitElement {
           ></gw-segmented>
         </div>
         <gw-button
+          size="small"
           appearance=${on > 0 ? "accent" : "outlined"}
           variant=${on > 0 ? "brand" : "neutral"}
           icon=${phFunnelSimple}

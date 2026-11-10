@@ -444,7 +444,7 @@ export class UpkeepRuns extends LitElement {
 
     const quick = (label: string, value: string) =>
       html`<gw-button
-        size="xs"
+        size="small"
         appearance=${day === value ? "accent" : "outlined"}
         variant=${day === value ? "brand" : "neutral"}
         @click=${() => this.#setDay(day === value ? "" : value)}
@@ -494,8 +494,10 @@ export class UpkeepRuns extends LitElement {
     const day = this.#day;
     const count = on.length + (day === "" ? 0 : 1);
 
+    // The button and its chips share one size, so neither dwarfs the other
     return html`<gw-button
         slot="toolbar"
+        size="small"
         appearance=${count > 0 ? "accent" : "outlined"}
         variant=${count > 0 ? "brand" : "neutral"}
         icon=${phFunnelSimple}
@@ -507,7 +509,7 @@ export class UpkeepRuns extends LitElement {
           ? null
           : html`<gw-button
               slot="toolbar"
-              size="xs"
+              size="small"
               appearance="outlined"
               variant="neutral"
               icon=${phX}
@@ -527,7 +529,7 @@ export class UpkeepRuns extends LitElement {
 
         return html`<gw-button
           slot="toolbar"
-          size="xs"
+          size="small"
           appearance="outlined"
           variant="neutral"
           icon=${phX}
