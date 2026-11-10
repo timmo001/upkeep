@@ -26,8 +26,8 @@
   },
   "devDependencies": {
     "@effect/tsgo": "0.64.1",
-    "@opentui/core": "0.8.2",
-    "@opentui/solid": "0.8.2",
+    "@opentui/core": "0.8.3",
+    "@opentui/solid": "0.8.3",
     "@oxlint/plugins": "1.90.0",
     "@timmo001/oxlint-rules": "0.6.5",
     "@types/bun": "1.4.4",
