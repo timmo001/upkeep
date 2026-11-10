@@ -154,6 +154,17 @@ inbox, it fills it from the commits runs pushed in the last 48 hours, and the
 since you last looked on any device, and a Work, Personal or All filter. See
 [Attention](#attention).
 
+**Activity** is what happened on GitHub over the last 90 days: commits,
+pushes, pull requests, issues, reviews, comments and releases. It takes
+everyone's activity in the tracked repositories, yours anywhere, and others'
+reviews and comments on your own issues and pull requests elsewhere. What
+happened on one issue or pull request is gathered under it, newest first,
+with its title and whether it's open, closed or merged, and the days fold.
+Its filters narrow it by kind, repository and who: you, bots or others.
+Nothing there is marked read or sent as a notification. The `timeline` job
+fills it, and the `watch` job adds the commits it reads. It's
+`GET /api/timeline`, a page of groups at a time.
+
 **Releases** compares each repository with its last stable release, suggests
 the release its changes need, and hands it to an agent to publish. See
 [Releases](#releases).
@@ -636,6 +647,7 @@ The same change can be asked for through the API, as the `change` command:
 | `change`            | On request       | Has one agent make a change you asked for across several repositories in one session, checking and pushing each on its own. Never healed. See [Changes](#changes).                                                                                                                                                                                                                                                                                                         |
 | `summary`           | On request       | Asks the first of the worker's `heal.agents` for a longer write-up of the unread inbox, or all of it when everything's read, through OpenCode. The write-up is the run's summary, which the inbox shows. See [Dashboard](#dashboard).                                                                                                                                                                                                                                      |
 | `attention`         | Every 15 minutes | Reads the open pull requests, issues and notifications that involve you, the open ones on tracked repositories and the worker's own searches, with GitHub's signals for each, for the Attention page. See [Attention](#attention).                                                                                                                                                                                                                                         |
+| `timeline`          | Every 15 minutes | Reads the events of each tracked repository and your own, and the timelines of your issues and pull requests elsewhere that changed, for the Activity page. Each read is conditional, so what hasn't changed costs nothing. See [Dashboard](#dashboard).                                                                                                                                                                                                                   |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
 | `command`           | On request       | Does one thing the dashboard asks, such as mark a notification read. A failed command shows on its run and is never healed.                                                                                                                                                                                                                                                                                                                                                |
 | `up-dotfiles`       | Hourly           | Pulls the dotfiles on every worker, rebuilds `dot` and stows them. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                              |

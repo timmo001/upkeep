@@ -75,6 +75,8 @@ const themeKey = ["theme"];
 
 const releasesKey = ["releases"];
 
+const timelineKey = ["timeline"];
+
 /** Requests that couldn't be made or understood are defects, as in queries. */
 const asDefects = <A, E, R>(
   effect: Effect.Effect<
@@ -465,6 +467,8 @@ const touched = (change: Domain.StateChange) => {
       return themeKey;
     case "releases":
       return releasesKey;
+    case "timeline":
+      return timelineKey;
   }
 };
 
@@ -476,6 +480,7 @@ const everything = [
   ...workersKey,
   ...themeKey,
   ...releasesKey,
+  ...timelineKey,
 ];
 
 /**
@@ -719,6 +724,63 @@ export const releasesPage = UpkeepApi.query("releases", "get", {
   reactivityKeys: [...releasesKey, ...runsKey],
 });
 
+/** How many groups each page of the Activity page holds. */
+export const timelinePage = 50;
+
+const isTimelineWho = (value: string): value is Domain.TimelineWho =>
+  value === "you" || value === "bots" || value === "others";
+
+/** The Activity page's filters, as the server takes them. */
+const timelineQuery = (key: string) => {
+  const [kinds = "", repos = "", who = ""] = key.split("\n");
+
+  return {
+    limit: timelinePage,
+    ...(kinds !== "" && { kinds }),
+    ...(repos !== "" && { repos }),
+    ...(isTimelineWho(who) && { who }),
+  };
+};
+
+/**
+ * The Activity page's latest groups, with the filters given as `timelineKey`
+ * makes them. Refreshed by the server's changes, as the latest still move.
+ */
+export const timeline = Atom.family((key: string) =>
+  UpkeepApi.query("timeline", "get", {
+    query: timelineQuery(key),
+    reactivityKeys: timelineKey,
+  }),
+);
+
+/**
+ * A page of older Activity groups, after the cursor `before`, keyed by it and
+ * the filters as `olderTimelineKey` makes them. Not refreshed by the
+ * server's changes, as the latest page keeps up with what's new.
+ */
+export const olderTimeline = Atom.family((key: string) => {
+  const [before = "", ...filters] = key.split("\n");
+
+  return UpkeepApi.query("timeline", "get", {
+    query: { ...timelineQuery(filters.join("\n")), before },
+  });
+});
+
+/**
+ * The key `timeline` takes: the kinds and the repositories (each
+ * comma-separated) and who, each empty for any. None of them holds a line
+ * break.
+ */
+export const timelineFilterKey = (
+  kinds: ReadonlyArray<string>,
+  repos: ReadonlyArray<string>,
+  who: string,
+) => `${kinds.join(",")}\n${repos.join(",")}\n${who}`;
+
+/** The key `olderTimeline` takes: the cursor and `timelineFilterKey`. */
+export const olderTimelineKey = (before: string, filters: string) =>
+  `${before}\n${filters}`;
+
 const afterReleases = Effect.ensuring(
   Reactivity.invalidate([...releasesKey, ...runsKey]),
 );
@@ -773,6 +835,7 @@ export const releaseAgent = UpkeepApi.runtime.fn(
 
 export type Route = Data.TaggedEnum<{
   Inbox: {};
+  Activity: {};
   Attention: {};
   Skills: {};
   Releases: {};
@@ -794,6 +857,8 @@ const jobsPattern = new URLPattern({ pathname: "/jobs{/}?" });
 const reposPattern = new URLPattern({ pathname: "/repos{/}?" });
 
 const attentionPattern = new URLPattern({ pathname: "/attention{/}?" });
+
+const activityPattern = new URLPattern({ pathname: "/activity{/}?" });
 
 const skillsPattern = new URLPattern({ pathname: "/skills{/}?" });
 
@@ -819,6 +884,8 @@ const parseRoute = (): Route => {
   if (reposPattern.test({ pathname: path })) return Route.Repos();
 
   if (attentionPattern.test({ pathname: path })) return Route.Attention();
+
+  if (activityPattern.test({ pathname: path })) return Route.Activity();
 
   if (skillsPattern.test({ pathname: path })) return Route.Skills();
 
@@ -920,6 +987,8 @@ export const jobsHref = "jobs";
 export const reposHref = "repos";
 
 export const attentionHref = "attention";
+
+export const activityHref = "activity";
 
 export const skillsHref = "skills";
 

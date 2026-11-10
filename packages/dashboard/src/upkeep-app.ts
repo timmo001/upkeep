@@ -16,6 +16,7 @@ import { phSignOut } from "./icons.ts";
 import { bindTheme, offerDesktopTheme } from "./theme.ts";
 import { impactTone, shared } from "./ui.ts";
 import {
+  activityHref,
   attentionHref,
   desktopTheme,
   homeHref,
@@ -36,6 +37,7 @@ import "@timmo001/groundwork-ui/define/gw-app-bar.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
+import "./upkeep-activity.ts";
 import "./upkeep-attention.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";
@@ -199,6 +201,7 @@ export class UpkeepApp extends LitElement {
   override render() {
     const current = this.#route.value;
     const onInbox = Route.$is("Inbox")(current);
+    const onActivity = Route.$is("Activity")(current);
     const onRepos = Route.$is("Repos")(current) || Route.$is("Repo")(current);
     const onAttention = Route.$is("Attention")(current);
     const onSkills = Route.$is("Skills")(current);
@@ -231,6 +234,7 @@ export class UpkeepApp extends LitElement {
           }</a
         >
         ${this.#link(homeHref, "Inbox", onInbox, counted(this.#unread()))}
+        ${this.#link(activityHref, "Activity", onActivity)}
         ${this.#link(attentionHref, "Attention", onAttention)}
         ${this.#link(skillsHref, "Skills", onSkills, counted(this.#waiting()))}
         ${this.#link(releasesHref, "Releases", onReleases, this.#unreleased())}
@@ -293,6 +297,7 @@ export class UpkeepApp extends LitElement {
         <gw-page size="wide">
           ${Route.$match(current, {
             Inbox: () => html`<upkeep-inbox></upkeep-inbox>`,
+            Activity: () => html`<upkeep-activity></upkeep-activity>`,
             Attention: () => html`<upkeep-attention></upkeep-attention>`,
             Skills: () => html`<upkeep-skills></upkeep-skills>`,
             Releases: () => html`<upkeep-releases></upkeep-releases>`,
