@@ -360,7 +360,7 @@ export class UpkeepReleases extends LitElement {
                 finding.impact,
                 finding.reviewed,
               )}`,
-          { width: "11rem", wrap: true },
+          { width: "11rem" },
         ),
       },
       {

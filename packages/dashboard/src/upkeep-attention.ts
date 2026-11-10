@@ -291,7 +291,7 @@ const changeTable = (
     {
       id: "repo",
       header: "Repository",
-      cell: draw((change) => change.repo, { width: "11rem" }),
+      cell: draw((change) => change.repo, "fit"),
     },
     {
       id: "title",
@@ -310,14 +310,14 @@ const changeTable = (
             : change.what.map(
                 (what) => html`<gw-chip size="xs">${what}</gw-chip>`,
               ),
-        { width: "12rem" },
+        "fit",
       ),
     },
     {
       id: "at",
       header: "When",
       searchable: false,
-      cell: draw((change) => time(change.at), { width: "7rem" }),
+      cell: draw((change) => time(change.at), "fit"),
     },
   ];
 
@@ -1448,9 +1448,7 @@ export class UpkeepAttention extends LitElement {
       {
         id: "tag",
         header: "Release",
-        cell: draw((release) => externalLink(release.url, release.tag), {
-          width: "9rem",
-        }),
+        cell: draw((release) => externalLink(release.url, release.tag), "fit"),
       },
       {
         id: "seen",
@@ -1463,7 +1461,7 @@ export class UpkeepAttention extends LitElement {
                 ? html` <gw-chip size="xs" tone="accent">New</gw-chip>`
                 : nothing
             }`,
-          { width: "10rem" },
+          "fit",
         ),
       },
     ];
@@ -1519,20 +1517,18 @@ export class UpkeepAttention extends LitElement {
         cell: draw(
           (entry) =>
             `${entry.snapshot?.suggestion ?? ""}${entry.stale ? ", stale" : ""}`,
-          { width: "8rem" },
+          "fit",
         ),
       },
       {
         id: "next",
         header: "Next",
-        cell: draw((entry) => entry.nextVersion ?? "", { width: "9rem" }),
+        cell: draw((entry) => entry.nextVersion ?? "", "fit"),
       },
       {
         id: "since",
         header: "Since",
-        cell: draw((entry) => entry.snapshot?.releaseTag ?? "none yet", {
-          width: "9rem",
-        }),
+        cell: draw((entry) => entry.snapshot?.releaseTag ?? "none yet", "fit"),
       },
     ];
 

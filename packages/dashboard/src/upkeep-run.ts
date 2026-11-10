@@ -83,9 +83,10 @@ const changeTable = (changes: ReadonlyArray<Domain.Change>) => {
     {
       id: "repo",
       header: "Repository",
-      cell: draw((change) => change.repo.split("/").at(-1) ?? change.repo, {
-        width: "10rem",
-      }),
+      cell: draw(
+        (change) => change.repo.split("/").at(-1) ?? change.repo,
+        "fit",
+      ),
     },
     {
       id: "sha",
@@ -96,7 +97,7 @@ const changeTable = (changes: ReadonlyArray<Domain.Change>) => {
             change.url,
             html`<code>${change.sha.slice(0, 7)}</code>`,
           ),
-        { width: "6rem" },
+        "fit",
       ),
     },
     {
@@ -109,7 +110,7 @@ const changeTable = (changes: ReadonlyArray<Domain.Change>) => {
       id: "at",
       header: "When",
       searchable: false,
-      cell: draw((change) => time(change.at), { width: "7rem" }),
+      cell: draw((change) => time(change.at), "fit"),
     },
   ];
 

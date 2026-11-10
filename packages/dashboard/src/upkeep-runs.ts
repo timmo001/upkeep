@@ -612,9 +612,9 @@ export class UpkeepRuns extends LitElement {
 
     const byId = new Map(list.map((run) => [run.id, run]));
 
-    // Every column has a fixed width but the summary, which takes the rest,
-    // and every row one line, so the table keeps its shape whichever rows
-    // are on screen and as runs move on
+    // Every column fits its content, holding the widest it has been, but the
+    // summary, which takes the rest, and every row is one line, so the table
+    // keeps its shape whichever rows are on screen and as runs move on
     const draw =
       (content: (run: Domain.Run) => CellContent, size: CellSize) =>
       (row: TableRow) => {
@@ -635,7 +635,7 @@ export class UpkeepRuns extends LitElement {
               title="Open the run and its log"
               >${stateBadge(run.state)}</a
             >`,
-          { width: "7rem" },
+          "fit",
         ),
       },
       ...(this.job === ""
@@ -646,7 +646,7 @@ export class UpkeepRuns extends LitElement {
               cell: draw(
                 (run: Domain.Run) =>
                   html`<a href=${jobHref(run.job)}>${jobName(run.job)}</a>`,
-                { width: "7.5rem" },
+                "fit",
               ),
             },
           ]
@@ -664,7 +664,7 @@ export class UpkeepRuns extends LitElement {
                       >${jobName(run.heal.job)}</a
                     >`
             }`,
-          { width: "5.5rem" },
+          "fit",
         ),
       },
       {
@@ -681,7 +681,7 @@ export class UpkeepRuns extends LitElement {
       {
         id: "release",
         header: "For",
-        cell: draw((run) => release(run), { width: "6.5rem" }),
+        cell: draw((run) => release(run), "fit"),
       },
       {
         id: "worker",
@@ -693,21 +693,21 @@ export class UpkeepRuns extends LitElement {
                   >waiting in the ${this.#laneOf(run.job)} lane</span
                 >`
               : (run.worker ?? ""),
-          { width: "6.5rem" },
+          "fit",
         ),
       },
       {
         id: "queued",
         header: "Queued",
         searchable: false,
-        cell: draw((run) => time(run.queuedAt), { width: "7rem" }),
+        cell: draw((run) => time(run.queuedAt), "fit"),
       },
       {
         id: "took",
         header: "Took",
         sortable: false,
         searchable: false,
-        cell: draw((run) => duration(run), { width: "3.5rem" }),
+        cell: draw((run) => duration(run), "fit"),
       },
     ];
 

@@ -170,9 +170,7 @@ export class UpkeepFeed extends LitElement {
       {
         id: "repo",
         header: "Repository",
-        cell: draw((item) => titleOf(item.repo, this.titles), {
-          width: "9rem",
-        }),
+        cell: draw((item) => titleOf(item.repo, this.titles), "fit"),
       },
       {
         id: "text",
@@ -188,7 +186,7 @@ export class UpkeepFeed extends LitElement {
         id: "at",
         header: "When",
         searchable: false,
-        cell: draw((item) => time(item.at), { width: "7rem" }),
+        cell: draw((item) => time(item.at), "fit"),
       },
     ];
 

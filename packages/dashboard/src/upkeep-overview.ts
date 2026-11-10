@@ -195,7 +195,7 @@ export class UpkeepOverview extends LitElement {
             starts(job).map(
               (start, index) => html`${index === 0 ? "" : ", "}${start}`,
             ),
-          { width: "12rem" },
+          "fit",
         ),
       },
       {
@@ -223,7 +223,7 @@ export class UpkeepOverview extends LitElement {
                       >${stateBadge(job.lastRun.state)}</a
                     >
                     ${time(job.lastRun.queuedAt)}`,
-          { width: "14rem" },
+          "fit",
         ),
       },
       {
@@ -234,7 +234,7 @@ export class UpkeepOverview extends LitElement {
         cell: draw(
           (job) => html`<div class="actions">${jobActions(job)}</div>`,
           // Wraps, so a parked job's third button doesn't widen the column
-          { width: "12rem", wrap: true },
+          { width: "12rem" },
         ),
       },
     ];
