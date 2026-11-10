@@ -647,6 +647,9 @@ export const managers = [
   "git-submodules",
   "dockerfile",
   "docker-compose",
+  "gomod",
+  "gradle",
+  "pip_requirements",
 ];
 
 /** A custom datasource, as Renovate writes it. */

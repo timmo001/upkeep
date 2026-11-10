@@ -489,7 +489,7 @@ const lockfileIn = Effect.fnUntraced(function* (folder: string) {
 });
 
 /** Run a command through mise when the repository pins its tools. */
-const tool = (
+export const tool = (
   mise: boolean,
   command: string,
   args: ReadonlyArray<string>,

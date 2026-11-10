@@ -782,11 +782,12 @@ logs that it would hold the update.
 
 In the repositories listed in `deps.apply` in the worker's config file, the
 `deps` job also applies each group of updates Upkeep owns, one at a time: it
-edits the `package.json`, mise config, workflow, Dockerfile, Compose file, or
-custom regex or jsonata match the
-update was read from, or moves its lockfile alone for an update within its
+edits the `package.json`, mise config, workflow, Dockerfile, Compose file,
+`go.mod`, Gradle script, requirements file, or custom regex or jsonata match
+the update was read from, or moves its lockfile alone for an update within its
 range, installs where a `package.json` changed, runs
-`mise lock` where a mise config with a `mise.lock` changed, and runs the
+`mise lock` where a mise config with a `mise.lock` changed, runs
+`go mod tidy` where a `go.mod` changed, and runs the
 repository's `generate` commands and checks the result as a bump does (with
 the same per-repository settings). The checked
 commit is pushed to the default branch and its CI watched, and once CI
@@ -807,6 +808,16 @@ default branch, and an update checks out the new commit. A config's
 `toml`) and run through their JSONata transforms, as Renovate does. A
 custom manager can also name the `node-version` and `python-version`
 datasources, which read releases from nodejs.org and python.org.
+
+A `go.mod`'s direct requirements are read from the Go module proxy, leaving
+out indirect ones, pseudo-versions and modules a `replace` points elsewhere,
+and its `toolchain` follows Go's tags. Gradle scripts give their
+`"group:artifact:version"` dependencies and `id(...) version` plugins, read
+from Maven Central, Google's Maven repository and the Gradle plugin portal; a
+version from a variable, a range or a dynamic `+` is left out. Requirements
+files give their exact `==` pins, compared as PEP 440 versions. The newest
+few releases past the one in use are dated, from the proxy and from each
+POM's `Last-Modified`, so `minimumReleaseAge` can pass them.
 
 Docker images are read from Dockerfiles' `FROM` lines (past earlier stages,
 `scratch`, and any with a build argument in them, which are noted and left

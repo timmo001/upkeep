@@ -52,6 +52,9 @@ const categories = new Map([
   ["git-submodules", ["git"]],
   ["dockerfile", ["docker"]],
   ["docker-compose", ["docker"]],
+  ["gomod", ["golang"]],
+  ["gradle", ["java"]],
+  ["pip_requirements", ["python"]],
 ]);
 
 export const managerCategories = (manager: string) =>

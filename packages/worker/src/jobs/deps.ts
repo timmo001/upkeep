@@ -716,6 +716,13 @@ const applyGroup = Effect.fnUntraced(function* (
   )
     yield* Bump.run("mise", ["lock"], options);
 
+  // A moved module needs its go.sum entries, and may move indirect ones
+  for (const goMod of edited.filter((file) => path.basename(file) === "go.mod"))
+    yield* Bump.tool(mise, "go", ["mod", "tidy"], {
+      cwd: path.join(directory, path.dirname(goMod)),
+      trusted,
+    });
+
   const changed = (yield* Bump.run("git", ["diff", "--name-only"], options))
     .split("\n")
     .filter((file) => file !== "");

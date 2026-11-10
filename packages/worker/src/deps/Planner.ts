@@ -93,6 +93,31 @@ export const parseVersion = (
 ): Version | undefined => {
   if (versioning === "docker") return dockerVersion(version);
 
+  // PEP 440: a post release counts as one more part, so 1.4.1.post1 follows
+  // 1.4.1, and a, b, rc and dev releases are prereleases
+  if (versioning === "pep440") {
+    const groups =
+      /^v?(?<release>\d+(?:\.\d+)*)(?:[-_.]?(?<pre>(?:a|b|rc)\d*))?(?:[-_.]?post(?<post>\d*))?(?:[-_.]?(?<dev>dev\d*))?$/i.exec(
+        version,
+      )?.groups;
+
+    if (groups?.release === undefined) return undefined;
+
+    const parts = groups.release.split(".").map(Number);
+
+    while (parts.length < 3) parts.push(0);
+
+    const prerelease = [groups.pre, groups.dev].filter(
+      (part) => part !== undefined,
+    );
+
+    return {
+      parts:
+        groups.post === undefined ? parts : [...parts, Number(groups.post)],
+      prerelease: prerelease.length === 0 ? undefined : prerelease.join("."),
+    };
+  }
+
   if (versioning?.startsWith("regex:") === true) {
     const groups = new RegExp(versioning.slice("regex:".length)).exec(
       version,

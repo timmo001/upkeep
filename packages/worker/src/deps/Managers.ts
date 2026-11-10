@@ -4,7 +4,9 @@
  * package.json with the versions its lockfile pins, mise reads its TOML
  * configs, GitHub Actions reads workflows and actions, git submodules read
  * .gitmodules and the commits the tree pins, Dockerfiles and Compose files
- * give their images, and custom regex and jsonata managers read whatever
+ * give their images, go.mod its modules, Gradle scripts their artifacts and
+ * plugins, requirements files their pins, and custom regex and jsonata
+ * managers read whatever
  * files a policy points them at.
  */
 import jsonata from "jsonata";
@@ -34,6 +36,9 @@ const filePatterns = {
     "/(^|/)([Dd]ocker|[Cc]ontainer)file[^/]*$/",
   ],
   "docker-compose": ["/(^|/)(?:docker-)?compose[^/]*\\.ya?ml$/"],
+  gomod: ["/(^|/)go\\.mod$/"],
+  gradle: ["/\\.gradle(\\.kts)?$/"],
+  pip_requirements: ["/(^|/)[\\w-]*requirements([-.]\\w+)?\\.(txt|pip)$/"],
 };
 
 /** What extraction found, with what it couldn't read. */
@@ -748,6 +753,187 @@ const extractSubmodules = (
   return { dependencies, notes };
 };
 
+/** A Go pseudo-version, a commit rather than a release. */
+export const goPseudo = /\d{14}-[\da-f]{12}(?:\+incompatible)?$/;
+
+/**
+ * A go.mod's requirements, as Renovate's gomod manager reads them: each
+ * direct `require`, leaving out indirect ones, pseudo-versions and modules a
+ * `replace` points elsewhere, plus the `toolchain`, which follows Go's tags.
+ */
+export const extractGoMod = (file: string, text: string): Extraction => {
+  const dependencies: Array<Dependency> = [];
+  const replaced = new Set<string>();
+  const required: Array<{ module: string; version: string }> = [];
+  let block: "require" | "replace" | undefined;
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+
+    if (block !== undefined && line === ")") {
+      block = undefined;
+      continue;
+    }
+
+    const opens = /^(require|replace)\s*\($/.exec(line)?.[1];
+
+    if (opens === "require" || opens === "replace") {
+      block = opens;
+      continue;
+    }
+
+    const replace =
+      block === "replace" ? line : /^replace\s+(.+)$/.exec(line)?.[1];
+
+    if (replace !== undefined) {
+      const module = replace.split(/\s+/)[0];
+
+      if (module !== undefined && module !== "") replaced.add(module);
+
+      continue;
+    }
+
+    const requirement =
+      block === "require" ? line : /^require\s+(.+)$/.exec(line)?.[1];
+
+    if (requirement !== undefined) {
+      if (/\/\/\s*indirect\b/.test(requirement)) continue;
+
+      const [module, version] = requirement.split(/\s+/);
+
+      if (
+        module !== undefined &&
+        version?.startsWith("v") === true &&
+        !goPseudo.test(version)
+      )
+        required.push({ module, version });
+
+      continue;
+    }
+
+    const toolchain = /^toolchain\s+go(\S+)$/.exec(line)?.[1];
+
+    if (toolchain !== undefined)
+      dependencies.push({
+        manager: "gomod",
+        file,
+        depName: "go",
+        packageName: "golang/go",
+        datasource: "github-tags",
+        depType: "toolchain",
+        currentValue: toolchain,
+        extractVersion: "^go(?<version>\\d+\\.\\d+\\.\\d+)$",
+      });
+  }
+
+  for (const { module, version } of required) {
+    if (replaced.has(module)) continue;
+
+    dependencies.push({
+      manager: "gomod",
+      file,
+      depName: module,
+      packageName: module,
+      datasource: "go",
+      depType: "require",
+      currentValue: version,
+    });
+  }
+
+  return { dependencies, notes: [] };
+};
+
+/**
+ * A requirements file's exact pins, `name==version`, as Renovate's
+ * pip_requirements manager updates them. Ranges, options and includes are
+ * left alone.
+ */
+export const extractRequirements = (file: string, text: string): Extraction => {
+  const dependencies: Array<Dependency> = [];
+
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s+#.*$/, "").trim();
+
+    const pin =
+      /^(?<name>[A-Za-z\d][\w.-]*)(?:\[[^\]]*\])?\s*==\s*(?<version>[^\s;,]+)\s*(?:;.*)?$/.exec(
+        line,
+      )?.groups;
+
+    if (pin?.name === undefined || pin.version === undefined) continue;
+
+    dependencies.push({
+      manager: "pip_requirements",
+      file,
+      depName: pin.name,
+      packageName: pin.name,
+      datasource: "pypi",
+      depType: "requirements",
+      currentValue: pin.version,
+      versioning: "pep440",
+    });
+  }
+
+  return { dependencies, notes: [] };
+};
+
+/**
+ * A Gradle build script's dependencies, `"group:artifact:version"`, and its
+ * plugins, `id("name") version "1.2.3"`, as Renovate's gradle manager reads
+ * them. A version made from a variable, a range or a dynamic `+` is left
+ * out, and a dependency written twice in one file is read once.
+ */
+export const extractGradle = (file: string, text: string): Extraction => {
+  const dependencies = new Map<string, Dependency>();
+  const literal = /^\d[\w.-]*$/;
+
+  for (const match of text.matchAll(
+    /(["'])(?<group>[\w.-]+):(?<artifact>[\w.-]+):(?<version>[^"'\s:@]+)(?::[\w.-]+)?(?:@\w+)?\1/g,
+  )) {
+    const { group, artifact, version } = match.groups ?? {};
+
+    if (
+      group === undefined ||
+      artifact === undefined ||
+      version === undefined ||
+      !literal.test(version)
+    )
+      continue;
+
+    const name = `${group}:${artifact}`;
+
+    dependencies.set(`${name}@${version}`, {
+      manager: "gradle",
+      file,
+      depName: name,
+      packageName: name,
+      datasource: "maven",
+      depType: "dependencies",
+      currentValue: version,
+    });
+  }
+
+  for (const match of text.matchAll(
+    /\bid\s*\(?\s*(["'])(?<id>[\w.-]+)\1\s*\)?\s+version\s*\(?\s*(["'])(?<version>[^"'\s]+)\3/g,
+  )) {
+    const { id, version } = match.groups ?? {};
+
+    if (id === undefined || version === undefined || !literal.test(version))
+      continue;
+
+    dependencies.set(`plugin:${id}@${version}`, {
+      manager: "gradle",
+      file,
+      depName: id,
+      packageName: id,
+      datasource: "gradle-plugin",
+      depType: "plugin",
+      currentValue: version,
+    });
+  }
+
+  return { dependencies: [...dependencies.values()], notes: [] };
+};
+
 /** A Handlebars string literal, in single or double quotes. */
 const literal = String.raw`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`;
 
@@ -1103,6 +1289,18 @@ export const extract = Effect.fnUntraced(function* (
       enabled(policy, "docker-compose")
     )
       attempt(file, () => extractCompose(file, text));
+
+    if (matchesFiles(file, filePatterns.gomod) && enabled(policy, "gomod"))
+      attempt(file, () => extractGoMod(file, text));
+
+    if (matchesFiles(file, filePatterns.gradle) && enabled(policy, "gradle"))
+      attempt(file, () => extractGradle(file, text));
+
+    if (
+      matchesFiles(file, filePatterns.pip_requirements) &&
+      enabled(policy, "pip_requirements")
+    )
+      attempt(file, () => extractRequirements(file, text));
 
     for (const manager of policy.customManagers) {
       if (!matchesFiles(file, manager.files)) continue;

@@ -441,6 +441,94 @@ const editJsonata = (update: Update, text: string): Edit => {
 };
 
 /**
+ * Swap a version where `pattern` finds it: `pattern` captures what comes
+ * before the version, which follows it. Nothing found means the file moved on.
+ */
+const swapVersion = (
+  update: Update,
+  text: string,
+  pattern: RegExp,
+  value: string,
+): Edit => {
+  if (!pattern.test(text))
+    return unsupported(
+      `${update.dependency.depName} ${update.dependency.currentValue} isn't in the file any more`,
+    );
+
+  pattern.lastIndex = 0;
+
+  return edited(text.replace(pattern, `$1${value}`));
+};
+
+/** A go.mod `require` or the `toolchain` line. */
+const editGoMod = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+
+  if (dependency.depType === "toolchain")
+    return swapVersion(
+      update,
+      text,
+      new RegExp(
+        `(^\\s*toolchain\\s+go)${escape(dependency.currentValue)}(?=\\s|$)`,
+        "gm",
+      ),
+      update.to,
+    );
+
+  return swapVersion(
+    update,
+    text,
+    new RegExp(
+      `(^\\s*(?:require\\s+)?${escape(dependency.depName)}\\s+)${escape(dependency.currentValue)}(?=\\s|$)`,
+      "gm",
+    ),
+    update.to,
+  );
+};
+
+/** A requirements file's `name==version` pin. */
+const editRequirements = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+
+  return swapVersion(
+    update,
+    text,
+    new RegExp(
+      `(^\\s*${escape(dependency.depName)}(?:\\[[^\\]]*\\])?\\s*==\\s*)${escape(dependency.currentValue)}(?=[\\s;,]|$)`,
+      "gim",
+    ),
+    update.to,
+  );
+};
+
+/** A Gradle `"group:artifact:version"` string or a plugin's `version "…"`. */
+const editGradle = (update: Update, text: string): Edit => {
+  const { dependency } = update;
+  const current = escape(dependency.currentValue);
+
+  if (dependency.depType === "plugin")
+    return swapVersion(
+      update,
+      text,
+      new RegExp(
+        `(\\bid\\s*\\(?\\s*(["'])${escape(dependency.depName)}\\2\\s*\\)?\\s+version\\s*\\(?\\s*["'])${current}(?=["'])`,
+        "g",
+      ),
+      update.to,
+    );
+
+  return swapVersion(
+    update,
+    text,
+    new RegExp(
+      `(["']${escape(dependency.depName)}:)${current}(?=(?::[\\w.-]+)?(?:@\\w+)?["'])`,
+      "g",
+    ),
+    update.to,
+  );
+};
+
+/**
  * Write an update into its dependency's file. A lockfile-only update leaves
  * the file as it is, for its package manager to move the lockfile.
  */
@@ -479,6 +567,19 @@ export const apply = (update: Update, text: string): Edit => {
       return editRegex(update, text);
     case "custom.jsonata":
       return editJsonata(update, text);
+    case "gomod":
+    case "gradle":
+    case "pip_requirements":
+      if (update.updateType === "digest" || update.updateType === "pinDigest")
+        return unsupported(
+          `${update.dependency.manager} has no digests to move`,
+        );
+
+      if (update.dependency.manager === "gomod") return editGoMod(update, text);
+
+      return update.dependency.manager === "gradle"
+        ? editGradle(update, text)
+        : editRequirements(update, text);
     default:
       return unsupported(
         `${update.dependency.manager} updates aren't applied yet`,

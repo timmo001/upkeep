@@ -1,6 +1,8 @@
 /**
  * The datasources: where a dependency's releases come from. npm and PyPI
- * through their registries, Node.js and Python versions from nodejs.org and
+ * through their registries, Go modules through the module proxy, Maven
+ * artifacts and Gradle plugins through Maven Central, Google's repository and
+ * the plugin portal, Node.js and Python versions from nodejs.org and
  * python.org, GitHub releases, tags and refs through the GitHub
  * API. Lookups are cached for the run, so a package many repositories use is
  * read once, and GitHub responses are kept between runs and asked for again
@@ -11,7 +13,7 @@
  */
 import { Gh, GhCommandError } from "@timmo001/effect-gh";
 import jsonata from "jsonata";
-import { Cache, Context, Effect, Layer, Match, Schema } from "effect";
+import { Cache, Context, Effect, Layer, Match, Option, Schema } from "effect";
 import { Yaml } from "effect/encoding";
 import {
   HttpClient,
@@ -21,7 +23,7 @@ import {
 import semver from "semver";
 import { ghReason } from "../Failure";
 import * as Kept from "../Kept";
-import { render } from "./Managers";
+import { goPseudo, render } from "./Managers";
 import { compareVersions, dockerVersion } from "./Planner";
 import {
   type CustomDatasource,
@@ -73,6 +75,55 @@ const PythonRelease = Schema.Struct({
   release_date: Schema.optionalKey(Schema.NullOr(Schema.String)),
   pre_release: Schema.optionalKey(Schema.Boolean),
 });
+
+/** A module version's details from the Go module proxy. */
+const GoVersionInfo = Schema.Struct({
+  Version: Schema.String,
+  Time: Schema.optionalKey(Schema.String),
+});
+
+/**
+ * The Maven repositories Gradle builds resolve from: Maven Central, Google's
+ * for Android, and the Gradle plugin portal.
+ */
+const mavenRegistries = [
+  "https://repo.maven.apache.org/maven2",
+  "https://dl.google.com/android/maven2",
+  "https://plugins.gradle.org/m2",
+];
+
+/** The newest versions past the one in use that get their dates read. */
+const datedVersions = 5;
+
+/** A module path as the Go proxy wants it: each capital as `!` and its lower case. */
+export const goEscape = (path: string) =>
+  path.replace(/[A-Z]/g, (letter) => `!${letter.toLowerCase()}`);
+
+/** The versions listed in a `maven-metadata.xml`. */
+export const mavenVersions = (xml: string) =>
+  [...xml.matchAll(/<version>\s*([^<\s]+)\s*<\/version>/g)].flatMap(
+    ([, version]) => (version === undefined ? [] : [version]),
+  );
+
+/**
+ * The versions newer than `current` worth dating, newest first, so an
+ * update past the minimum release age isn't held for want of a date.
+ */
+const toDate = (versions: ReadonlyArray<string>, current: string) => {
+  const floor = semver.coerce(current, { loose: true });
+
+  return versions
+    .flatMap((version) => {
+      const parsed = semver.coerce(version, { loose: true });
+
+      return parsed !== null && (floor === null || semver.gt(parsed, floor))
+        ? [{ version, parsed }]
+        : [];
+    })
+    .toSorted((a, b) => semver.rcompare(a.parsed, b.parsed))
+    .slice(0, datedVersions)
+    .map(({ version }) => version);
+};
 
 const GithubRelease = Schema.Struct({
   tag_name: Schema.String,
@@ -283,6 +334,9 @@ export const supported = new Set([
   "pypi",
   "node-version",
   "python-version",
+  "go",
+  "maven",
+  "gradle-plugin",
   "github-releases",
   "github-tags",
   "git-refs",
@@ -555,6 +609,131 @@ export class Datasources extends Context.Service<
                 ];
           }),
           sourceUrl: "https://github.com/python/cpython",
+        } satisfies Releases;
+      });
+
+      /**
+       * A Go module's releases from the module proxy, leaving out
+       * pseudo-versions, with dates for the newest few past the one in use.
+       */
+      const goModule = Effect.fnUntraced(function* (
+        module: string,
+        current: string,
+      ) {
+        const base = `https://proxy.golang.org/${goEscape(module)}/@v`;
+        const response = yield* http.get(`${base}/list`);
+
+        if (response.status !== 200)
+          return yield* new DepsError({
+            message: `the Go proxy returned ${response.status} for ${module}`,
+          });
+
+        const versions = (yield* response.text)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== "" && !goPseudo.test(line));
+
+        const dates = new Map(
+          yield* Effect.forEach(
+            toDate(versions, current),
+            (version) =>
+              Effect.gen(function* () {
+                const info = yield* http.get(
+                  `${base}/${encodeURIComponent(version)}.info`,
+                );
+
+                if (info.status !== 200) return [version, undefined] as const;
+
+                const read = yield* Schema.decodeUnknownEffect(GoVersionInfo)(
+                  yield* info.json,
+                );
+
+                return [version, read.Time] as const;
+              }).pipe(
+                Effect.orElseSucceed(() => [version, undefined] as const),
+              ),
+            { concurrency: 4 },
+          ),
+        );
+
+        const github = /^github\.com\/([\w.-]+\/[\w.-]+)/.exec(module)?.[1];
+
+        return {
+          releases: versions.map((version): Release => ({
+            version,
+            date: dates.get(version),
+          })),
+          sourceUrl:
+            github === undefined ? null : `https://github.com/${github}`,
+        } satisfies Releases;
+      });
+
+      /**
+       * A Maven artifact's versions from each repository that has it, with
+       * the newest few past the one in use dated by their POM's
+       * Last-Modified, as Renovate dates them. `group:artifact`.
+       */
+      const maven = Effect.fnUntraced(function* (
+        coordinates: string,
+        current: string,
+      ) {
+        const [group = "", artifact = ""] = coordinates.split(":");
+        const path = `${group.replace(/\./g, "/")}/${artifact}`;
+        const found = new Map<string, string>();
+
+        for (const registry of mavenRegistries) {
+          const response = yield* http
+            .get(`${registry}/${path}/maven-metadata.xml`)
+            .pipe(Effect.option);
+
+          if (Option.isNone(response) || response.value.status !== 200)
+            continue;
+
+          for (const version of mavenVersions(yield* response.value.text))
+            if (!found.has(version)) found.set(version, registry);
+        }
+
+        if (found.size === 0)
+          return yield* new DepsError({
+            message: `no Maven repository has ${coordinates}`,
+          });
+
+        const dates = new Map(
+          yield* Effect.forEach(
+            toDate([...found.keys()], current),
+            (version) =>
+              http
+                .head(
+                  `${found.get(version)}/${path}/${version}/${artifact}-${version}.pom`,
+                )
+                .pipe(
+                  Effect.map((response) => {
+                    const modified = response.headers["last-modified"];
+
+                    const date =
+                      modified === undefined
+                        ? Number.NaN
+                        : Date.parse(modified);
+
+                    return [
+                      version,
+                      Number.isFinite(date)
+                        ? new Date(date).toISOString()
+                        : undefined,
+                    ] as const;
+                  }),
+                  Effect.orElseSucceed(() => [version, undefined] as const),
+                ),
+            { concurrency: 4 },
+          ),
+        );
+
+        return {
+          releases: [...found.keys()].map((version): Release => ({
+            version,
+            date: dates.get(version),
+          })),
+          sourceUrl: null,
         } satisfies Releases;
       });
 
@@ -869,6 +1048,17 @@ export class Datasources extends Context.Service<
 
             if (datasource === "python-version") return yield* pythonVersions;
 
+            if (datasource === "go") return yield* goModule(packageName, ref);
+
+            if (datasource === "maven") return yield* maven(packageName, ref);
+
+            // A plugin's marker artifact, as Gradle resolves `id(...)`
+            if (datasource === "gradle-plugin")
+              return yield* maven(
+                `${packageName}:${packageName}.gradle.plugin`,
+                ref,
+              );
+
             if (datasource === "docker") return yield* docker(packageName, ref);
 
             if (datasource === "github-releases")
@@ -1037,7 +1227,10 @@ export class Datasources extends Context.Service<
               dependency.datasource === "git-refs" ||
               dependency.datasource === "github-tags" ||
               dependency.datasource === "github-releases" ||
-              dependency.datasource === "docker"
+              dependency.datasource === "docker" ||
+              dependency.datasource === "go" ||
+              dependency.datasource === "maven" ||
+              dependency.datasource === "gradle-plugin"
                 ? dependency.currentValue
                 : "",
             ].join("\u0000"),
