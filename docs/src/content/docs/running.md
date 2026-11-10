@@ -804,7 +804,9 @@ Git submodules are read when the config turns on Renovate's `git-submodules`
 manager. Each submodule follows its `.gitmodules` branch, or its remote's
 default branch, and an update checks out the new commit. A config's
 `customDatasources` are fetched in their format (`json`, `plain`, `yaml` or
-`toml`) and run through their JSONata transforms, as Renovate does.
+`toml`) and run through their JSONata transforms, as Renovate does. A
+custom manager can also name the `node-version` and `python-version`
+datasources, which read releases from nodejs.org and python.org.
 
 Docker images are read from Dockerfiles' `FROM` lines (past earlier stages,
 `scratch`, and any with a build argument in them, which are noted and left

@@ -1,6 +1,7 @@
 /**
  * The datasources: where a dependency's releases come from. npm and PyPI
- * through their registries, GitHub releases, tags and refs through the GitHub
+ * through their registries, Node.js and Python versions from nodejs.org and
+ * python.org, GitHub releases, tags and refs through the GitHub
  * API. Lookups are cached for the run, so a package many repositories use is
  * read once, and GitHub responses are kept between runs and asked for again
  * conditionally, so what hasn't changed costs no rate limit. Release and tag
@@ -58,6 +59,19 @@ const PypiPackage = Schema.Struct({
       }),
     ),
   ),
+});
+
+/** A release in nodejs.org's index, its version with a leading `v`. */
+const NodeRelease = Schema.Struct({
+  version: Schema.String,
+  date: Schema.optionalKey(Schema.String),
+});
+
+/** A release in python.org's downloads API, named `Python 3.14.2`. */
+const PythonRelease = Schema.Struct({
+  name: Schema.String,
+  release_date: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  pre_release: Schema.optionalKey(Schema.Boolean),
 });
 
 const GithubRelease = Schema.Struct({
@@ -267,6 +281,8 @@ const failed = (datasource: string) => (cause: unknown) =>
 export const supported = new Set([
   "npm",
   "pypi",
+  "node-version",
+  "python-version",
   "github-releases",
   "github-tags",
   "git-refs",
@@ -484,6 +500,61 @@ export class Datasources extends Context.Service<
             })),
           latest: metadata.info.version,
           sourceUrl: source === undefined ? null : sourceUrl(source),
+        } satisfies Releases;
+      });
+
+      /** Node.js releases from nodejs.org, as Renovate's node-version reads them. */
+      const nodeVersions = Effect.gen(function* () {
+        const response = yield* http.get("https://nodejs.org/dist/index.json");
+
+        if (response.status !== 200)
+          return yield* new DepsError({
+            message: `nodejs.org returned ${response.status}`,
+          });
+
+        const index = yield* Schema.decodeUnknownEffect(
+          Schema.Array(NodeRelease),
+        )(yield* response.json);
+
+        return {
+          releases: index.map((release): Release => ({
+            version: release.version.replace(/^v/, ""),
+            date: release.date,
+          })),
+          sourceUrl: "https://github.com/nodejs/node",
+        } satisfies Releases;
+      });
+
+      /** CPython releases from python.org, as Renovate's python-version reads them. */
+      const pythonVersions = Effect.gen(function* () {
+        const response = yield* http.get(
+          "https://www.python.org/api/v2/downloads/release/?is_published=true",
+        );
+
+        if (response.status !== 200)
+          return yield* new DepsError({
+            message: `python.org returned ${response.status}`,
+          });
+
+        const published = yield* Schema.decodeUnknownEffect(
+          Schema.Array(PythonRelease),
+        )(yield* response.json);
+
+        return {
+          releases: published.flatMap((release): ReadonlyArray<Release> => {
+            const version = /^Python (\S+)$/.exec(release.name)?.[1];
+
+            return version === undefined
+              ? []
+              : [
+                  {
+                    version,
+                    date: release.release_date ?? undefined,
+                    prerelease: release.pre_release === true ? true : undefined,
+                  },
+                ];
+          }),
+          sourceUrl: "https://github.com/python/cpython",
         } satisfies Releases;
       });
 
@@ -793,6 +864,10 @@ export class Datasources extends Context.Service<
             if (datasource === "npm") return yield* npm(packageName);
 
             if (datasource === "pypi") return yield* pypi(packageName);
+
+            if (datasource === "node-version") return yield* nodeVersions;
+
+            if (datasource === "python-version") return yield* pythonVersions;
 
             if (datasource === "docker") return yield* docker(packageName, ref);
 
