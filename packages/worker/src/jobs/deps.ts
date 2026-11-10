@@ -914,7 +914,11 @@ const maintainLockfiles = Effect.fnUntraced(function* (
 
 const PullRequests = Schema.Array(Schema.Struct({ number: Schema.Number }));
 
-/** Close the updater's open pull request on a branch Upkeep landed. */
+/**
+ * Close the updater's open pull request on a branch Upkeep landed. A
+ * repository with pull requests turned off answers the lookup with a 404,
+ * which means there's none to close.
+ */
 const closeRenovate = Effect.fnUntraced(function* (
   repo: string,
   topic: string,
@@ -929,6 +933,8 @@ const closeRenovate = Effect.fnUntraced(function* (
       query: { state: "open", head: `${owner}:renovate/${topic}` },
     },
     PullRequests,
+  ).pipe(
+    Effect.catchIf(missing, () => Effect.succeed<typeof PullRequests.Type>([])),
   );
 
   for (const pr of open) {
