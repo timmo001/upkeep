@@ -130,6 +130,88 @@ export const GitHubEvent = Schema.Struct({
 
 export interface GitHubEvent extends Schema.Schema.Type<typeof GitHubEvent> {}
 
+/** What the Activity page lists. */
+export const TimelineKind = Schema.Literals([
+  "commit",
+  "push",
+  "pull_request",
+  "issue",
+  "review",
+  "comment",
+  "release",
+]);
+
+export type TimelineKind = typeof TimelineKind.Type;
+
+/** Who did it, as the Activity page filters it. */
+export const TimelineWho = Schema.Literals(["you", "bots", "others"]);
+
+export type TimelineWho = typeof TimelineWho.Type;
+
+/** The issue or pull request an Activity item belongs to, which groups it. */
+export const TimelineSubject = Schema.Struct({
+  /** `owner/repo#123`. */
+  key: Schema.String,
+  kind: Schema.Literals(["issue", "pull_request"]),
+  number: Schema.Int,
+  title: Schema.String,
+  state: Schema.Literals(["open", "closed", "merged"]),
+  author: Schema.NullOr(Schema.String),
+  url: Schema.String,
+});
+
+export interface TimelineSubject extends Schema.Schema.Type<
+  typeof TimelineSubject
+> {}
+
+/**
+ * One thing that happened on GitHub, for the Activity page. Its `id` is the
+ * same whichever source found it, such as `comment:123` or
+ * `commit:owner/repo@sha`, so it's kept once.
+ */
+export const TimelineItem = Schema.Struct({
+  id: Schema.String,
+  kind: TimelineKind,
+  /** Such as opened, closed, merged, approved, commented, pushed or published. */
+  action: Schema.String,
+  repo: RepoName,
+  actor: Schema.NullOr(Schema.String),
+  at: Schema.Finite,
+  /** The commit's subject, the release's name or a comment's first line. */
+  title: Schema.String,
+  url: Schema.String,
+  subject: Schema.NullOr(TimelineSubject),
+});
+
+export interface TimelineItem extends Schema.Schema.Type<typeof TimelineItem> {}
+
+/**
+ * An issue or pull request with its latest activity, newest first, or one
+ * item that belongs to none, such as a commit or a release.
+ */
+export const TimelineGroup = Schema.Struct({
+  /** The subject's key, or the item's ID when it has none. */
+  key: Schema.String,
+  subject: Schema.NullOr(TimelineSubject),
+  lastAt: Schema.Finite,
+  items: Schema.Array(TimelineItem),
+  /** How many older items of the group aren't sent. */
+  more: Schema.Int,
+});
+
+export interface TimelineGroup extends Schema.Schema.Type<
+  typeof TimelineGroup
+> {}
+
+/** A page of the Activity page's groups, by their latest activity. */
+export const Timeline = Schema.Struct({
+  groups: Schema.Array(TimelineGroup),
+  /** The cursor to ask `before` for the next page, null at the end. */
+  next: Schema.NullOr(Schema.String),
+});
+
+export interface Timeline extends Schema.Schema.Type<typeof Timeline> {}
+
 /**
  * An installation token for the GitHub App, which a worker runs its jobs'
  * `gh` and `git` calls with, when it expires, and the account the App is
@@ -1241,7 +1323,8 @@ export interface PermissionPrompts extends Schema.Schema.Type<
  * A part of the server's state that a change touched: `runs` covers runs and
  * jobs, `log` a run's log, `inbox` the inbox and tracked repositories,
  * `workers` what the workers last said they're set up with, `theme` the
- * desktop's Omarchy theme, and `releases` the Releases page.
+ * desktop's Omarchy theme, `releases` the Releases page and `timeline` the
+ * Activity page.
  */
 export const Topic = Schema.Literals([
   "runs",
@@ -1252,6 +1335,7 @@ export const Topic = Schema.Literals([
   "workers",
   "theme",
   "releases",
+  "timeline",
 ]);
 
 export type Topic = typeof Topic.Type;

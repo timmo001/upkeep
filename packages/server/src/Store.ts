@@ -683,6 +683,36 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`UPDATE entries SET you = 1 WHERE kind = 'release'`;
   }),
+  // What happened on GitHub, for the Activity page: one row per thing, by an
+  // ID every source shares, grouped by its issue or pull request (or by
+  // itself), and the login the timeline job reads as, which tells yours apart
+  "0036_timeline": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE timeline_items (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        action TEXT NOT NULL,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        actor TEXT,
+        at INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        group_key TEXT NOT NULL,
+        subject TEXT
+      )
+    `;
+    yield* sql`CREATE INDEX timeline_items_group ON timeline_items (group_key, at)`;
+    yield* sql`CREATE INDEX timeline_items_at ON timeline_items (at)`;
+
+    yield* sql`
+      CREATE TABLE timeline_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        login TEXT NOT NULL
+      )
+    `;
+  }),
 });
 
 const RunRow = Schema.Struct({
@@ -801,6 +831,53 @@ const decodeLog = Schema.decodeUnknownEffect(Schema.Array(Domain.LogLine));
 const decodeEvents = Schema.decodeUnknownEffect(
   Schema.Array(Schema.fromJsonString(Domain.GitHubEvent)),
 );
+
+const TimelineRow = Schema.Struct({
+  id: Schema.String,
+  kind: Domain.TimelineKind,
+  action: Schema.String,
+  repo: Schema.String,
+  actor: Schema.NullOr(Schema.String),
+  at: Schema.Finite,
+  title: Schema.String,
+  url: Schema.String,
+  groupKey: Schema.String,
+  subject: Schema.NullOr(Schema.fromJsonString(Domain.TimelineSubject)),
+});
+
+const decodeTimelineRows = Schema.decodeUnknownEffect(
+  Schema.Array(TimelineRow),
+);
+
+const TimelineGroupRow = Schema.Struct({
+  groupKey: Schema.String,
+  lastAt: Schema.Finite,
+  count: Schema.Finite,
+});
+
+const decodeTimelineGroups = Schema.decodeUnknownEffect(
+  Schema.Array(TimelineGroupRow),
+);
+
+/** How many of a group's latest items the Activity page is sent. */
+const itemsPerGroup = 10;
+
+/**
+ * The Activity page's paging cursor: the last group's latest activity and its
+ * key, so groups whose latest activity came in the same second aren't skipped
+ * or repeated between pages.
+ */
+export const timelineCursor = {
+  make: (lastAt: number, key: string) => `${lastAt}|${key}`,
+  read: (cursor: string) => {
+    const split = cursor.indexOf("|");
+    const lastAt = Number(cursor.slice(0, split));
+
+    return split < 0 || !Number.isFinite(lastAt)
+      ? undefined
+      : { lastAt, key: cursor.slice(split + 1) };
+  },
+};
 
 const decodeTokens = Schema.decodeUnknownEffect(Schema.Array(Api.Token));
 
@@ -1535,6 +1612,32 @@ export class Store extends Context.Service<
     ): Effect.Effect<ReadonlyArray<Domain.GitHubEvent>, StoreError>;
     /** Delete the GitHub events received before `before`. Returns how many went. */
     pruneEvents(before: number): Effect.Effect<number, StoreError>;
+    /**
+     * Keep what the timeline job found, read as `login`. An item already kept
+     * only has its issue or pull request brought up to date, on every item of
+     * that group. Returns how many were new.
+     */
+    recordTimeline(
+      login: string,
+      items: ReadonlyArray<Domain.TimelineItem>,
+    ): Effect.Effect<number, StoreError>;
+    /** Which of these Activity items are kept. */
+    knownTimeline(
+      ids: ReadonlyArray<string>,
+    ): Effect.Effect<ReadonlyArray<string>, StoreError>;
+    /**
+     * A page of the Activity page: the groups with the latest activity first,
+     * each with its newest items, after the cursor `before` when it's given.
+     */
+    timeline(filter: {
+      readonly before?: string | undefined;
+      readonly kinds?: ReadonlyArray<Domain.TimelineKind> | undefined;
+      readonly repos?: ReadonlyArray<string> | undefined;
+      readonly who?: Domain.TimelineWho | undefined;
+      readonly limit: number;
+    }): Effect.Effect<Domain.Timeline, StoreError>;
+    /** Delete the Activity items from before `before`. Returns how many went. */
+    pruneTimeline(before: number): Effect.Effect<number, StoreError>;
     /** Keep a regression decision from the worker running the run it was made in. */
     recordRegressionDecision(
       id: string,
@@ -4200,6 +4303,201 @@ export class Store extends Context.Service<
       return rows.length;
     }, Effect.mapError(storeError));
 
+    const recordTimeline = Effect.fn("Store.recordTimeline")(
+      function* (login: string, items: ReadonlyArray<Domain.TimelineItem>) {
+        yield* sql`
+          INSERT INTO timeline_state (id, login) VALUES (1, ${login})
+          ON CONFLICT (id) DO UPDATE SET login = excluded.login
+        `;
+
+        let added = 0;
+
+        for (const item of items) {
+          const rows = yield* sql`
+            INSERT INTO timeline_items ${sql.insert({
+              id: item.id,
+              kind: item.kind,
+              action: item.action,
+              repo: item.repo,
+              actor: item.actor,
+              at: item.at,
+              title: item.title,
+              url: item.url,
+              groupKey: item.subject?.key ?? item.id,
+              subject:
+                item.subject === null ? null : JSON.stringify(item.subject),
+            })}
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+          `;
+
+          added += rows.length;
+        }
+
+        // Each group takes the subject its newest item came with, so a pull
+        // request's title and state follow it wherever it was seen
+        const subjects = new Map(
+          items
+            .toSorted((a, b) => a.at - b.at)
+            .flatMap((item) =>
+              item.subject === null
+                ? []
+                : [[item.subject.key, JSON.stringify(item.subject)] as const],
+            ),
+        );
+
+        for (const [key, subject] of subjects)
+          yield* sql`
+            UPDATE timeline_items SET subject = ${subject}
+            WHERE group_key = ${key}
+          `;
+
+        return added;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const knownTimeline = Effect.fn("Store.knownTimeline")(function* (
+      ids: ReadonlyArray<string>,
+    ) {
+      if (ids.length === 0) return [];
+
+      const rows = yield* sql<{ id: string }>`
+        SELECT id FROM timeline_items WHERE ${sql.in("id", ids)}
+      `;
+
+      return rows.map((row) => row.id);
+    }, Effect.mapError(storeError));
+
+    const timeline = Effect.fn("Store.timeline")(function* (filter: {
+      readonly before?: string | undefined;
+      readonly kinds?: ReadonlyArray<Domain.TimelineKind> | undefined;
+      readonly repos?: ReadonlyArray<string> | undefined;
+      readonly who?: Domain.TimelineWho | undefined;
+      readonly limit: number;
+    }) {
+      const [state] = yield* sql<{ login: string }>`
+        SELECT login FROM timeline_state WHERE id = 1
+      `;
+
+      const login = state?.login ?? "";
+      const bot = sql`actor LIKE '%[bot]'`;
+
+      const who = (() => {
+        switch (filter.who) {
+          case "you":
+            return [sql`actor = ${login} COLLATE NOCASE`];
+          case "bots":
+            return [bot];
+          case "others":
+            return [
+              sql`(actor IS NULL OR (actor <> ${login} COLLATE NOCASE AND NOT ${bot}))`,
+            ];
+          case undefined:
+            return [];
+        }
+      })();
+
+      const conditions = [
+        ...(filter.kinds === undefined || filter.kinds.length === 0
+          ? []
+          : [sql.in("kind", filter.kinds)]),
+        ...(filter.repos === undefined || filter.repos.length === 0
+          ? []
+          : [sql.in("repo", filter.repos)]),
+        ...who,
+      ];
+
+      const where =
+        conditions.length === 0 ? sql`` : sql`WHERE ${sql.and(conditions)}`;
+
+      const cursor =
+        filter.before === undefined
+          ? undefined
+          : timelineCursor.read(filter.before);
+
+      const groups = yield* decodeTimelineGroups(
+        yield* sql`
+          SELECT group_key, MAX(at) AS last_at, COUNT(*) AS count
+          FROM timeline_items ${where}
+          GROUP BY group_key
+          ${
+            cursor === undefined
+              ? sql``
+              : sql`HAVING (MAX(at), group_key) < (${cursor.lastAt}, ${cursor.key})`
+          }
+          ORDER BY last_at DESC, group_key DESC
+          LIMIT ${filter.limit}
+        `,
+      );
+
+      const last = groups.at(-1);
+
+      if (last === undefined) return { groups: [], next: null };
+
+      // Each group's newest items only, however many it has
+      const rows = yield* decodeTimelineRows(
+        yield* sql`
+          SELECT id, kind, action, repo, actor, at, title, url, group_key, subject
+          FROM (
+            SELECT *, ROW_NUMBER() OVER (
+              PARTITION BY group_key ORDER BY at DESC, id DESC
+            ) AS place
+            FROM timeline_items
+            WHERE ${sql.and([
+              ...conditions,
+              sql.in(
+                "group_key",
+                groups.map((group) => group.groupKey),
+              ),
+            ])}
+          )
+          WHERE place <= ${itemsPerGroup}
+          ORDER BY at DESC, id DESC
+        `,
+      );
+
+      return {
+        groups: groups.map((group): Domain.TimelineGroup => {
+          const items = rows.filter((row) => row.groupKey === group.groupKey);
+
+          return {
+            key: group.groupKey,
+            subject: items[0]?.subject ?? null,
+            lastAt: group.lastAt,
+            items: items.map((row): Domain.TimelineItem => ({
+              id: row.id,
+              kind: row.kind,
+              action: row.action,
+              repo: row.repo,
+              actor: row.actor,
+              at: row.at,
+              title: row.title,
+              url: row.url,
+              subject: row.subject,
+            })),
+            more: group.count - items.length,
+          };
+        }),
+        next:
+          groups.length < filter.limit
+            ? null
+            : timelineCursor.make(last.lastAt, last.groupKey),
+      };
+    }, Effect.mapError(storeError));
+
+    const pruneTimeline = Effect.fn("Store.pruneTimeline")(function* (
+      before: number,
+    ) {
+      const rows = yield* sql`
+        DELETE FROM timeline_items WHERE at < ${before}
+        RETURNING id
+      `;
+
+      return rows.length;
+    }, Effect.mapError(storeError));
+
     const recordRegressionDecision = Effect.fn(
       "Store.recordRegressionDecision",
     )(function* (id: string, worker: string, decision: Api.RegressionDecision) {
@@ -4562,6 +4860,16 @@ export class Store extends Context.Service<
       forgetEvent,
       events,
       pruneEvents,
+      recordTimeline: announce(
+        touchesIf((added: number) => added > 0, "timeline"),
+        recordTimeline,
+      ),
+      knownTimeline,
+      timeline,
+      pruneTimeline: announce(
+        touchesIf((pruned: number) => pruned > 0, "timeline"),
+        pruneTimeline,
+      ),
       recordRegressionDecision,
       regressionDecisions,
       pruneRegressionDecisions,

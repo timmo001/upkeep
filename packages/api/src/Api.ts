@@ -60,6 +60,9 @@ import {
   SkillsSnapshot,
   StateChange,
   Status,
+  Timeline,
+  TimelineItem,
+  TimelineWho,
   TrackedRepo,
   WorkerAgents,
 } from "./Domain";
@@ -436,6 +439,18 @@ export const maxReleases = 1000;
 export const maxCommits = 500;
 
 /**
+ * The most Activity items one report carries: a run reads up to 100 events
+ * from each tracked repository, so it sends them in batches of this many.
+ */
+export const maxTimelineItems = 1000;
+
+/** The most Activity groups one page returns. */
+export const maxTimelineGroups = 100;
+
+/** How many days the Activity page keeps. */
+export const timelineDays = 90;
+
+/**
  * How many days of read entries the inbox shows by default, for the
  * dashboard and the summary job alike.
  */
@@ -685,6 +700,36 @@ export class ActivityGroup extends HttpApiGroup.make("activity")
       title: "Activity",
       description:
         "What happened lately: how runs ended, the commits they pushed and what needs a person",
+    }),
+  ) {}
+
+export class TimelineGroup extends HttpApiGroup.make("timeline")
+  .add(
+    /**
+     * The Activity page: issues and pull requests with their latest activity,
+     * and commits, pushes and releases on their own, by their latest activity,
+     * newest first. With `before`, a page's `next`, the groups after that
+     * page. `kinds` and `repos` (each comma-separated) and `who` narrow the
+     * groups and the items in them alike.
+     */
+    HttpApiEndpoint.get("get", "/", {
+      query: {
+        before: Schema.optional(Schema.String),
+        kinds: Schema.optional(Schema.String),
+        repos: Schema.optional(Schema.String),
+        who: Schema.optional(TimelineWho),
+        limit: Schema.optional(Schema.Int),
+      },
+      success: Timeline,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/timeline")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Timeline",
+      description:
+        "What happened on GitHub over the last 90 days, for the Activity page: everyone's work in the tracked repositories, yours anywhere, and others' on your issues and pull requests",
     }),
   ) {}
 
@@ -1130,6 +1175,30 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: Schema.Struct({ added: Schema.Int }),
     }),
     /**
+     * What happened on GitHub, for the Activity page, with the login the job
+     * read it as, which tells your activity from others'. An item already
+     * kept only has its issue or pull request brought up to date. `added`
+     * is how many were new.
+     */
+    HttpApiEndpoint.post("timeline", "/timeline", {
+      payload: Schema.Struct({
+        login: Schema.String,
+        items: Schema.Array(TimelineItem).pipe(
+          Schema.check(Schema.isMaxLength(maxTimelineItems)),
+        ),
+      }),
+      success: Schema.Struct({ added: Schema.Int }),
+    }),
+    /** Which of these Activity items are already kept. */
+    HttpApiEndpoint.post("timelineKnown", "/timeline/known", {
+      payload: Schema.Struct({
+        ids: Schema.Array(Schema.String).pipe(
+          Schema.check(Schema.isMaxLength(maxTimelineItems)),
+        ),
+      }),
+      success: Schema.Struct({ known: Schema.Array(Schema.String) }),
+    }),
+    /**
      * What the attention job found. The server keeps each item, records what
      * moved on the ones that changed, and drops the ones that went.
      */
@@ -1483,6 +1552,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(JobsGroup)
   .add(RunsGroup)
   .add(ActivityGroup)
+  .add(TimelineGroup)
   .add(StatusGroup)
   .add(InboxGroup)
   .add(AttentionGroup)

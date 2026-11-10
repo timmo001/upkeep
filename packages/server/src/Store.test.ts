@@ -585,6 +585,85 @@ test("runs page with a before cursor, skipping and repeating none", () =>
     }),
   ));
 
+const timelineItem = (
+  id: string,
+  at: number,
+  subject: Domain.TimelineSubject | null,
+  actor = "someone",
+): Domain.TimelineItem => ({
+  id,
+  kind: subject === null ? "release" : "comment",
+  action: "commented",
+  repo: "owner/repo",
+  actor,
+  at,
+  title: id,
+  url: `https://github.com/owner/repo/${id}`,
+  subject,
+});
+
+const timelineSubject = (
+  number: number,
+  state: Domain.TimelineSubject["state"] = "open",
+): Domain.TimelineSubject => ({
+  key: `owner/repo#${number}`,
+  kind: "pull_request",
+  number,
+  title: `Pull request ${number}`,
+  state,
+  author: "you",
+  url: `https://github.com/owner/repo/pull/${number}`,
+});
+
+test("Activity groups page by their latest item, each once, newest first", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const added = yield* store.recordTimeline("you", [
+        timelineItem("a", 1, timelineSubject(1)),
+        timelineItem("b", 5, timelineSubject(1)),
+        timelineItem("c", 4, timelineSubject(2)),
+        timelineItem("d", 3, null),
+        timelineItem("e", 2, timelineSubject(3), "you"),
+      ]);
+
+      // Seen again, with its pull request merged since
+      const again = yield* store.recordTimeline("you", [
+        timelineItem("a", 1, timelineSubject(1, "merged")),
+      ]);
+
+      const keys: string[] = [];
+      let before: string | undefined;
+
+      for (;;) {
+        const page = yield* store.timeline({ limit: 2, before });
+
+        keys.push(...page.groups.map((group) => group.key));
+
+        if (page.next === null) break;
+
+        before = page.next;
+      }
+
+      const [first] = (yield* store.timeline({ limit: 1 })).groups;
+      const yours = yield* store.timeline({ limit: 10, who: "you" });
+      const others = yield* store.timeline({ limit: 10, who: "others" });
+
+      expect([added, again]).toEqual([5, 0]);
+      expect(keys).toEqual([
+        "owner/repo#1",
+        "owner/repo#2",
+        "d",
+        "owner/repo#3",
+      ]);
+      expect(first?.items.map((item) => item.id)).toEqual(["b", "a"]);
+      expect(first?.subject?.state).toBe("merged");
+      expect(yours.groups.map((group) => group.key)).toEqual(["owner/repo#3"]);
+      expect(others.groups).toHaveLength(3);
+    }),
+  ));
+
 test("runs keep only the states asked for, before a cursor too", () =>
   run(
     Effect.gen(function* () {

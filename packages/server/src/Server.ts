@@ -77,6 +77,8 @@ const held = Effect.fnUntraced(function* <A, E>(
 
 const defaultRuns = 50;
 
+const defaultTimelineGroups = 50;
+
 const defaultLogLines = Api.maxLogLines;
 
 /** A requested count, between 1 and `max`. */
@@ -979,6 +981,32 @@ export const status = Effect.fn("status")(function* () {
   return { health, summary, needs, parked, workers, at: now };
 });
 
+const TimelineHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "timeline",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+    const isKind = Schema.is(Domain.TimelineKind);
+
+    return handlers.handleAll({
+      get: ({ query }) =>
+        store
+          .timeline({
+            before: query.before,
+            kinds: query.kinds?.split(",").filter(isKind),
+            repos: query.repos?.split(",").filter((repo) => repo !== ""),
+            who: query.who,
+            limit: bounded(
+              query.limit,
+              defaultTimelineGroups,
+              Api.maxTimelineGroups,
+            ),
+          })
+          .pipe(Effect.orDie),
+    });
+  }),
+);
+
 const StatusHandlers = HttpApiBuilder.group(
   Api.Api,
   "status",
@@ -1348,6 +1376,16 @@ const WorkHandlers = HttpApiBuilder.group(
 
         return { added };
       }),
+      timeline: ({ payload }) =>
+        store.recordTimeline(payload.login, payload.items).pipe(
+          Effect.map((added) => ({ added })),
+          Effect.orDie,
+        ),
+      timelineKnown: ({ payload }) =>
+        store.knownTimeline(payload.ids).pipe(
+          Effect.map((known) => ({ known })),
+          Effect.orDie,
+        ),
       releases: ({ payload }) =>
         queueReleases(payload.releases, "release").pipe(
           Effect.map((queued) => ({ queued })),
@@ -1798,6 +1836,7 @@ const apiRoutes = (
       JobsHandlers,
       RunsHandlers,
       ActivityHandlers,
+      TimelineHandlers,
       StatusHandlers,
       InboxHandlers,
       AttentionHandlers,
@@ -2270,6 +2309,13 @@ export const pruneRuns = Layer.effectDiscard(
 
       if (decisions > 0)
         yield* Effect.logInfo(`Pruned ${decisions} old regression decisions`);
+
+      const timeline = yield* store.pruneTimeline(
+        now - Duration.toMillis(Duration.days(Api.timelineDays)),
+      );
+
+      if (timeline > 0)
+        yield* Effect.logInfo(`Pruned ${timeline} old Activity items`);
     }).pipe(
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced(Duration.hours(1))),
