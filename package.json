@@ -16,8 +16,8 @@
   },
   "overrides": {
     "@timmo001/effect-herdr": {
-      "effect": "4.1.2",
-      "@effect/platform-node-shared": "4.1.2"
+      "effect": "4.1.3",
+      "@effect/platform-node-shared": "4.1.3"
     }
   },
   "trustedDependencies": [
