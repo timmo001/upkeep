@@ -231,9 +231,8 @@ A worker asks for work and the server holds the request for up to 30 seconds,
 answering as soon as a run is queued, so a queued run starts straight away. It
 sends a heartbeat every minute while a run goes, which the server holds too and
 ends early when the run is cancelled, and sends its log as it's written. When a
-worker is stopped mid-run,
-such as by a restart after an upgrade, or goes quiet for 10 minutes, the server
-puts its run back at the front of the queue. That happens once per run: the
+worker is stopped mid-run, or goes quiet for 10 minutes, the server puts its
+run back at the front of the queue. That happens once per run: the
 second time, the run fails as lost, so a run that brings its worker down can't
 loop. A run that ends while the server is restarting keeps trying to report
 how it ended for about a minute, so it isn't left running until it's lost. A
@@ -676,10 +675,12 @@ The Jobs table shows each worker's latest run of each one.
 `up-first-party` runs `dot up first-party`, which upgrades the packages from
 the signed first-party Arch repository through a root unit that the worker's
 user may start without a password. Each package's own install script restarts
-its user service, `upkeep-worker.service` among them, so a run that upgrades
-`upkeep-git` is cut off by its own worker's restart and goes back in the queue
-once, where it finds nothing left to do. A successful publish in that
-repository queues it on every worker straight away.
+its user service, except `upkeep-git`'s: it sends the worker a SIGHUP, and the
+worker drains. It takes no new runs, finishes the ones it has, this one among
+them, and exits with 75, which `upkeep-worker.service` restarts on the new
+binary. A stop or `systemctl --user restart` still cuts its runs off. A
+successful publish in that repository queues it on every worker straight
+away.
 
 A worker the server refuses as [older than itself](#workers) can't take that
 run, so it runs `dot up first-party` itself, at most every 15 minutes, until

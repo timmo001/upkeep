@@ -21,7 +21,10 @@ EOF
 
 post_upgrade() {
   _upkeep_user_systemctl_installing daemon-reload
-  _upkeep_user_systemctl_installing try-restart upkeep-worker.service
+  # SIGHUP asks the worker to finish its runs and restart on the new binary,
+  # rather than cutting them off as a restart would. Only the main process
+  # gets it, so the commands its runs started carry on.
+  _upkeep_user_systemctl_installing kill --kill-whom=main --signal=SIGHUP upkeep-worker.service
 }
 
 pre_remove() {

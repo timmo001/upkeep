@@ -5,7 +5,8 @@
  * the schedule. Nothing a run or the server does stops a lane, so a worker
  * keeps going through a failed job or a server restart. A run that fails while
  * GitHub's rate limit is spent runs again once it resets, and no lane takes
- * new work until then.
+ * new work until then. Asked to drain, such as after an upgrade, it finishes
+ * the runs it has and stops, rather than cutting them off.
  */
 import type { Gh } from "@timmo001/effect-gh";
 import { Api, Catalogue, Client, Domain } from "@upkeep/api";
@@ -17,6 +18,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  FiberSet,
   Option,
   Predicate,
   Record,
@@ -96,6 +98,12 @@ export interface WorkOptions {
     never,
     ChildProcessSpawner.ChildProcessSpawner
   >;
+  /**
+   * Completes when the worker should stop taking runs, such as once its
+   * package is upgraded: it finishes the runs it has, then `work` returns so
+   * it can start again on the new binary.
+   */
+  readonly drain?: Effect.Effect<void>;
 }
 
 /** The server stopped counting the run as this worker's, so it stops. */
@@ -321,6 +329,22 @@ export const work = Effect.fn("Worker.work")(function* (
   const status = yield* Status.make;
   const app = yield* GitHubApp.make;
 
+  // Once asked to drain, each lane stops taking runs after the one it has,
+  // and the worker ends when the runs it let go on beside the lanes are done
+  const draining = yield* Deferred.make<void>();
+  const beside = yield* FiberSet.make<void, never>();
+
+  if (options.drain !== undefined)
+    yield* options.drain.pipe(
+      Effect.andThen(
+        Effect.logInfo(
+          "Asked to drain: finishing the runs in hand, then stopping",
+        ),
+      ),
+      Effect.andThen(Deferred.succeed(draining, undefined)),
+      Effect.forkScoped,
+    );
+
   // When a run finds GitHub's rate limit spent, no lane takes new work until
   // it resets, since nearly every job reads GitHub.
   const heldUntil = yield* Ref.make(0);
@@ -474,7 +498,8 @@ export const work = Effect.fn("Worker.work")(function* (
             if (!frees) return running;
 
             // The run goes on beside the lane, which waits only until the run
-            // frees it or ends. It's the lane's own, so it stops with the worker.
+            // frees it or ends. It stops with the worker, and a drain waits
+            // for it.
             return Effect.gen(function* () {
               const freed = yield* Deferred.make<void>();
 
@@ -483,7 +508,7 @@ export const work = Effect.fn("Worker.work")(function* (
                   Lane.Release,
                   Deferred.succeed(freed, undefined).pipe(Effect.asVoid),
                 ),
-                Effect.forkChild,
+                FiberSet.run(beside),
               );
 
               yield* Effect.raceFirst(
@@ -508,7 +533,9 @@ export const work = Effect.fn("Worker.work")(function* (
       ),
     );
 
-    return Effect.forever(next);
+    return Effect.gen(function* () {
+      while (!(yield* Deferred.isDone(draining))) yield* next;
+    });
   };
 
   // A job only waits behind the jobs in its own lane; one the catalogue
@@ -538,21 +565,24 @@ export const work = Effect.fn("Worker.work")(function* (
     Effect.repeat(Schedule.spaced("1 minute")),
   );
 
-  return yield* Effect.all(
-    [
-      ...lanes.flatMap(([name, laneJobs]) =>
-        Array.from({ length: copies(name) }, () => lane(name, laneJobs)),
-      ),
-      notify,
-      Theme.follow,
-      Prompts.follow,
-    ],
-    {
+  const working = Effect.all(
+    lanes.flatMap(([name, laneJobs]) =>
+      Array.from({ length: copies(name) }, () => lane(name, laneJobs)),
+    ),
+    { concurrency: "unbounded", discard: true },
+  ).pipe(
+    Effect.andThen(FiberSet.awaitEmpty(beside)),
+    Effect.andThen(Effect.logInfo("Drained: every run has finished")),
+  );
+
+  return yield* Effect.raceFirst(
+    working,
+    Effect.all([notify, Theme.follow, Prompts.follow], {
       concurrency: "unbounded",
       discard: true,
-    },
+    }),
   );
-});
+}, Effect.scoped);
 
 /**
  * Run a job on this machine, printing its log, without a worker. `repos`

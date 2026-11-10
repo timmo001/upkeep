@@ -13,6 +13,11 @@ EnvironmentFile=%h/.config/upkeep/worker.env
 ExecStart=/usr/bin/upkeep worker
 Restart=on-failure
 RestartSec=30
+# After an upgrade the worker drains, finishing its runs, then exits with 75
+# to start again on the new binary. A worker from before draining dies of the
+# SIGHUP instead, which systemd counts as clean, so it's restarted too.
+SuccessExitStatus=75
+RestartForceExitStatus=75 SIGHUP
 
 [Install]
 WantedBy=default.target

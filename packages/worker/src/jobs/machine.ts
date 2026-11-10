@@ -102,7 +102,8 @@ const described = (result: StageResult) =>
 /**
  * Upgrade this machine's first-party packages outside a run, for a worker
  * the server refuses as older than itself, which no run can reach. The
- * upkeep package's own upgrade then restarts the worker on the new binary.
+ * upkeep package's own upgrade then has the worker drain and restart on the
+ * new binary.
  * A machine without `dot`, or without the upgrade set up, is left as it is.
  */
 export const selfUpdate = Effect.gen(function* () {

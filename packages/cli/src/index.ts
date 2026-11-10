@@ -200,9 +200,38 @@ const runLine = (run: Domain.Run) =>
     .join("  ")
     .trimEnd();
 
+/**
+ * SIGHUP asks the worker to drain, as the package's upgrade does, so it
+ * finishes its runs before restarting on the new binary. SIGTERM still stops
+ * it straight away. The listener stays while it drains, so a second upgrade
+ * meanwhile doesn't kill it as an unhandled SIGHUP would.
+ */
+const hangup = Effect.callback<void>((resume) => {
+  const onHangup = () => resume(Effect.void);
+
+  process.on("SIGHUP", onHangup);
+
+  return Effect.sync(() => {
+    process.off("SIGHUP", onHangup);
+  });
+});
+
+/**
+ * What a drained worker exits with, which upkeep-worker.service counts as
+ * clean and always restarts on, so it comes back on the new binary.
+ */
+const drainedExitCode = 75;
+
+let drained = false;
+
 const worker = Command.make("worker", { server }, (input) =>
-  Worker.work(handlers, { onOutdated: selfUpdate }).pipe(
+  Worker.work(handlers, { onOutdated: selfUpdate, drain: hangup }).pipe(
     Effect.provide(workerClient(input.server)),
+    Effect.andThen(
+      Effect.sync(() => {
+        drained = true;
+      }),
+    ),
   ),
 ).pipe(
   Command.withDescription(
@@ -1124,8 +1153,12 @@ upkeep.pipe(
   ),
   BunRuntime.runMain({
     teardown: (exit, onExit) =>
-      terminated && Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
-        ? onExit(0)
-        : Runtime.defaultTeardown(exit, onExit),
+      drained && Exit.isSuccess(exit)
+        ? onExit(drainedExitCode)
+        : terminated &&
+            Exit.isFailure(exit) &&
+            Cause.hasInterruptsOnly(exit.cause)
+          ? onExit(0)
+          : Runtime.defaultTeardown(exit, onExit),
   }),
 );
