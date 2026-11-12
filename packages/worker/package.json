@@ -19,7 +19,7 @@
     "@upkeep/api": "workspace:*",
     "effect": "4.1.4",
     "jsonata": "2.2.2",
-    "minimatch": "11.0.6",
+    "minimatch": "11.0.7",
     "semver": "7.8.6"
   },
   "devDependencies": {
