@@ -2338,6 +2338,14 @@ export interface ServeOptions {
 }
 
 /**
+ * How long stopping waits for requests in flight. A worker's claim is nearly
+ * always held open, and Bun's default of 20 seconds outlasts the 10 the
+ * Supervisor gives an app to stop before it kills it. A held claim that's cut
+ * off is retried by its worker.
+ */
+const gracefulShutdownTimeout = Duration.seconds(3);
+
+/**
  * Serve the API and the dashboard over plain HTTP, with the scheduler and the
  * lost-run, unpark, waiting heal and prune sweeps. For HTTPS, put it behind a
  * reverse proxy, which handles TLS.
@@ -2346,7 +2354,11 @@ export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
     HttpRouter.serve(Layer.merge(routes, dashboard({ ingress: false }))).pipe(
       Layer.provide(
-        BunHttpServer.layer({ hostname: options.hostname, port: options.port }),
+        BunHttpServer.layer({
+          hostname: options.hostname,
+          port: options.port,
+          gracefulShutdownTimeout,
+        }),
       ),
     ),
     Option.match(options.ingressPort, {
@@ -2360,7 +2372,11 @@ export const layer = (options: ServeOptions) =>
           { middleware: ingressGuard(options.ingressFrom) },
         ).pipe(
           Layer.provide(
-            BunHttpServer.layer({ hostname: options.hostname, port }),
+            BunHttpServer.layer({
+              hostname: options.hostname,
+              port,
+              gracefulShutdownTimeout,
+            }),
           ),
         ),
     }),
