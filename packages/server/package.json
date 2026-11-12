@@ -13,7 +13,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.3",
+    "@effect/platform-bun": "4.1.4",
     "@effect/sql-sqlite-bun": "4.1.4",
     "@timmo001/effect-triage": "0.22.0",
     "@upkeep/api": "workspace:*",
