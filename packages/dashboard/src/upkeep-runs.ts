@@ -8,13 +8,16 @@
  * filters are kept with the table's own view state, in groundwork's shared
  * store. Older runs load a page at a time as the table scrolls to its end.
  */
+import {
+  type DatePreset,
+  GwDatePicker,
+} from "@timmo001/groundwork-ui/gw-date-picker.ts";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
 import type {
   TableColumn,
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
-import { GwInput } from "@timmo001/groundwork-ui/gw-input.ts";
 import { isText, keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
@@ -24,7 +27,6 @@ import { always, AtomController, registry } from "./AtomController.ts";
 import {
   phBookBookmark,
   phBriefcase,
-  phCalendarBlank,
   phCheckCircle,
   phClockCounterClockwise,
   phFunnelSimple,
@@ -58,8 +60,8 @@ import {
   runsPage,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-date-picker.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
-import "@timmo001/groundwork-ui/define/gw-input.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
@@ -197,6 +199,12 @@ const dayLabel = (day: string) => {
 /** Whether text is a date the filter can use, `YYYY-MM-DD`. */
 const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
+/** The days under the date filter's calendar, as there are no runs tomorrow. */
+const datePresets: ReadonlyArray<DatePreset> = [
+  { label: "Yesterday", days: -1 },
+  { label: "Today", days: 0 },
+];
+
 export class UpkeepRuns extends LitElement {
   static override properties = {
     job: {},
@@ -219,11 +227,6 @@ export class UpkeepRuns extends LitElement {
         display: grid;
         gap: var(--gw-space-2);
         padding-inline: var(--gw-filter-inset);
-      }
-
-      .date .quick {
-        display: flex;
-        gap: var(--gw-space-2);
       }
     `,
   ];
@@ -438,36 +441,26 @@ export class UpkeepRuns extends LitElement {
     this.requestUpdate();
   }
 
-  /** The date filter: a date to pick, with today and yesterday a click away. */
+  /**
+   * The date filter: a calendar to pick a day from, with yesterday and today
+   * a click away under it. Its chip takes it off.
+   */
   #dateFilter() {
-    const day = this.#day;
-
-    const quick = (label: string, value: string) =>
-      html`<gw-button
-        size="small"
-        appearance=${day === value ? "accent" : "outlined"}
-        variant=${day === value ? "brand" : "neutral"}
-        @click=${() => this.#setDay(day === value ? "" : value)}
-        >${label}</gw-button
-      >`;
-
     return html`<div class="date">
-      <gw-input
-        type="date"
+      <gw-date-picker
         label="Date"
-        icon=${phCalendarBlank}
+        placeholder="Every day"
         max=${today()}
-        .value=${day}
-        @input=${(event: Event) =>
+        presets
+        .presetOptions=${datePresets}
+        .value=${this.#day}
+        @change=${(event: Event) =>
           this.#setDay(
-            event.currentTarget instanceof GwInput
+            event.currentTarget instanceof GwDatePicker
               ? event.currentTarget.value
               : "",
           )}
-      ></gw-input>
-      <div class="quick">
-        ${quick("Today", today())} ${quick("Yesterday", yesterday())}
-      </div>
+      ></gw-date-picker>
     </div>`;
   }
 

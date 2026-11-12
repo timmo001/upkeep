@@ -20,7 +20,6 @@ const names = [
   "bell",
   "book-bookmark",
   "briefcase",
-  "calendar-blank",
   "caret-down",
   "caret-up",
   "chat-circle",
