@@ -4,8 +4,9 @@
  * your `names` list gives it, or else from one clone shared in Upkeep's
  * cache, and lives in Herdr's worktree folder as
  * `~/.herdr/worktrees/<checkout>/upkeep-<job>-<id>`, beside your own, so one
- * opened later is grouped with the repository. Each is detached at the tip of
- * the branch, which your checkout may have checked out itself.
+ * opened later is grouped with the repository. Where two checkouts share a
+ * folder name, each goes by its repository's name instead. Each is detached
+ * at the tip of the branch, which your checkout may have checked out itself.
  *
  * A run's worktrees go when it ends. An agent's are kept while it may still
  * need them, such as a heal left for you or a held skill change, and go once
@@ -103,14 +104,29 @@ const baseOf = Effect.fnUntraced(function* (repo: string, listed: Listed) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const wanted = repo.toLowerCase();
+  const name = repo.split("/").at(-1) ?? repo;
   const own = listed.find((entry) => entry.github?.toLowerCase() === wanted);
 
   if (
     own?.path !== undefined &&
     (yield* fs.exists(path.join(own.path, ".git"))) &&
     (yield* cloneOf(own.path, repo))
-  )
-    return { directory: own.path, folder: path.basename(own.path) };
+  ) {
+    const folder = path.basename(own.path);
+
+    // Two checkouts in folders of the same name, such as ~/repos/notes and
+    // ~/Documents/notes, would share a run's worktree, and one repository's
+    // updates would land in the other
+    const shared = listed.some(
+      (entry) =>
+        entry.github != null &&
+        entry.github.toLowerCase() !== wanted &&
+        entry.path !== undefined &&
+        path.basename(entry.path) === folder,
+    );
+
+    return { directory: own.path, folder: shared ? name : folder };
+  }
 
   const directory = path.join(yield* clones, `${repo}.git`);
 
@@ -124,7 +140,7 @@ const baseOf = Effect.fnUntraced(function* (repo: string, listed: Listed) {
     });
   }
 
-  return { directory, folder: repo.split("/").at(-1) ?? repo };
+  return { directory, folder: name };
 });
 
 /**
