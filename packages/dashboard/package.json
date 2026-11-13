@@ -8,7 +8,7 @@
     "./bundle": "./bundle.ts"
   },
   "scripts": {
-    "build": "rm -rf dist && bun build index.html --outdir dist --production && bun scripts/inline-boot.ts",
+    "build": "rm -rf ${DASHBOARD_OUT:-dist} && bun build index.html --outdir ${DASHBOARD_OUT:-dist} --production && bun scripts/inline-boot.ts",
     "icons": "bun scripts/icons.ts",
     "test": "bun test --pass-with-no-tests",
     "lint": "oxlint .",

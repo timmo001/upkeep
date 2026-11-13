@@ -5,11 +5,11 @@
  * runs once the page has painted.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { themeBootScript } from "@timmo001/groundwork-tokens/page";
 import { themeOptions } from "../src/theme-options.ts";
 
-const page = fileURLToPath(new URL("../dist/index.html", import.meta.url));
+const page = join(resolve(process.env.DASHBOARD_OUT ?? "dist"), "index.html");
 const html = readFileSync(page, "utf8");
 
 if (!html.includes("</title>")) {
