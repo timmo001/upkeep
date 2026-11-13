@@ -6,19 +6,21 @@
  * a workflow passes again, its unread failure notifications are dismissed.
  * The run fails at the end, naming the repositories still red. One whose CI
  * couldn't be read, even after retries, is named but not counted red, as is
- * one whose failed runs all ran out of GitHub's rate limit, which needs them
- * run again rather than a heal. The runs read add to {@link CiTimings}.
+ * one whose failed runs all ran out of GitHub's rate limit: those are run
+ * again once, with no heal, and left for you only when they run out again.
+ * The runs read add to {@link CiTimings}.
  * Repository details and workflow lists are kept between runs and asked for
  * conditionally, so unchanged ones cost no rate limit. It runs as the GitHub
  * App, apart from your notifications, which only your login can read.
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Effect, Schedule, Schema } from "effect";
+import { Effect, Option, Schedule, Schema } from "effect";
 import * as CiTimings from "../CiTimings";
 import { pretty, reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import * as Kept from "../Kept";
+import * as RateLimits from "../RateLimits";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -251,6 +253,65 @@ const readBranch = Effect.fnUntraced(function* (repo: string, kept: Kept.Kept) {
 });
 
 /**
+ * Run the failed jobs of runs that ran out of GitHub's rate limit again, once
+ * each. The limit they ran out of is usually your login's, which workflows
+ * that publish with a personal token use, so while that's still down to its
+ * reserve they're left for a later ci run. A run that already ran again and
+ * failed the same way is left for you.
+ */
+const runAgain = Effect.fnUntraced(function* (
+  repo: string,
+  failed: ReadonlyArray<Workflow.Run>,
+) {
+  const low = yield* GitHubApp.withMachineLogin(RateLimits.low());
+
+  if (Option.isSome(low)) {
+    yield* RunLog.warn(
+      `${repo}: it failed on GitHub's rate limit, which is still low until ${RateLimits.at(low.value.reset)}, so a later ci run runs it again`,
+    );
+
+    return "rerun" as const;
+  }
+
+  let again = true;
+
+  for (const item of failed) {
+    const workflow = item.workflowName ?? item.name;
+
+    if (item.attempt > 1) {
+      yield* RunLog.warn(
+        `${repo}: ${workflow} failed on GitHub's rate limit again after running again, so it's left for you`,
+      );
+      again = false;
+
+      continue;
+    }
+
+    const ran = yield* Workflow.rerun({
+      repo,
+      runId: item.databaseId,
+      failedOnly: true,
+    }).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        RunLog.warn(
+          `${repo}: couldn't run ${workflow} again: ${reason(cause)}`,
+        ).pipe(Effect.as(false)),
+      ),
+    );
+
+    if (ran)
+      yield* RunLog.info(
+        `${repo}: ${workflow} failed on GitHub's rate limit, so its failed jobs are running again ${item.url}`,
+      );
+
+    again &&= ran;
+  }
+
+  return again ? ("rerun" as const) : ("limited" as const);
+});
+
+/**
  * Read one repository's default branch, checking it here when it's red. A
  * read that keeps failing says nothing about its CI, so the repository is
  * left out rather than counted red, which would queue a heal for it.
@@ -295,13 +356,8 @@ const ciRepository = Effect.fnUntraced(function* (
   }
 
   // A run that failed on a spent rate limit needs running again, not fixing
-  if (logs.every(({ log }) => rateLimited.test(log))) {
-    yield* RunLog.warn(
-      `${repo}: it failed on GitHub's rate limit, so it needs running again once the limit resets rather than a fix`,
-    );
-
-    return "limited" as const;
-  }
+  if (logs.every(({ log }) => rateLimited.test(log)))
+    return yield* runAgain(repo, failed);
 
   yield* checkHere(repo, branch, context.worktrees, context.settings);
 
@@ -330,6 +386,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* RunLog.info(`Reading CI on ${repos.length} repositories`);
 
   const failed: Array<string> = [];
+  const rerun: Array<string> = [];
   const limited: Array<string> = [];
   const unread: Array<string> = [];
 
@@ -346,6 +403,8 @@ export const ci = Effect.fnUntraced(function* () {
           Effect.sync(() => {
             if (state === "red") failed.push(repo);
 
+            if (state === "rerun") rerun.push(repo);
+
             if (state === "limited") limited.push(repo);
 
             if (state === "unread") unread.push(repo);
@@ -356,13 +415,18 @@ export const ci = Effect.fnUntraced(function* () {
   );
 
   const read = repos.length - unread.length;
-  const green = read - failed.length - limited.length;
+  const green = read - failed.length - rerun.length - limited.length;
 
   const left = [
+    ...(rerun.length === 0
+      ? []
+      : [
+          `running again after GitHub's rate limit ran out: ${listed(rerun.toSorted())}`,
+        ]),
     ...(limited.length === 0
       ? []
       : [
-          `failed on GitHub's rate limit, to run again: ${listed(limited.toSorted())}`,
+          `ran out of GitHub's rate limit again after running again: ${listed(limited.toSorted())}`,
         ]),
     ...(unread.length === 0
       ? []
@@ -372,7 +436,7 @@ export const ci = Effect.fnUntraced(function* () {
     .join("");
 
   yield* summary(
-    failed.length === 0 && limited.length === 0
+    green === read
       ? `All ${read} repositories are green${left}`
       : failed.length === 0
         ? `${green} of ${read} repositories are green${left}`

@@ -1122,8 +1122,10 @@ run fails at the end, naming the red repositories, and a heal for each one
 hands both results to an agent to fix the cause, push and watch CI.
 
 A repository whose failed runs all ran out of GitHub's rate limit isn't
-counted red, since there's nothing to fix: the run names it to run again once
-the limit resets, and asks for you rather than queuing a heal.
+counted red, since there's nothing to fix. Once your login's limit is back
+above its reserve, the job runs their failed jobs again, once each, and queues
+no heal. A run that runs out again after that is named in the summary and
+asks for you.
 
 The job runs as the [GitHub App](/events#jobs-as-the-app), apart from your
 notifications.
