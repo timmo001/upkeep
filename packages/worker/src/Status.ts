@@ -5,6 +5,7 @@
  * `summary` and `updated`, the shape dot reads from a service's status file.
  */
 import { Clock, Config, Effect, FileSystem, Path, Semaphore } from "effect";
+import * as RateLimits from "./RateLimits";
 
 export interface State {
   /** The jobs running now: one per lane, and the runs that freed theirs. */
@@ -20,6 +21,11 @@ export interface State {
   readonly missing: ReadonlyArray<string>;
   /** Whether it's the worker's quiet hours, when it takes no new runs. */
   readonly quiet: boolean;
+  /**
+   * When GitHub's rate limit resets, while the worker takes no new runs for
+   * it, in epoch milliseconds.
+   */
+  readonly limited: number | null;
 }
 
 export const initial: State = {
@@ -30,6 +36,7 @@ export const initial: State = {
   asking: 0,
   missing: [],
   quiet: false,
+  limited: null,
 };
 
 /** The status a monitor reads: its health and one line saying why. */
@@ -40,7 +47,9 @@ export const report = (state: State) => {
         ? `Running ${state.running.join(", ")}`
         : state.quiet
           ? "Quiet hours"
-          : "Waiting for runs"
+          : state.limited !== null
+            ? `Paused for GitHub's rate limit until ${RateLimits.at(state.limited)}`
+            : "Waiting for runs"
       : "Can't reach the server",
     ...(state.last === null
       ? []

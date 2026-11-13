@@ -3,11 +3,12 @@
  * one while sending heartbeats and its log, and reports how it ended. Jobs
  * run in lanes, one run per lane at a time, so a long heal doesn't hold up
  * the schedule. Nothing a run or the server does stops a lane, so a worker
- * keeps going through a failed job or a server restart. A run that fails while
- * GitHub's rate limit is spent runs again once it resets, and no lane takes
- * new work until then. Asked to drain, such as after an upgrade, it finishes
- * the runs it has and stops, rather than cutting them off, unless they take
- * longer than the drain's limit.
+ * keeps going through a failed job or a server restart. No lane takes new
+ * work while the machine login's GitHub rate limit is down to its reserve,
+ * and a run that fails while a limit is spent runs again once it resets, with
+ * no new work taken until then. Asked to drain, such as after an upgrade, it
+ * finishes the runs it has and stops, rather than cutting them off, unless
+ * they take longer than the drain's limit.
  */
 import type { Gh } from "@timmo001/effect-gh";
 import { Api, Catalogue, Client, Domain } from "@upkeep/api";
@@ -359,17 +360,49 @@ export const work = Effect.fn("Worker.work")(function* (
   const hold = (until: number) =>
     Ref.update(heldUntil, (current) => Math.max(current, until));
 
-  const holdOff = Effect.gen(function* () {
-    const until = yield* Ref.get(heldUntil);
-    const now = yield* Clock.currentTimeMillis;
+  // Before a claim, the machine login's limits are read, at most every 30
+  // seconds for every lane together. While one is down to its reserve, no lane
+  // but the command lane takes new work until it resets, so the account's
+  // other users, such as publish workflows, still have the rest. What the
+  // dashboard asks for goes ahead, as in the quiet hours.
+  const budget = yield* Effect.cachedWithTTL(RateLimits.low(), "30 seconds");
+  const pausedUntil = yield* Ref.make(0);
 
-    if (until <= now) return;
+  const holdOff = (command: boolean) =>
+    Effect.gen(function* () {
+      if (!command) {
+        const low = yield* budget;
 
-    yield* Effect.logInfo(
-      `Holding off new runs until GitHub's rate limit resets at ${RateLimits.at(until)}`,
-    );
-    yield* Effect.sleep(RateLimits.waitUntil(until, now));
-  });
+        if (Option.isSome(low)) {
+          const { resource, remaining, limit, reset } = low.value;
+
+          const was = yield* Ref.getAndUpdate(pausedUntil, (current) =>
+            Math.max(current, reset),
+          );
+
+          if (was < reset)
+            yield* Effect.logWarning(
+              `GitHub's ${resource === "core" ? "REST" : "GraphQL"} rate limit is down to ${remaining} of ${limit}, so new runs wait for it to reset at ${RateLimits.at(reset)}`,
+            );
+        }
+      }
+
+      const until = Math.max(
+        yield* Ref.get(heldUntil),
+        command ? 0 : yield* Ref.get(pausedUntil),
+      );
+
+      const now = yield* Clock.currentTimeMillis;
+
+      if (until <= now) return;
+
+      yield* status.update({ limited: until });
+      yield* Effect.logInfo(
+        `Holding off new runs until GitHub's rate limit resets at ${RateLimits.at(until)}`,
+      );
+      yield* Effect.sleep(RateLimits.waitUntil(until, now));
+      yield* status.update({ limited: null });
+    });
 
   // Every lane hears it's outdated at once, so only the first in each window
   // catches up
@@ -454,7 +487,7 @@ export const work = Effect.fn("Worker.work")(function* (
     const frees = command || name === "agent";
 
     const next = Effect.gen(function* () {
-      yield* holdOff;
+      yield* holdOff(command);
 
       const setup = command ? {} : yield* agents;
       const resting = command ? false : yield* quiet;
