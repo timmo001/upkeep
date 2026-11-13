@@ -13,12 +13,14 @@
  * work on their worktrees is limited to four at a time, so a slow CI run
  * doesn't hold up the next push.
  */
-import { Api, Repository, Search, Workflow } from "@timmo001/effect-gh";
+import { Api, Repository, Search } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import {
   Cache,
+  Clock,
   Config,
   Data,
+  Duration,
   Effect,
   FileSystem,
   Match,
@@ -30,6 +32,7 @@ import {
 } from "effect";
 import { HttpClient } from "effect/http";
 import { run } from "../Command";
+import * as CiTimings from "../CiTimings";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import * as RateLimits from "../RateLimits";
@@ -129,9 +132,10 @@ class CiFailed extends Schema.TaggedError<CiFailed>()("CiFailed", {
 
 class CiTimedOut extends Schema.TaggedError<CiTimedOut>()("CiTimedOut", {
   sha: Schema.String,
+  after: Schema.String,
 }) {
   override get message() {
-    return `CI on ${this.sha.slice(0, 7)} was still going after 30 minutes`;
+    return `CI on ${this.sha.slice(0, 7)} was still going after ${this.after}`;
   }
 }
 
@@ -729,7 +733,9 @@ const movedOn = Effect.fnUntraced(function* (
 
 /**
  * Wait for the CI runs on a pushed commit to finish, failing when one does.
- * Returns how many ran; none have started after two minutes means none.
+ * Returns how many ran; none have started after two minutes means none. The
+ * first look comes when the repository's CI is usually nearly done, and the
+ * looks after it at a pace that fits it, from {@link CiTimings}.
  *
  * A workflow that cancels runs in progress cancels this commit's when another
  * push lands on the branch straight after, so when only cancelled runs failed
@@ -740,24 +746,60 @@ export const watch = Effect.fnUntraced(function* (
   repo: string,
   commit: string,
 ) {
+  const { first, every, within } = CiTimings.pace(
+    yield* CiTimings.typical(repo),
+  );
+
+  const started = yield* Clock.currentTimeMillis;
+  const deadline = started + Duration.toMillis(within);
   let sha = commit;
-  let since = 0;
+  let since = started;
+  let wait = first;
 
-  for (let poll = 0; poll < 60; poll++) {
-    yield* Effect.sleep("30 seconds");
+  let previous:
+    | {
+        readonly runs: ReadonlyArray<CiTimings.ApiRun>;
+        readonly validators: Api.Validators;
+      }
+    | undefined;
 
-    const runs = yield* RateLimits.waitOut(
-      Workflow.list({ repo, commit: sha, limit: 50 }),
+  while ((yield* Clock.currentTimeMillis) < deadline) {
+    yield* Effect.sleep(wait);
+    wait = every;
+
+    // Sent with the last look's validators, so a look that finds nothing
+    // changed costs no rate limit
+    const response = yield* RateLimits.waitOut(
+      Api.conditional(
+        {
+          endpoint: `repos/${repo}/actions/runs`,
+          query: { head_sha: sha, per_page: 50 },
+        },
+        CiTimings.ApiRuns,
+        previous?.validators,
+      ),
       `${repo}: watching CI`,
     );
 
+    previous = Api.Conditional.$match(response, {
+      Modified: ({ value, validators }) => ({
+        runs: value.workflow_runs,
+        validators,
+      }),
+      NotModified: () => previous ?? { runs: [], validators: {} },
+    });
+
+    const runs = previous.runs.map(CiTimings.toRun);
+
     if (runs.length === 0) {
-      if (poll - since >= 3) return 0;
+      if ((yield* Clock.currentTimeMillis) - since >= 120_000) return 0;
 
       continue;
     }
 
     if (runs.some((item) => item.status !== "completed")) continue;
+
+    yield* CiTimings.record(repo, previous.runs);
 
     const failed = runs.filter((item) => !passed.has(item.conclusion ?? ""));
     const branch = failed[0]?.headBranch ?? null;
@@ -777,7 +819,8 @@ export const watch = Effect.fnUntraced(function* (
       );
 
       sha = newer;
-      since = poll + 1;
+      since = yield* Clock.currentTimeMillis;
+      previous = undefined;
 
       continue;
     }
@@ -794,7 +837,7 @@ export const watch = Effect.fnUntraced(function* (
     return runs.length;
   }
 
-  return yield* new CiTimedOut({ sha });
+  return yield* new CiTimedOut({ sha, after: Duration.format(within) });
 });
 
 /**

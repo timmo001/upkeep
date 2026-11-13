@@ -13,6 +13,7 @@ import { Api } from "@timmo001/effect-gh";
 import { Domain } from "@upkeep/api";
 import { Clock, Effect, Option, Path, Schema } from "effect";
 import { reason } from "../Failure";
+import * as CiTimings from "../CiTimings";
 import * as Lane from "../Lane";
 import * as Regression from "../Regression";
 import { Reporter } from "../Reporter";
@@ -72,6 +73,7 @@ const prompt = (
   earlier: ReadonlyArray<Domain.Run>,
   checkouts: ReadonlyArray<Checkout>,
   minutes: number,
+  watching: string,
 ) => {
   const several = checkouts.length > 1;
   const repo = several ? "each repository" : (checkouts[0]?.repo ?? "");
@@ -173,6 +175,7 @@ const prompt = (
         ]
       : []),
     ...reach,
+    watching,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
     `You have ${minutes} minutes. End with a short summary of what you found and did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
@@ -199,7 +202,11 @@ export const across = Effect.fnUntraced(function* (
   repos: ReadonlyArray<string>,
   agent: Settings.Agent,
   title: string,
-  ask: (checkouts: ReadonlyArray<Checkout>, minutes: number) => string,
+  ask: (
+    checkouts: ReadonlyArray<Checkout>,
+    minutes: number,
+    watching: string,
+  ) => string,
   record: Recorder,
 ) {
   const path = yield* Path.Path;
@@ -283,7 +290,11 @@ export const across = Effect.fnUntraced(function* (
         session,
         "--title",
         `${title} ${name}`,
-        ask(checkouts, minutes),
+        ask(
+          checkouts,
+          minutes,
+          yield* CiTimings.advice(checkouts.map(({ repo }) => repo)),
+        ),
       ],
       options,
     ).pipe(
@@ -449,7 +460,7 @@ export const fix = (
     Domain.targetRepos(heal.target),
     agent,
     failed.job,
-    (checkouts, minutes) =>
+    (checkouts, minutes, watching) =>
       prompt(
         heal,
         failed,
@@ -458,6 +469,7 @@ export const fix = (
         earlier,
         checkouts,
         minutes,
+        watching,
       ),
     record,
   );

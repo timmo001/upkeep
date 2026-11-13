@@ -553,6 +553,8 @@ const releaseBrief = (
     "",
     "After publishing, find and watch every workflow the release commit, tag and published release started, including downstream packaging and deployment jobs, through to the end, and report their results with links. Report missing runs, failed or cancelled jobs and affected artefacts; don't call the release a success while required workflows are unresolved.",
     "",
+    "Pace that watching to save GitHub's rate limit, which is shared with everything else on the account: use `gh run watch <run> --interval 60` or longer, or look with `gh run list` at most once a minute, never polling every few seconds.",
+    "",
     "Before reporting completion, check the published tag resolves to the release commit you pushed, the release title and notes match the approved preview, and every expected release asset is there. Check the package registries actually have the released version. For publishing across repositories, check the receiving workflow and its published result, not only the dispatch. Include release, asset, package and workflow links in the final summary, and say what you couldn't verify.",
     "",
     "If workflows or the published result show problems, inspect the failing jobs, logs or artefacts, explain the cause and propose a fix forward with a follow-up release where needed: the next dated version for CalVer, or a patch for SemVer. Keep published tags and release history. Ask whether to go ahead with the repair, adjust it or stop, and wait for the answer. Give any follow-up release the same single preview and approval before committing, pushing or publishing it, then watch its workflows too.",

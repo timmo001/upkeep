@@ -19,6 +19,7 @@ const prompt = (
   change: Change,
   checkouts: ReadonlyArray<Checkout>,
   minutes: number,
+  watching: string,
 ) => {
   const several = checkouts.length > 1;
 
@@ -42,6 +43,7 @@ const prompt = (
           `Make it in this checkout of ${checkouts[0]?.repo ?? ""}, run its checks and push it to the default branch once they pass.`,
         ]),
     "Never open a pull request. Anything you aren't sure of is for a person: stop and say what you found and what you'd do.",
+    watching,
     `You have ${minutes} minutes. End with a short summary of what you did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: done\`, \`Outcome: nothing to do\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
 };
@@ -71,7 +73,8 @@ export const change = Effect.fnUntraced(function* (
     command.repos,
     agent,
     "change",
-    (checkouts, minutes) => prompt(command, checkouts, minutes),
+    (checkouts, minutes, watching) =>
+      prompt(command, checkouts, minutes, watching),
     () => Effect.void,
   );
 
