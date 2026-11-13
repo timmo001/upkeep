@@ -1,7 +1,11 @@
 /**
  * `upkeep-app`: the dashboard's frame, groundwork's app bar with the brand,
- * the nav, the theme picker and sign out, and the page the route picks.
+ * the nav, the theme picker and sign out, and the page the route picks. In
+ * the Home Assistant sidebar it takes the whole screen, with Home Assistant's
+ * sidebar a click away from the bar's menu.
  */
+import "@timmo001/groundwork-ui/define/gw-app-bar.ts";
+import { GwAppBar } from "@timmo001/groundwork-ui/gw-app-bar.ts";
 import "@timmo001/groundwork-ui/define/gw-popover.ts";
 import { GwPopover } from "@timmo001/groundwork-ui/gw-popover.ts";
 import "@timmo001/groundwork-ui/define/gw-theme-picker.ts";
@@ -12,13 +16,14 @@ import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import logo from "../favicon.svg";
 import { AtomController, registry } from "./AtomController.ts";
-import { phSignOut } from "./icons.ts";
+import { phSidebar, phSignOut } from "./icons.ts";
 import { bindTheme, offerDesktopTheme } from "./theme.ts";
 import { impactTone, shared } from "./ui.ts";
 import {
   activityHref,
   attentionHref,
   desktopTheme,
+  homeAssistantKiosk,
   homeHref,
   inbox,
   jobsHref,
@@ -31,9 +36,9 @@ import {
   serverVersion,
   skillsHref,
   skillsPage,
+  toggleHomeAssistantSidebar,
   token,
 } from "./upkeep.ts";
-import "@timmo001/groundwork-ui/define/gw-app-bar.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
@@ -59,6 +64,9 @@ interface Badge {
 const counted = (count: number): ReadonlyArray<Badge> => [
   { count, tone: "accent", label: "" },
 ];
+
+/** The width in pixels below which the nav moves into the app bar's menu. */
+const menuBelow = 900;
 
 export class UpkeepApp extends LitElement {
   static override styles = [
@@ -105,6 +113,12 @@ export class UpkeepApp extends LitElement {
         justify-content: flex-end;
       }
 
+      /* In Home Assistant's kiosk mode the menu button stays on wide
+         screens, where it shows Home Assistant's sidebar */
+      gw-app-bar.kiosk::part(menu) {
+        display: inline-grid;
+      }
+
       main {
         padding: var(--gw-space-6) 0 var(--gw-space-12);
       }
@@ -127,6 +141,22 @@ export class UpkeepApp extends LitElement {
 
   // Keeps the server's changes coming for as long as the dashboard is open
   readonly #live = new AtomController(this, () => live);
+
+  readonly #kiosk = new AtomController(this, () => homeAssistantKiosk);
+
+  readonly #narrow = window.matchMedia(`(max-width: ${menuBelow - 0.02}px)`);
+
+  readonly #onNarrow = () => this.requestUpdate();
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.#narrow.addEventListener("change", this.#onNarrow);
+  }
+
+  override disconnectedCallback() {
+    this.#narrow.removeEventListener("change", this.#onNarrow);
+    super.disconnectedCallback();
+  }
 
   override willUpdate() {
     const result = this.#desktopTheme.value;
@@ -214,8 +244,20 @@ export class UpkeepApp extends LitElement {
       Route.$is("Job")(current) ||
       Route.$is("Run")(current);
 
+    const kiosk = this.#kiosk.value;
+    const narrow = this.#narrow.matches;
+
     return html`
-      <gw-app-bar size="wide" menu-label="Pages" menu-below="900">
+      <gw-app-bar
+        size="wide"
+        class=${kiosk ? "kiosk" : ""}
+        menu-label=${kiosk && !narrow ? "Home Assistant sidebar" : "Pages"}
+        menu-below=${menuBelow}
+        @toggle=${this.#onMenu}
+        ${ref((element) => {
+          this.#bar = element instanceof GwAppBar ? element : undefined;
+        })}
+      >
         <a slot="brand" class="brand" href=${homeHref}
           ><img src=${logo} alt="" width="24" height="24" />Upkeep${
             AsyncResult.isSuccess(this.#version.value)
@@ -240,6 +282,17 @@ export class UpkeepApp extends LitElement {
         ${this.#link(releasesHref, "Releases", onReleases, this.#unreleased())}
         ${this.#link(reposHref, "Repositories", onRepos)}
         ${this.#link(jobsHref, "Jobs", onJobs)}
+        ${
+          kiosk && narrow
+            ? html`<gw-button
+                appearance="plain"
+                variant="neutral"
+                icon=${phSidebar}
+                @click=${this.#showSidebar}
+                >Home Assistant sidebar</gw-button
+              >`
+            : nothing
+        }
         <gw-theme-picker
           slot="actions"
           no-import
@@ -325,6 +378,26 @@ export class UpkeepApp extends LitElement {
   };
 
   #signOutPopover: GwPopover | undefined;
+
+  #bar: GwAppBar | undefined;
+
+  /**
+   * On a wide screen the menu button has no nav to open, so in kiosk mode it
+   * shows Home Assistant's sidebar instead.
+   */
+  readonly #onMenu = () => {
+    if (this.#bar === undefined || this.#bar.collapsed || !this.#bar.menuOpen)
+      return;
+
+    this.#bar.toggleMenu(false);
+    toggleHomeAssistantSidebar();
+  };
+
+  /** Closes the menu it's picked from, then shows Home Assistant's sidebar. */
+  readonly #showSidebar = () => {
+    this.#bar?.toggleMenu(false);
+    toggleHomeAssistantSidebar();
+  };
 
   /** Signs out once the confirmation's Sign out closed it. */
   readonly #signOut = () => {

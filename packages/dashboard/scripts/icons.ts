@@ -62,6 +62,7 @@ const names = [
   "rocket-launch",
   "sign-in",
   "sign-out",
+  "sidebar",
   "squares-four",
   "star",
   "tag",

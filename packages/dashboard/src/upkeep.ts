@@ -979,6 +979,42 @@ export const route = Atom.readable((get) => {
   return parseRoute();
 });
 
+const HomeAssistantProperties = Schema.Struct({
+  type: Schema.Literal("home-assistant/properties"),
+});
+
+/**
+ * Whether Home Assistant hides its sidebar and header around the dashboard.
+ * Under ingress the page asks for Home Assistant's kiosk mode, and it's on
+ * once Home Assistant answers, so an older one that ignores kiosk mode keeps
+ * its own sidebar and header and the page offers no second way to them.
+ */
+export const homeAssistantKiosk = Atom.readable((get) => {
+  if (window.parent === window) return false;
+
+  const onMessage = (event: MessageEvent) => {
+    if (
+      event.source === window.parent &&
+      Schema.is(HomeAssistantProperties)(event.data)
+    ) {
+      get.setSelf(true);
+    }
+  };
+
+  window.addEventListener("message", onMessage);
+  get.addFinalizer(() => window.removeEventListener("message", onMessage));
+  window.parent.postMessage(
+    { type: "home-assistant/subscribe-properties", kioskMode: true },
+    "*",
+  );
+
+  return false;
+});
+
+/** Shows or hides Home Assistant's sidebar over the page, in kiosk mode. */
+export const toggleHomeAssistantSidebar = () =>
+  window.parent.postMessage({ type: "home-assistant/toggle-menu" }, "*");
+
 /** Links resolve against the page's base, so they work under any prefix. */
 export const homeHref = "./";
 
