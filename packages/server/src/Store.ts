@@ -720,6 +720,57 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE entries ADD COLUMN session TEXT`;
   }),
+  // Dependency and skill updates were placed one entry per commit, worth
+  // reading, so they join their update's entry as version bumps now, and a
+  // skill change you approved is yours
+  "0038_routine_updates": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      UPDATE entries SET you = 1, read_at = coalesce(read_at, last_at)
+      WHERE kind = 'commit' AND run IN (
+        SELECT id FROM runs
+        WHERE job = 'skill-change'
+          AND json_extract(command, '$.kind') = 'skill-approve'
+      )
+    `;
+
+    const rows = yield* sql<{ id: string; title: string }>`
+      UPDATE entries SET kind = 'update', routine = 1
+      WHERE kind = 'commit' AND you = 0 AND run IN (
+        SELECT id FROM runs
+        WHERE job IN ('deps', 'skill-updates', 'skill-change')
+      )
+      RETURNING id, title
+    `;
+
+    const groups = Map.groupBy(
+      rows.toSorted((a, b) => a.id.localeCompare(b.id)),
+      (row) => Entries.updateKey(row.title),
+    );
+
+    for (const [key, group] of groups) {
+      // An update's entry from the watch job takes the rest, so keys can't clash
+      const [existing] = yield* sql<{ id: string }>`
+        SELECT id FROM entries WHERE key = ${key}
+      `;
+
+      const target = existing ?? group[0];
+
+      if (target === undefined) continue;
+
+      for (const row of group) {
+        if (row.id !== target.id) yield* mergeEntry(row.id, target.id);
+      }
+
+      if (existing === undefined) {
+        yield* sql`
+          UPDATE entries SET key = ${key}, title = ${Entries.updateName(group[0]?.title ?? key)}
+          WHERE id = ${target.id}
+        `;
+      }
+    }
+  }),
 });
 
 const RunRow = Schema.Struct({

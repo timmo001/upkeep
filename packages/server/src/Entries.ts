@@ -49,6 +49,15 @@ export const updateName = (subject: string) =>
 /** The entry every version of an update joins. */
 export const updateKey = (subject: string) => `update:${updateName(subject)}`;
 
+/** A commit placed as a version bump, joining every version of its update. */
+const updated = (commit: Placement, subject: string): Placement => ({
+  ...commit,
+  key: updateKey(subject),
+  kind: "update",
+  title: updateName(subject),
+  routine: true,
+});
+
 const jobName = (id: string) =>
   Catalogue.jobs.find((job) => job.id === id)?.name ?? id;
 
@@ -165,14 +174,19 @@ export const placement = (
         routine: true,
       };
 
+    // Updates pushed as planned read as one version bump over every
+    // repository, like an updater's merged pull requests
     case Catalogue.stalledUpdates.id:
-      return {
-        ...commit,
-        key: updateKey(change.subject),
-        kind: "update",
-        title: updateName(change.subject),
-        routine: true,
-      };
+    case Catalogue.deps.id:
+    case Catalogue.skillUpdates.id:
+      return updated(commit, change.subject);
+
+    // A skill change pushed by itself only moved pins; one you approved is
+    // yours
+    case Catalogue.skillChange.id:
+      return run.command?.kind === "skill-approve"
+        ? { ...commit, you: true }
+        : updated(commit, change.subject);
 
     // A change you asked for reads as one entry over every repository it
     // pushed to, named for what you asked
