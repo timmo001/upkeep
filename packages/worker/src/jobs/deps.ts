@@ -723,9 +723,24 @@ const applyGroup = Effect.fnUntraced(function* (
       trusted,
     });
 
-  const changed = (yield* Bump.run("git", ["diff", "--name-only"], options))
-    .split("\n")
-    .filter((file) => file !== "");
+  // `mise lock` writes a new version's dependency sidecar as untracked files
+  // under `.mise/locks/`, and mise.lock points at them
+  const sidecars = yield* Bump.run(
+    "git",
+    [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--",
+      ":(glob)**/.mise/locks/**",
+    ],
+    options,
+  );
+
+  const changed = [
+    ...(yield* Bump.run("git", ["diff", "--name-only"], options)).split("\n"),
+    ...sidecars.split("\n"),
+  ].filter((file) => file !== "");
 
   // Workflows alone only change CI, so they need no regression check
   const check = changed.some((file) => !file.startsWith(".github/"))
