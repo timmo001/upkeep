@@ -36,13 +36,14 @@ export const withoutNumber = (subject: string) =>
   subject.replace(/\s*\(#\d+\)$/, "");
 
 /**
- * An update's name without the version or digest it moves to, such as
- * `Update Upkeep` from `Update Upkeep to 0.7.2 (#12)`, so every version of
- * the same update shares one entry.
+ * An update's name without the versions or digests it moves to, such as
+ * `Update Upkeep` from `Update Upkeep to 0.7.2 (#12)`, or `Update a, b` from
+ * `Update a to 1.2, b to 1.2`, so every version of the same update shares one
+ * entry.
  */
 export const updateName = (subject: string) =>
   withoutNumber(subject).replace(
-    /\s+(?:(?:digest|action|Docker tag)\s+)?to\s+v?[\w.+-]+$/i,
+    /\s+(?:(?:digest|action|Docker tag)\s+)?to\s+v?[\w.+-]+(?=,|$)/gi,
     "",
   );
 

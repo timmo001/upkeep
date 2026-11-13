@@ -1376,6 +1376,14 @@ test("every version of the same update shares one inbox entry", () =>
         update("a3", "Update timmo001/checks digest to c0562b3"),
         update("a4", "Update timmo001/checks digest to 130f993"),
         update("a5", "Update github actions"),
+        update(
+          "a6",
+          "Update @timmo001/ui to 0.26.0, @timmo001/tokens to 0.26.0",
+        ),
+        update(
+          "a7",
+          "Update @timmo001/ui to 0.27.0, @timmo001/tokens to 0.27.0",
+        ),
       ]);
 
       const { entries } = yield* store.inbox(0);
@@ -1385,6 +1393,7 @@ test("every version of the same update shares one inbox entry", () =>
           .map((entry) => [entry.title, entry.items.length])
           .toSorted(([a], [b]) => String(a).localeCompare(String(b))),
       ).toEqual([
+        ["Update @timmo001/ui, @timmo001/tokens", 2],
         ["Update github actions", 1],
         ["Update timmo001/checks", 2],
         ["Update Upkeep", 2],
