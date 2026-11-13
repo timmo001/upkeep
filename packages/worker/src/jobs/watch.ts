@@ -37,7 +37,7 @@ const Commit = Schema.Struct({
 
 type Commit = typeof Commit.Type;
 
-const CommitFiles = Schema.Struct({
+export const CommitFiles = Schema.Struct({
   files: Schema.Array(
     Schema.Struct({
       filename: Schema.String,

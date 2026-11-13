@@ -1401,6 +1401,40 @@ test("every version of the same update shares one inbox entry", () =>
     }),
   ));
 
+test("a read update is placed by what joins it, an unread one by all of it", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const update = (sha: string, subject: string, routine: boolean) => ({
+        repo: "timmo001/a",
+        sha,
+        subject,
+        url: "",
+        at: 1,
+        group: `update:${subject}`,
+        title: subject,
+        kind: "update" as const,
+        routine,
+      });
+
+      const routine = Effect.map(
+        store.inbox(0),
+        ({ entries }) => entries[0]?.routine,
+      );
+
+      yield* store.seen([update("a1", "Update lit to 3.3.0", false)]);
+      yield* store.seen([update("a2", "Update lit to 3.3.1", true)]);
+
+      expect(yield* routine).toBe(false);
+
+      yield* store.markRead(undefined);
+      yield* store.seen([update("a3", "Update lit to 3.3.2", true)]);
+
+      expect(yield* routine).toBe(true);
+    }),
+  ));
+
 test("a move holds for later versions, and wins over a repository rule", () =>
   run(
     Effect.gen(function* () {

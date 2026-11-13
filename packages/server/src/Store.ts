@@ -3826,7 +3826,9 @@ export class Store extends Context.Service<
     /**
      * Add to an entry, or start it. Joining an existing entry brings it back
      * unread and undismissed; `replace` also takes the new title and detail,
-     * for an entry that says what's happening now.
+     * for an entry that says what's happening now. An unread entry stays worth
+     * reading if any of it is; one you've read or dismissed is placed by what
+     * joined it, which is all that's new.
      */
     const upsertEntry = Effect.fnUntraced(function* (
       entry: {
@@ -3870,7 +3872,11 @@ export class Store extends Context.Service<
           job = coalesce(excluded.job, entries.job),
           run = coalesce(excluded.run, entries.run),
           session = coalesce(excluded.session, entries.session),
-          routine = entries.routine AND excluded.routine,
+          routine = CASE
+            WHEN entries.read_at IS NULL AND entries.dismissed_at IS NULL
+              THEN entries.routine AND excluded.routine
+            ELSE excluded.routine
+          END,
           you = entries.you OR excluded.you,
           count = entries.count + 1,
           last_at = max(entries.last_at, excluded.last_at),

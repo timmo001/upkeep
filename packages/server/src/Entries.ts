@@ -127,8 +127,10 @@ export const placement = (
             title: `Upkeep fixed ${jobName(run.heal.job)} in ${change.repo.split("/").at(-1) ?? change.repo}`,
           };
 
+    // A fix is folded away when every commit in it only moved versions,
+    // lockfiles or pins
     return release === null
-      ? { ...commit, ...fixed, kind: "fix" }
+      ? { ...commit, ...fixed, kind: "fix", routine: change.routine ?? false }
       : {
           ...commit,
           key: releaseKey(release),

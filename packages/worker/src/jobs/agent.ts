@@ -8,6 +8,7 @@ import { Effect, Schema } from "effect";
 import { pushed } from "../Reporter";
 import type * as Settings from "../settings";
 import { run } from "./bump";
+import { CommitFiles, routine } from "./watch";
 
 export class AgentFailed extends Schema.TaggedError<AgentFailed>()(
   "AgentFailed",
@@ -138,7 +139,11 @@ const Comparison = Schema.Struct({
   ),
 });
 
-/** Record each commit pushed between two tips as the run's changes. */
+/**
+ * Record each commit pushed between two tips as the run's changes, each with
+ * whether it only moved versions, lockfiles or pins, so the inbox can fold
+ * a fix that did no more away. One that can't be read counts as more.
+ */
 export const recordCommits = Effect.fnUntraced(function* (
   repo: string,
   before: string,
@@ -149,8 +154,17 @@ export const recordCommits = Effect.fnUntraced(function* (
     Comparison,
   ).pipe(Effect.orElseSucceed(() => ({ commits: [] })));
 
-  for (const { sha, commit } of commits)
-    yield* pushed(repo, sha, commit.message.split("\n")[0] ?? "");
+  for (const { sha, commit } of commits) {
+    const moved = yield* Api.json(
+      { endpoint: `repos/${repo}/commits/${sha}`, method: "GET" },
+      CommitFiles,
+    ).pipe(
+      Effect.map(({ files }) => routine(files)),
+      Effect.orElseSucceed(() => false),
+    );
+
+    yield* pushed(repo, sha, commit.message.split("\n")[0] ?? "", moved);
+  }
 });
 
 const Messages = Schema.Struct({

@@ -125,7 +125,10 @@ Below that:
   or tool versions into one line, which opens to the list. That includes the
   updates `deps`, `stalled-updates` and `skill-updates` push, groundwork's
   copies `sync` pushes to the apps and the skill changes that only move pins,
-  each grouped by update like Renovate's.
+  each grouped by update like Renovate's, and a heal's fix whose commits only
+  moved versions, lockfiles or pins. Once you've read an entry, what joins it
+  later is placed on its own, so a routine update after one that wasn't
+  folds away again.
 
 When Upkeep gets one wrong, an opened entry's **Move** menu puts it in the
 version bumps or back in what's worth reading. The move holds for the

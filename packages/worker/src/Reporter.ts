@@ -409,22 +409,22 @@ export const summary = (message: string) =>
     ),
   );
 
-/** Record a commit the run pushed. */
+/** Record a commit the run pushed, and whether it only moved versions. */
 export const pushed = Effect.fnUntraced(function* (
   repo: string,
   sha: string,
   subject: string,
+  routine?: boolean,
 ) {
   const reporter = yield* Reporter;
+  const url = `https://github.com/${repo}/commit/${sha}`;
+  const at = yield* Clock.currentTimeMillis;
 
   yield* reporter.report({
-    change: {
-      repo,
-      sha,
-      subject,
-      url: `https://github.com/${repo}/commit/${sha}`,
-      at: yield* Clock.currentTimeMillis,
-    },
+    change:
+      routine === undefined
+        ? { repo, sha, subject, url, at }
+        : { repo, sha, subject, url, at, routine },
   });
 });
 
