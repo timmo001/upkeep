@@ -189,6 +189,13 @@ export const placement = (
         ? { ...commit, you: true }
         : updated(commit, change.subject);
 
+    // groundwork's copies going out are routine; the edits carried back to
+    // it are your own, made in the apps
+    case Catalogue.sync.id:
+      return change.subject.startsWith("Carry ")
+        ? { ...commit, you: true }
+        : updated(commit, change.subject);
+
     // A change you asked for reads as one entry over every repository it
     // pushed to, named for what you asked
     case Catalogue.change.id: {

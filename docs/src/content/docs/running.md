@@ -123,8 +123,9 @@ Below that:
   repository and commit. Your own commits are grouped by repository and day.
 - **Routine** folds every update that only moved versions, lockfiles, pins
   or tool versions into one line, which opens to the list. That includes the
-  updates `deps`, `stalled-updates` and `skill-updates` push and the skill
-  changes that only move pins, each grouped by update like Renovate's.
+  updates `deps`, `stalled-updates` and `skill-updates` push, groundwork's
+  copies `sync` pushes to the apps and the skill changes that only move pins,
+  each grouped by update like Renovate's.
 
 When Upkeep gets one wrong, an opened entry's **Move** menu puts it in the
 version bumps or back in what's worth reading. The move holds for the
@@ -142,7 +143,8 @@ unread count, the summary and notifications.
 An opened entry links to the job behind it and, while it's kept, the run.
 An entry is unread until you open it or mark everything read, and comes back
 unread when something new joins it. Your own doing, your commits, the
-releases of your repositories and the skill changes you approved, starts read
+releases of your repositories, the skill changes you approved and your app
+edits `sync` carries back to groundwork, starts read
 and stays read as more of it
 joins, such as the bumps a release is rolled out with: it's kept as history,
 but it isn't counted as new, summed up as unread or shown under worth

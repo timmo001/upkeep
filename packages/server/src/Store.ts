@@ -61,6 +61,44 @@ const mergeEntry = (from: string, into: string) =>
     yield* sql`DELETE FROM entries WHERE id = ${from}`;
   });
 
+/**
+ * Join entries just made version bumps to their update's entry: the one with
+ * the update's key when there is one, else the oldest of them, which takes
+ * the key.
+ */
+const joinUpdates = (
+  rows: ReadonlyArray<{ readonly id: string; readonly title: string }>,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    const groups = Map.groupBy(
+      rows.toSorted((a, b) => a.id.localeCompare(b.id)),
+      (row) => Entries.updateKey(row.title),
+    );
+
+    for (const [key, group] of groups) {
+      const [existing] = yield* sql<{ id: string }>`
+        SELECT id FROM entries WHERE key = ${key}
+      `;
+
+      const target = existing ?? group[0];
+
+      if (target === undefined) continue;
+
+      for (const row of group) {
+        if (row.id !== target.id) yield* mergeEntry(row.id, target.id);
+      }
+
+      if (existing === undefined) {
+        yield* sql`
+          UPDATE entries SET key = ${key}, title = ${Entries.updateName(group[0]?.title ?? key)}
+          WHERE id = ${target.id}
+        `;
+      }
+    }
+  });
+
 const migrations = SqliteMigrator.fromRecord({
   "0001_runs_releases_tokens": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -744,32 +782,27 @@ const migrations = SqliteMigrator.fromRecord({
       RETURNING id, title
     `;
 
-    const groups = Map.groupBy(
-      rows.toSorted((a, b) => a.id.localeCompare(b.id)),
-      (row) => Entries.updateKey(row.title),
-    );
+    yield* joinUpdates(rows);
+  }),
+  // groundwork's copies to the apps join their update's entry as version
+  // bumps too, and the edits a sync carried back are yours
+  "0039_routine_syncs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
 
-    for (const [key, group] of groups) {
-      // An update's entry from the watch job takes the rest, so keys can't clash
-      const [existing] = yield* sql<{ id: string }>`
-        SELECT id FROM entries WHERE key = ${key}
-      `;
+    yield* sql`
+      UPDATE entries SET you = 1, read_at = coalesce(read_at, last_at)
+      WHERE kind = 'commit' AND title LIKE 'Carry %'
+        AND run IN (SELECT id FROM runs WHERE job = 'sync')
+    `;
 
-      const target = existing ?? group[0];
+    const rows = yield* sql<{ id: string; title: string }>`
+      UPDATE entries SET kind = 'update', routine = 1
+      WHERE kind = 'commit' AND you = 0
+        AND run IN (SELECT id FROM runs WHERE job = 'sync')
+      RETURNING id, title
+    `;
 
-      if (target === undefined) continue;
-
-      for (const row of group) {
-        if (row.id !== target.id) yield* mergeEntry(row.id, target.id);
-      }
-
-      if (existing === undefined) {
-        yield* sql`
-          UPDATE entries SET key = ${key}, title = ${Entries.updateName(group[0]?.title ?? key)}
-          WHERE id = ${target.id}
-        `;
-      }
-    }
+    yield* joinUpdates(rows);
   }),
 });
 
