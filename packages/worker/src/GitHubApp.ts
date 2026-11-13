@@ -4,7 +4,8 @@
  * installation token the server hands out, so bulk work counts against the
  * App's rate limit and shows as the App, and their commits credit the App's
  * bot as co-author. Heals, agents and the jobs that read what involves you
- * keep the machine's login, as does bump's code search.
+ * keep the machine's login, as do bump's code search and ci's notifications,
+ * which an installation token can't read.
  * Without an App on the server, or with a server too old to have one, every
  * job uses the machine's login.
  */
@@ -30,6 +31,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 const appJobs: ReadonlySet<string> = new Set(
   [
     Catalogue.bump,
+    Catalogue.ci,
     Catalogue.labels,
     Catalogue.stalledUpdates,
     Catalogue.drift,
@@ -85,7 +87,8 @@ export const MachineGh = Context.Reference<Option.Option<GhInterface>>(
 /**
  * Run `gh` calls with the machine's login, even in a run that acts as the App.
  * Code search with an installation token reports every match in its count but
- * returns only some of them, differing from one call to the next.
+ * returns only some of them, differing from one call to the next, and
+ * notifications belong to a user, so an installation token can't read them.
  */
 export const withMachineLogin = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.flatMap(MachineGh, (machine) =>

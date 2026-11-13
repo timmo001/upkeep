@@ -5,14 +5,19 @@
  * are logged, so its heal can tell a real failure from one only CI sees. Once
  * a workflow passes again, its unread failure notifications are dismissed.
  * The run fails at the end, naming the repositories still red. One whose CI
- * couldn't be read, even after retries, is named but not counted red.
+ * couldn't be read, even after retries, is named but not counted red, as is
+ * one whose failed runs all ran out of GitHub's rate limit, which needs them
+ * run again rather than a heal. The runs read add to {@link CiTimings}.
  * Repository details and workflow lists are kept between runs and asked for
- * conditionally, so unchanged ones cost no rate limit.
+ * conditionally, so unchanged ones cost no rate limit. It runs as the GitHub
+ * App, apart from your notifications, which only your login can read.
  */
 import { Api, Workflow } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
 import { Effect, Schedule, Schema } from "effect";
+import * as CiTimings from "../CiTimings";
 import { pretty, reason } from "../Failure";
+import * as GitHubApp from "../GitHubApp";
 import * as Kept from "../Kept";
 import { attention, listed, Reporter, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -96,6 +101,9 @@ export const failureOf = (title: string) => {
  * actions/checkout`, whose lines would push out the failure itself.
  */
 const tidyStep = /^(Post |Complete job$|Set up job$)/;
+
+/** A failed step that ran out of GitHub's rate limit, primary or secondary. */
+const rateLimited = /API rate limit exceeded|secondary rate limit/i;
 
 /** The end of a failed run's failed steps, for the heal. */
 const failedLog = (repo: string, item: Workflow.Run) =>
@@ -181,10 +189,12 @@ const dismiss = Effect.fnUntraced(function* (
     )
       continue;
 
-    yield* Api.empty({
-      endpoint: `notifications/threads/${thread.id}`,
-      method: "DELETE",
-    });
+    yield* GitHubApp.withMachineLogin(
+      Api.empty({
+        endpoint: `notifications/threads/${thread.id}`,
+        method: "DELETE",
+      }),
+    );
     yield* RunLog.info(
       `${repo}: dismissed "${thread.subject.title}", it passes again`,
     );
@@ -216,10 +226,21 @@ const readBranch = Effect.fnUntraced(function* (repo: string, kept: Kept.Kept) {
       ),
     );
 
+  const runs = yield* Api.json(
+    {
+      endpoint: `repos/${repo}/actions/runs`,
+      method: "GET",
+      query: { branch, per_page: 50 },
+    },
+    CiTimings.ApiRuns,
+  );
+
+  yield* CiTimings.record(repo, runs.workflow_runs);
+
   return {
     branch,
     ...latest(
-      yield* Workflow.list({ repo, branch, limit: 50 }),
+      runs.workflow_runs.map(CiTimings.toRun),
       new Set(
         workflows
           .filter((workflow) => workflow.state === "active")
@@ -263,10 +284,23 @@ const ciRepository = Effect.fnUntraced(function* (
 
   if (failed.length === 0) return "green" as const;
 
-  for (const item of failed) {
+  const logs = yield* Effect.forEach(failed, (item) =>
+    failedLog(repo, item).pipe(Effect.map((log) => ({ item, log }))),
+  );
+
+  for (const { item, log } of logs) {
     yield* RunLog.warn(
-      `${repo}: ${item.workflowName ?? item.name} ${item.conclusion ?? "failed"} on ${branch} at ${item.headSha.slice(0, 7)} ${item.url}\n${yield* failedLog(repo, item)}`,
+      `${repo}: ${item.workflowName ?? item.name} ${item.conclusion ?? "failed"} on ${branch} at ${item.headSha.slice(0, 7)} ${item.url}\n${log}`,
     );
+  }
+
+  // A run that failed on a spent rate limit needs running again, not fixing
+  if (logs.every(({ log }) => rateLimited.test(log))) {
+    yield* RunLog.warn(
+      `${repo}: it failed on GitHub's rate limit, so it needs running again once the limit resets rather than a fix`,
+    );
+
+    return "limited" as const;
   }
 
   yield* checkHere(repo, branch, context.worktrees, context.settings);
@@ -282,9 +316,11 @@ export const ci = Effect.fnUntraced(function* () {
   const repos = yield* reporter.repos(Catalogue.ci.id);
   const kept = yield* Kept.make("ci");
 
-  const pages = yield* Api.pages(
-    { endpoint: "notifications", method: "GET", query: { per_page: 100 } },
-    Schema.Array(Thread),
+  const pages = yield* GitHubApp.withMachineLogin(
+    Api.pages(
+      { endpoint: "notifications", method: "GET", query: { per_page: 100 } },
+      Schema.Array(Thread),
+    ),
   );
 
   const threads = pages
@@ -294,6 +330,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* RunLog.info(`Reading CI on ${repos.length} repositories`);
 
   const failed: Array<string> = [];
+  const limited: Array<string> = [];
   const unread: Array<string> = [];
 
   yield* Effect.forEach(
@@ -309,6 +346,8 @@ export const ci = Effect.fnUntraced(function* () {
           Effect.sync(() => {
             if (state === "red") failed.push(repo);
 
+            if (state === "limited") limited.push(repo);
+
             if (state === "unread") unread.push(repo);
           }),
         ),
@@ -317,17 +356,30 @@ export const ci = Effect.fnUntraced(function* () {
   );
 
   const read = repos.length - unread.length;
+  const green = read - failed.length - limited.length;
 
-  const left =
-    unread.length === 0 ? "" : `; couldn't read ${listed(unread.toSorted())}`;
+  const left = [
+    ...(limited.length === 0
+      ? []
+      : [
+          `failed on GitHub's rate limit, to run again: ${listed(limited.toSorted())}`,
+        ]),
+    ...(unread.length === 0
+      ? []
+      : [`couldn't read ${listed(unread.toSorted())}`]),
+  ]
+    .map((part) => `; ${part}`)
+    .join("");
 
   yield* summary(
-    failed.length === 0
+    failed.length === 0 && limited.length === 0
       ? `All ${read} repositories are green${left}`
-      : `${read - failed.length} of ${read} repositories are green; red: ${listed(failed.toSorted())}${left}`,
+      : failed.length === 0
+        ? `${green} of ${read} repositories are green${left}`
+        : `${green} of ${read} repositories are green; red: ${listed(failed.toSorted())}${left}`,
   );
 
-  if (failed.length > 0) yield* attention;
+  if (failed.length > 0 || limited.length > 0) yield* attention;
 
   if (failed.length > 0)
     return yield* new ConsumersFailed({

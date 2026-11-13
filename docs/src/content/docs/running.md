@@ -313,6 +313,27 @@ counts it as live and Upkeep's status doesn't warn that no worker is. Runs
 queued for it in the meantime, such as its machine jobs, start when the hours
 end. Its status reads `Quiet hours` and stays `ok`.
 
+A worker shares GitHub's rate limit with everything else signed in as the same
+account, such as workflows that publish with a personal token, so it keeps a
+tenth of each limit for them. While the core or GraphQL limit of its `gh`
+login is down to that tenth, it takes no new runs, except what the dashboard
+asks for, until the limit resets. It reads the limits at most every 30
+seconds, which costs none of them, and its status reads `Paused for GitHub's
+rate limit until` the reset. A run that hits a spent limit anyway waits for
+the reset and carries on, rather than failing.
+
+When a job pushes and watches CI, it goes by how long that repository's CI
+usually takes on a push, kept per repository in
+`$XDG_CACHE_HOME/upkeep/ci-timings/` from the last ten passing runs of each
+workflow that the jobs see, so the store fills itself. The first look comes
+when about three quarters of the slowest workflow's usual time has gone, then
+one every eighth of it, between 30 seconds and 2 minutes, giving up after
+three times it, between 30 minutes and 2 hours. CI with no known timing is
+looked at after 30 seconds, then every minute, for 30 minutes. Each look asks
+GitHub whether anything changed since the last, which costs no rate limit when
+nothing has. Agents are told the same pace for each repository they work on,
+so they don't watch CI every few seconds.
+
 ### Worktrees
 
 The jobs that change repositories work in Git worktrees rather than clones of
@@ -1099,6 +1120,13 @@ installing changed a lockfile, which a frozen install in CI refuses, whether
 the checks fail here too, or whether they pass, so it fails only in CI. The
 run fails at the end, naming the red repositories, and a heal for each one
 hands both results to an agent to fix the cause, push and watch CI.
+
+A repository whose failed runs all ran out of GitHub's rate limit isn't
+counted red, since there's nothing to fix: the run names it to run again once
+the limit resets, and asks for you rather than queuing a heal.
+
+The job runs as the [GitHub App](/events#jobs-as-the-app), apart from your
+notifications.
 
 Once a workflow's latest run passes again, the job dismisses the unread
 "workflow run failed" notifications for it on the default branch.
