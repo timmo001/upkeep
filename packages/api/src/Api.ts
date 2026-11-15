@@ -662,12 +662,14 @@ export class RunsGroup extends HttpApiGroup.make("runs")
     /**
      * Run a finished run again: its job for the same release, or for a heal,
      * the same heal. A parked job runs too, as it does when run by hand. The
-     * run is dismissed, as it's been dealt with. Returns the new run.
+     * run is dismissed, as it's been dealt with. Returns the new run. A run
+     * of a job that runs on releases with no release is refused, as it can
+     * only fail again.
      */
     HttpApiEndpoint.post("retry", "/:id/retry", {
       params: { id: Schema.String },
       success: Run,
-      error: [RunNotFound, RunGoing],
+      error: [RunNotFound, RunGoing, ReleaseRequired],
     }),
     /**
      * Clear what a run left for a person: the run stops needing attention

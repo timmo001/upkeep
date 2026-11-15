@@ -360,3 +360,10 @@ export const jobs: ReadonlyArray<Job> = [
   command,
   ...machineJobs,
 ];
+
+/**
+ * Whether a job only runs for a release, so a run of it without one, queued
+ * or run again, fails at once.
+ */
+export const needsRelease = (id: string) =>
+  jobs.some((job) => job.id === id && job.onRelease);

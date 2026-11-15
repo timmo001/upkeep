@@ -3,7 +3,7 @@
  * and its log as it grows, with a button to cancel it while it's going, and
  * once it's ended, to run it again or dismiss what it left for a person.
  */
-import { Domain } from "@upkeep/api";
+import { Catalogue, Domain } from "@upkeep/api";
 import type {
   TableColumn,
   TableRow,
@@ -429,27 +429,32 @@ export class UpkeepRun extends LitElement {
                   >Cancel</gw-button
                 >`
               : html`${
-                    current.attention
-                      ? html`<gw-button
-                          slot="actions"
-                          size="small"
-                          appearance="outlined"
-                          variant="neutral"
-                          icon=${phCheck}
-                          @click=${() => registry.set(dismissRun, current.id)}
-                          >Dismiss</gw-button
-                        >`
-                      : null
-                  }
-                  <gw-button
-                    slot="actions"
-                    size="small"
-                    appearance="outlined"
-                    variant="neutral"
-                    icon=${phArrowCounterClockwise}
-                    @click=${() => registry.set(retryRun, current.id)}
-                    >${current.heal === null ? "Run again" : "Heal again"}</gw-button
-                  >`
+                  current.attention
+                    ? html`<gw-button
+                        slot="actions"
+                        size="small"
+                        appearance="outlined"
+                        variant="neutral"
+                        icon=${phCheck}
+                        @click=${() => registry.set(dismissRun, current.id)}
+                        >Dismiss</gw-button
+                      >`
+                    : null
+                }
+                ${
+                  current.release === null &&
+                  Catalogue.needsRelease(current.job)
+                    ? null
+                    : html`<gw-button
+                        slot="actions"
+                        size="small"
+                        appearance="outlined"
+                        variant="neutral"
+                        icon=${phArrowCounterClockwise}
+                        @click=${() => registry.set(retryRun, current.id)}
+                        >${current.heal === null ? "Run again" : "Heal again"}</gw-button
+                      >`
+                }`
           }
         </gw-page-header>
         <dl>

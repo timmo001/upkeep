@@ -547,6 +547,17 @@ const act = Effect.fnUntraced(function* (
 
   switch (chosen.decision) {
     case "retry": {
+      if (run.release === null && Catalogue.needsRelease(run.job)) {
+        const action = `Left for you: ${run.job} runs for a release and this run had none, so running it again would fail the same way`;
+
+        yield* RunLog.warn(action);
+        yield* reporter.heal({ action });
+        yield* reporter.report({ summary: action });
+        yield* attention;
+
+        return;
+      }
+
       const queued = yield* reporter.retry();
 
       const action =

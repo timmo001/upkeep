@@ -942,6 +942,9 @@ const RunsHandlers = HttpApiBuilder.group(
               state: found.state,
             });
 
+          if (found.release === null && Catalogue.needsRelease(found.job))
+            return yield* new Api.ReleaseRequired({ id: found.job });
+
           const again = {
             job: found.job,
             trigger: "manual" as const,
