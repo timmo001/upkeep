@@ -8,15 +8,21 @@ import { AsyncResult } from "effect/reactivity";
 import { css, html, render, svg, type TemplateResult } from "lit";
 import { registry } from "./AtomController.ts";
 import {
+  phArrowClockwise,
   phArrowSquareOut,
   phChatCircle,
   phCheck,
   phCheckCircle,
+  phChecks,
+  phClock,
   phCopy,
+  phFirstAidKit,
+  phGitCommit,
   phHourglass,
   phMinusCircle,
   phPlayCircle,
   phProhibit,
+  phPushPin,
   phRobot,
   phSignOut,
   phTerminalWindow,
@@ -226,6 +232,21 @@ const states: Record<
   skipped: { path: phMinusCircle, tone: "neutral" },
   "handed-off": { path: phRobot, tone: "info", label: "Handed off" },
   failed: { path: phXCircle, tone: "danger" },
+  "heal-waiting": { path: phClock, tone: "warning", label: "Heal waiting" },
+  healing: { path: phFirstAidKit, tone: "warning", label: "Being healed" },
+  retrying: { path: phArrowClockwise, tone: "warning" },
+  "with-agent": { path: phRobot, tone: "info", label: "With heal agent" },
+  "fix-pushed": { path: phGitCommit, tone: "info", label: "Fix pushed" },
+  "needs-you": { path: phWarningCircle, tone: "danger", label: "Needs you" },
+  parked: { path: phPushPin, tone: "warning" },
+  healed: { path: phCheckCircle, tone: "success" },
+  recovered: { path: phChecks, tone: "neutral" },
+  retried: { path: phArrowClockwise, tone: "info" },
+  "nothing-to-fix": {
+    path: phMinusCircle,
+    tone: "neutral",
+    label: "Nothing to fix",
+  },
   cancelled: { path: phProhibit, tone: "warning" },
 };
 

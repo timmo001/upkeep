@@ -136,14 +136,22 @@ export const dayRange = (day: string) => {
 /** The query for one local day's runs, or none for every day. */
 const dayQuery = (day: string) => (day === "" ? {} : dayRange(day));
 
+/** The query part that keeps only failures nothing has settled yet. */
+const openQuery = (open: boolean) => (open ? { open: "true" as const } : {});
+
 /**
- * The latest runs of one local day, of every job or one, keyed by both as
- * `job\nday`. Refreshed by the server's changes, as today's still move.
+ * The latest runs of one local day (or every day when empty), of every job or
+ * one, and only the failures still open when asked, keyed by all three as
+ * `job\nday\nopen`. Refreshed by the server's changes, as today's still move.
  */
 export const runsOn = Atom.family((key: string) => {
-  const [job = "", day = ""] = key.split("\n");
+  const [job = "", day = "", open = ""] = key.split("\n");
 
-  const query = { limit: runsPage, ...dayQuery(day) };
+  const query = {
+    limit: runsPage,
+    ...dayQuery(day),
+    ...openQuery(open === "open"),
+  };
 
   return UpkeepApi.query("runs", "list", {
     query: job === "" ? query : { ...query, job },
@@ -151,8 +159,9 @@ export const runsOn = Atom.family((key: string) => {
   });
 });
 
-/** The key `runsOn` takes. Neither part holds a line break. */
-export const runsOnKey = (job: string, day: string) => `${job}\n${day}`;
+/** The key `runsOn` takes. None of the parts holds a line break. */
+export const runsOnKey = (job: string, day: string, open: boolean) =>
+  `${job}\n${day}\n${open ? "open" : ""}`;
 
 /**
  * A page of older runs, of every job or one, queued before the run `before`,
@@ -162,9 +171,15 @@ export const runsOnKey = (job: string, day: string) => `${job}\n${day}`;
  * have finished, and the latest page keeps up with the rest.
  */
 export const olderRuns = Atom.family((key: string) => {
-  const [job = "", before = "", states = "", day = ""] = key.split("\n");
+  const [job = "", before = "", states = "", day = "", open = ""] =
+    key.split("\n");
 
-  const query = { before, limit: runsPage, ...dayQuery(day) };
+  const query = {
+    before,
+    limit: runsPage,
+    ...dayQuery(day),
+    ...openQuery(open === "open"),
+  };
 
   const withStates = states === "" ? query : { ...query, states };
 
@@ -176,15 +191,16 @@ export const olderRuns = Atom.family((key: string) => {
 /**
  * The key `olderRuns` takes: the job, the run to load before, the states to
  * keep (all of them when empty), so a list filtered by state pages through
- * only the runs it shows, and the day, or every day when empty. None of them
- * holds a line break.
+ * only the runs it shows, the day, or every day when empty, and whether to
+ * keep only the failures still open. None of them holds a line break.
  */
 export const olderRunsKey = (
   job: string,
   before: string,
   states: ReadonlyArray<string>,
   day: string,
-) => `${job}\n${before}\n${states.join(",")}\n${day}`;
+  open: boolean,
+) => `${job}\n${before}\n${states.join(",")}\n${day}\n${open ? "open" : ""}`;
 
 /** The tracked repositories, with their titles and jobs. */
 export const repos = UpkeepApi.query("repos", "list", {

@@ -6,7 +6,8 @@
  * it off. A date there narrows the list to one day's runs, which the server
  * picks, so any day can be looked at without scrolling back to it. The
  * filters are kept with the table's own view state, in groundwork's shared
- * store. Older runs load a page at a time as the table scrolls to its end.
+ * store. A Still open button keeps only the failures nothing has settled yet.
+ * Older runs load a page at a time as the table scrolls to its end.
  */
 import {
   type DatePreset,
@@ -32,6 +33,7 @@ import {
   phFunnelSimple,
   phPlay,
   phTerminalWindow,
+  phWarningCircle,
   phX,
 } from "./icons.ts";
 import {
@@ -248,14 +250,19 @@ export class UpkeepRuns extends LitElement {
     return isText(kept) && isDay(kept) ? kept : "";
   }
 
-  // One day's runs come from the server, so a day long past shows without
-  // paging back to it
+  /** Whether the list keeps only the failures nothing has settled yet. */
+  get #open() {
+    return keptAt(this.#storageKey)?.["open"] === true;
+  }
+
+  // One day's runs, or only the open failures, come from the server, so a day
+  // long past shows without paging back to it
   readonly #runs = new AtomController(
     this,
     () =>
-      this.#day === ""
+      this.#day === "" && !this.#open
         ? runs(this.job)
-        : runsOn(runsOnKey(this.job, this.#day)),
+        : runsOn(runsOnKey(this.job, this.#day, this.#open)),
     always,
   );
 
@@ -290,7 +297,9 @@ export class UpkeepRuns extends LitElement {
   /** An older page's runs, as loaded so far. */
   #page(before: string) {
     return registry.get(
-      olderRuns(olderRunsKey(this.job, before, this.#states, this.#day)),
+      olderRuns(
+        olderRunsKey(this.job, before, this.#states, this.#day, this.#open),
+      ),
     );
   }
 
@@ -364,7 +373,9 @@ export class UpkeepRuns extends LitElement {
     this.#cursors = [...this.#cursors, oldest.id];
     this.#pages.push(
       registry.subscribe(
-        olderRuns(olderRunsKey(this.job, oldest.id, states, this.#day)),
+        olderRuns(
+          olderRunsKey(this.job, oldest.id, states, this.#day, this.#open),
+        ),
         () => this.requestUpdate(),
       ),
     );
@@ -432,6 +443,15 @@ export class UpkeepRuns extends LitElement {
     this.requestUpdate();
   }
 
+  /** Narrows the list to the failures still open, or shows every run. */
+  #setOpen(open: boolean) {
+    keep(this.#storageKey, { open: open ? true : null });
+
+    // Older pages were loaded for the runs shown before
+    this.#resetPages();
+    this.requestUpdate();
+  }
+
   /** Narrows the list to one day's runs, or every day's with none. */
   #setDay(day: string) {
     keep(this.#storageKey, { day: isDay(day) ? day : null });
@@ -489,6 +509,16 @@ export class UpkeepRuns extends LitElement {
 
     // The button and its chips share one size, so neither dwarfs the other
     return html`<gw-button
+        slot="toolbar"
+        size="small"
+        appearance=${this.#open ? "accent" : "outlined"}
+        variant=${this.#open ? "brand" : "neutral"}
+        icon=${phWarningCircle}
+        aria-pressed=${this.#open ? "true" : "false"}
+        @click=${() => this.#setOpen(!this.#open)}
+        >Still open</gw-button
+      >
+      <gw-button
         slot="toolbar"
         size="small"
         appearance=${count > 0 ? "accent" : "outlined"}
@@ -595,12 +625,16 @@ export class UpkeepRuns extends LitElement {
     // Older pages come from the server in only the states shown
     const states = this.#serverStates(textsOf(kept?.["states"]));
 
-    const list = all.filter((run) =>
-      filters.every(({ filter, value }) => {
-        const of = filter.of(run);
+    const list = all.filter(
+      (run) =>
+        (!this.#open || Domain.isOpen(run)) &&
+        filters.every(({ filter, value }) => {
+          const of = filter.of(run);
 
-        return value.length === 0 || (of !== null && value.includes(of.value));
-      }),
+          return (
+            value.length === 0 || (of !== null && value.includes(of.value))
+          );
+        }),
     );
 
     const byId = new Map(list.map((run) => [run.id, run]));

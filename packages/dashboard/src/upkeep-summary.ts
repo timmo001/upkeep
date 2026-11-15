@@ -18,6 +18,8 @@ import "@timmo001/groundwork-ui/define/gw-spinner.ts";
 const busy = (run: Domain.Run | undefined) =>
   run?.state === "queued" || run?.state === "running";
 
+const failedStates: ReadonlySet<Domain.RunState> = new Set(Domain.failedStates);
+
 /** The latest summary run, newest first from the list. */
 const latestOf = (
   result: AsyncResult.AsyncResult<ReadonlyArray<Domain.Run>, unknown>,
@@ -88,7 +90,7 @@ export class UpkeepSummary extends LitElement {
     }
 
     return html`<p class="status muted">
-      The last write-up ${run.state === "failed" ? "failed" : "stopped"}.
+      The last write-up ${failedStates.has(run.state) ? "failed" : "stopped"}.
       <a href=${runHref(run.id)}>Open the run</a>
     </p>`;
   }
