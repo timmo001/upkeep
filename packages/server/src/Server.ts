@@ -240,7 +240,8 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
  * Record the latest releases of the repositories tracked for the releases
  * job, and queue every job that runs on releases for each new one. A release
  * seen before, from the releases job or an event, queues nothing, so the two
- * never queue the same release twice. Returns the runs queued.
+ * never queue the same release twice, even when one reports its tag with a
+ * leading `v` and the other without. Returns the runs queued.
  */
 const queueReleases = Effect.fn("queueReleases")(function* (
   releases: ReadonlyArray<Domain.Release>,

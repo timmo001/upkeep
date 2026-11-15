@@ -1549,6 +1549,23 @@ test("a repository's first release is only recorded", () =>
     }),
   ));
 
+test("a tag with or without its leading v is the same release", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const v1 = { repo: "timmo001/a", tag: "v1.2.0", url: "" };
+      const v2 = { ...v1, tag: "v1.3.0" };
+
+      yield* store.recordReleases([v1]);
+
+      expect(yield* store.recordReleases([v2])).toEqual([v2]);
+      expect(yield* store.recordReleases([{ ...v2, tag: "1.3.0" }])).toEqual(
+        [],
+      );
+      expect(yield* store.recordReleases([v2])).toEqual([]);
+    }),
+  ));
+
 test("a release's bumps across repositories land in one inbox entry", () =>
   run(
     Effect.gen(function* () {

@@ -1688,7 +1688,8 @@ export class Store extends Context.Service<
     >;
     /**
      * Record the latest releases, returning those that changed. A repository
-     * seen for the first time is only recorded.
+     * seen for the first time is only recorded, and a tag that differs from
+     * the one recorded only by a leading `v` is the same release.
      */
     recordReleases(
       releases: ReadonlyArray<Domain.Release>,
@@ -4169,7 +4170,13 @@ export class Store extends Context.Service<
 
           const previous = known[0];
 
-          if (previous?.tag === release.tag) continue;
+          // A tag with or without its leading `v`, such as the releases job
+          // and an event reporting the same release, is the same release
+          if (
+            previous !== undefined &&
+            previous.tag.replace(/^v/, "") === release.tag.replace(/^v/, "")
+          )
+            continue;
 
           yield* sql`
             INSERT INTO releases ${sql.insert({
