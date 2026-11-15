@@ -4,11 +4,14 @@
  * opens it, with its log. Beside the table's search, a Filters button opens a
  * sheet of filters, as the inbox's does, each on shown as a chip that takes
  * it off. A date there narrows the list to one day's runs, which the server
- * picks, so any day can be looked at without scrolling back to it. The
- * filters are kept with the table's own view state, in groundwork's shared
- * store. A Still open button keeps only the failures nothing has settled yet.
+ * picks, so any day can be looked at without scrolling back to it, and Still
+ * open keeps only the failures nothing has settled yet. Every filter offers
+ * each value it can take, not only those the runs shown have. The filters
+ * are kept in the page's query, so a link keeps them; the table's own view
+ * state stays in groundwork's shared store.
  * Older runs load a page at a time as the table scrolls to its end.
  */
+import { GwCheckbox } from "@timmo001/groundwork-ui/gw-checkbox.ts";
 import {
   type DatePreset,
   GwDatePicker,
@@ -19,7 +22,6 @@ import type {
   TableColumn,
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
-import { isText, keep, keptAt, textsOf } from "@timmo001/groundwork-ui/kept.ts";
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement } from "lit";
@@ -33,7 +35,6 @@ import {
   phFunnelSimple,
   phPlay,
   phTerminalWindow,
-  phWarningCircle,
   phX,
 } from "./icons.ts";
 import {
@@ -62,13 +63,20 @@ import {
   runsPage,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-checkbox.ts";
 import "@timmo001/groundwork-ui/define/gw-date-picker.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
-/** Each filter of the runs, by the key it's kept under. */
-type FilterId = "states" | "jobs" | "triggers" | "repos" | "workers";
+/** Each filter of the runs, by the query parameter it's kept under. */
+type FilterId = "state" | "job" | "trigger" | "repo" | "worker";
+
+/** A value a filter can take, with its name. */
+interface Choice {
+  readonly value: string;
+  readonly label: string;
+}
 
 interface RunFilter {
   readonly id: FilterId;
@@ -77,35 +85,49 @@ interface RunFilter {
   readonly many: string;
   readonly icon: string;
   /** A run's value for the filter, with its name, or null when it has none. */
-  readonly of: (
-    run: Domain.Run,
-  ) => { readonly value: string; readonly label: string } | null;
+  readonly of: (run: Domain.Run) => Choice | null;
+  /**
+   * Every value it can take, given the jobs there are, so one no run has yet
+   * can still be picked.
+   */
+  readonly every?: (jobs: ReadonlyArray<string>) => ReadonlyArray<Choice>;
 }
 
 const runFilters: ReadonlyArray<RunFilter> = [
   {
-    id: "states",
+    id: "state",
     label: "State",
     many: "states",
     icon: phCheckCircle,
     of: (run) => ({ value: run.state, label: stateLabel(run.state) }),
+    every: () =>
+      Domain.RunState.literals.map((state) => ({
+        value: state,
+        label: stateLabel(state),
+      })),
   },
   {
-    id: "jobs",
+    id: "job",
     label: "Job",
     many: "jobs",
     icon: phBriefcase,
     of: (run) => ({ value: run.job, label: jobName(run.job) }),
+    every: (jobs) => jobs.map((job) => ({ value: job, label: jobName(job) })),
   },
   {
-    id: "triggers",
+    id: "trigger",
     label: "Trigger",
     many: "triggers",
     icon: phPlay,
     of: (run) => ({ value: run.trigger, label: capitalise(run.trigger) }),
+    every: () =>
+      Domain.Trigger.literals.map((trigger) => ({
+        value: trigger,
+        label: capitalise(trigger),
+      })),
   },
   {
-    id: "repos",
+    id: "repo",
     label: "Repository",
     many: "repositories",
     icon: phBookBookmark,
@@ -116,7 +138,7 @@ const runFilters: ReadonlyArray<RunFilter> = [
     },
   },
   {
-    id: "workers",
+    id: "worker",
     label: "Worker",
     many: "workers",
     icon: phTerminalWindow,
@@ -125,9 +147,21 @@ const runFilters: ReadonlyArray<RunFilter> = [
   },
 ];
 
-/** A filter's options: each value the runs have, with how many have it. */
-const optionsOf = (filter: RunFilter, list: ReadonlyArray<Domain.Run>) => {
-  const counts = new Map<string, { label: string; count: number }>();
+/**
+ * A filter's options: every value it can take, then any other the runs have,
+ * each with how many runs have it.
+ */
+const optionsOf = (
+  filter: RunFilter,
+  list: ReadonlyArray<Domain.Run>,
+  jobs: ReadonlyArray<string>,
+) => {
+  const counts = new Map<string, { label: string; count: number }>(
+    (filter.every?.(jobs) ?? []).map(({ value, label }) => [
+      value,
+      { label, count: 0 },
+    ]),
+  );
 
   for (const run of list) {
     const value = filter.of(run);
@@ -145,6 +179,35 @@ const optionsOf = (filter: RunFilter, list: ReadonlyArray<Domain.Run>) => {
   return [...counts]
     .map(([value, { label, count }]) => ({ value, label, count }))
     .toSorted((a, b) => a.label.localeCompare(b.label));
+};
+
+/**
+ * The filters are kept in the page's query, such as
+ * `?state=failed,needs-you&day=2026-11-15`, so a link to the page keeps them.
+ */
+const query = () => new URLSearchParams(location.search);
+
+/** The values a query parameter lists, or none when it isn't there. */
+const listedAt = (param: string) =>
+  query()
+    .get(param)
+    ?.split(",")
+    .filter((value) => value !== "");
+
+/**
+ * Sets each query parameter to its value, or takes it off for null, in place
+ * of the page's history entry, so the back button doesn't step through every
+ * filter change.
+ */
+const setQuery = (part: ReadonlyMap<string, string | null>) => {
+  const url = new URL(location.href);
+
+  for (const [param, value] of part) {
+    if (value === null) url.searchParams.delete(param);
+    else url.searchParams.set(param, value);
+  }
+
+  history.replaceState(history.state, "", url);
 };
 
 /** The state every job's runs leave out until someone changes the filter. */
@@ -225,7 +288,7 @@ export class UpkeepRuns extends LitElement {
         --gw-filter-inset: var(--gw-space-4);
       }
 
-      .date {
+      .field {
         display: grid;
         gap: var(--gw-space-2);
         padding-inline: var(--gw-filter-inset);
@@ -245,14 +308,14 @@ export class UpkeepRuns extends LitElement {
 
   /** The day the list is narrowed to, `YYYY-MM-DD`, or every day when empty. */
   get #day() {
-    const kept = keptAt(this.#storageKey)?.["day"];
+    const day = query().get("day") ?? "";
 
-    return isText(kept) && isDay(kept) ? kept : "";
+    return isDay(day) ? day : "";
   }
 
   /** Whether the list keeps only the failures nothing has settled yet. */
   get #open() {
-    return keptAt(this.#storageKey)?.["open"] === true;
+    return query().has("open");
   }
 
   // One day's runs, or only the open failures, come from the server, so a day
@@ -307,8 +370,20 @@ export class UpkeepRuns extends LitElement {
     if (changed.has("job")) this.#resetPages();
   }
 
+  /** The back and forward buttons bring back the filters in their query. */
+  readonly #onPopState = () => {
+    this.#resetPages();
+    this.requestUpdate();
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("popstate", this.#onPopState);
+  }
+
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("popstate", this.#onPopState);
     this.#resetPages();
   }
 
@@ -402,7 +477,7 @@ export class UpkeepRuns extends LitElement {
     return known.find((item) => item.id === job)?.lane ?? "repos";
   }
 
-  /** Where the table keeps its view state, and the filters beside it. */
+  /** Where the table keeps its own view state, such as its sort. */
   get #storageKey() {
     return this.job === "" ? "upkeep.runs.table" : "upkeep.job-runs.table";
   }
@@ -413,7 +488,7 @@ export class UpkeepRuns extends LitElement {
    * page still lists.
    */
   #defaultOf(filter: RunFilter, values: ReadonlyArray<string>) {
-    return filter.id === "states" && this.job === ""
+    return filter.id === "state" && this.job === ""
       ? values.filter((value) => value !== leftOut)
       : [];
   }
@@ -424,28 +499,30 @@ export class UpkeepRuns extends LitElement {
     value: ReadonlyArray<string>,
     fallback: ReadonlyArray<string>,
   ) {
-    keep(this.#storageKey, {
-      [filter.id]: sameValues(value, fallback) ? null : value,
-    });
+    setQuery(
+      new Map([
+        [filter.id, sameValues(value, fallback) ? null : value.join(",")],
+      ]),
+    );
 
     // Older pages were loaded for the states shown before
-    if (filter.id === "states") this.#resetPages();
+    if (filter.id === "state") this.#resetPages();
 
     this.requestUpdate();
   }
 
   /** Takes a filter off, back to its default. */
   #off(filter: RunFilter) {
-    keep(this.#storageKey, { [filter.id]: null });
+    setQuery(new Map([[filter.id, null]]));
 
-    if (filter.id === "states") this.#resetPages();
+    if (filter.id === "state") this.#resetPages();
 
     this.requestUpdate();
   }
 
   /** Narrows the list to the failures still open, or shows every run. */
   #setOpen(open: boolean) {
-    keep(this.#storageKey, { open: open ? true : null });
+    setQuery(new Map([["open", open ? "" : null]]));
 
     // Older pages were loaded for the runs shown before
     this.#resetPages();
@@ -454,7 +531,7 @@ export class UpkeepRuns extends LitElement {
 
   /** Narrows the list to one day's runs, or every day's with none. */
   #setDay(day: string) {
-    keep(this.#storageKey, { day: isDay(day) ? day : null });
+    setQuery(new Map([["day", isDay(day) ? day : null]]));
 
     // Older pages were loaded for the day shown before
     this.#resetPages();
@@ -466,7 +543,7 @@ export class UpkeepRuns extends LitElement {
    * a click away under it. Its chip takes it off.
    */
   #dateFilter() {
-    return html`<div class="date">
+    return html`<div class="field">
       <gw-date-picker
         label="Date"
         placeholder="Every day"
@@ -481,6 +558,25 @@ export class UpkeepRuns extends LitElement {
               : "",
           )}
       ></gw-date-picker>
+    </div>`;
+  }
+
+  /**
+   * The Still open filter: only the failures nothing has settled yet, as a
+   * later run of the same job and scope passing is what settles one.
+   */
+  #openFilter() {
+    return html`<div class="field">
+      <gw-switch
+        label="Still open"
+        hint="Only failures a later run hasn't passed since"
+        ?checked=${this.#open}
+        @change=${(event: Event) =>
+          this.#setOpen(
+            event.currentTarget instanceof GwCheckbox &&
+              event.currentTarget.checked,
+          )}
+      ></gw-switch>
     </div>`;
   }
 
@@ -505,20 +601,11 @@ export class UpkeepRuns extends LitElement {
   ) {
     const on = filters.filter((each) => each.on);
     const day = this.#day;
-    const count = on.length + (day === "" ? 0 : 1);
+    const open = this.#open;
+    const count = on.length + (day === "" ? 0 : 1) + (open ? 1 : 0);
 
     // The button and its chips share one size, so neither dwarfs the other
     return html`<gw-button
-        slot="toolbar"
-        size="small"
-        appearance=${this.#open ? "accent" : "outlined"}
-        variant=${this.#open ? "brand" : "neutral"}
-        icon=${phWarningCircle}
-        aria-pressed=${this.#open ? "true" : "false"}
-        @click=${() => this.#setOpen(!this.#open)}
-        >Still open</gw-button
-      >
-      <gw-button
         slot="toolbar"
         size="small"
         appearance=${count > 0 ? "accent" : "outlined"}
@@ -527,6 +614,20 @@ export class UpkeepRuns extends LitElement {
         @click=${() => this.#sheet?.toggle()}
         >${count > 0 ? `Filters (${count})` : "Filters"}</gw-button
       >
+      ${
+        open
+          ? html`<gw-button
+              slot="toolbar"
+              size="small"
+              appearance="outlined"
+              variant="neutral"
+              icon=${phX}
+              label="Remove Still open"
+              @click=${() => this.#setOpen(false)}
+              >Still open</gw-button
+            >`
+          : null
+      }
       ${
         day === ""
           ? null
@@ -568,7 +669,7 @@ export class UpkeepRuns extends LitElement {
           this.#sheet = element instanceof GwSheet ? element : undefined;
         })}
       >
-        ${this.#dateFilter()}
+        ${this.#dateFilter()} ${this.#openFilter()}
         ${filters.flatMap(({ filter, options, value, fallback, shown }) =>
           shown
             ? [
@@ -599,17 +700,21 @@ export class UpkeepRuns extends LitElement {
    * loading at its end while `more`.
    */
   #table(all: ReadonlyArray<Domain.Run>, more: boolean) {
-    const kept = keptAt(this.#storageKey);
+    // Every job is a choice on the runs of every job, but not on one job's
+    const jobs =
+      this.job === "" && AsyncResult.isSuccess(this.#jobs.value)
+        ? this.#jobs.value.value.map((job) => job.id)
+        : [];
 
     const filters = runFilters.map((filter) => {
-      const options = optionsOf(filter, all);
+      const options = optionsOf(filter, all, jobs);
 
       const fallback = this.#defaultOf(
         filter,
         options.map((option) => option.value),
       );
 
-      const chosen = textsOf(kept?.[filter.id]);
+      const chosen = listedAt(filter.id);
 
       return {
         filter,
@@ -623,7 +728,7 @@ export class UpkeepRuns extends LitElement {
     });
 
     // Older pages come from the server in only the states shown
-    const states = this.#serverStates(textsOf(kept?.["states"]));
+    const states = this.#serverStates(listedAt("state"));
 
     const list = all.filter(
       (run) =>
