@@ -5,7 +5,12 @@
 import { type Api, Catalogue, type Domain } from "@upkeep/api";
 import { type Cause, Option, Predicate, Schema } from "effect";
 import { AsyncResult } from "effect/reactivity";
-import { css, html, render, svg, type TemplateResult } from "lit";
+import { css, html, nothing, render, svg, type TemplateResult } from "lit";
+import {
+  AsyncDirective,
+  directive,
+  type ElementPart,
+} from "lit/async-directive.js";
 import { registry } from "./AtomController.ts";
 import {
   phArrowClockwise,
@@ -130,7 +135,7 @@ export const shared = css`
   /* A table takes about four rows' height even with fewer, and scrolls once
      it's half the screen, so a long one leaves room for what's around it,
      but always shows about four rows first. One with a cap of its own keeps
-     it */
+     it, and one given fillWindow reaches down to the window's bottom */
   gw-table {
     --gw-table-min-height: 12rem;
     --gw-table-max-height: max(13rem, 50vh);
@@ -159,6 +164,63 @@ export const shared = css`
     overflow-wrap: anywhere;
   }
 `;
+
+/**
+ * Lets a contained table's scroll window reach down to the bottom of the
+ * window from where it starts, less the page's bottom padding, rather than
+ * stopping at half the screen with space left under it. One starting low on
+ * the page gets most of a window instead. It's measured again whenever the
+ * page or the window changes size.
+ */
+class FillWindow extends AsyncDirective {
+  #element: HTMLElement | undefined;
+
+  readonly #fit = () => {
+    const element = this.#element;
+
+    if (element === undefined) return;
+
+    // The cap is on the rows' frame, under the table's search and filters
+    const scroller = element.shadowRoot?.querySelector(".scroller");
+    const frame = scroller instanceof HTMLElement ? scroller : element;
+
+    const top = frame.getBoundingClientRect().top + window.scrollY;
+
+    element.style.setProperty(
+      "--gw-table-max-height",
+      top < window.innerHeight / 2
+        ? `calc(100dvh - ${Math.round(top)}px - var(--gw-space-12))`
+        : "70dvh",
+    );
+  };
+
+  readonly #observer = new ResizeObserver(this.#fit);
+
+  render() {
+    return nothing;
+  }
+
+  override update(part: ElementPart) {
+    if (this.#element === undefined && part.element instanceof HTMLElement) {
+      this.#element = part.element;
+      this.reconnected();
+    }
+
+    return nothing;
+  }
+
+  override reconnected() {
+    this.#observer.observe(document.body);
+    window.addEventListener("resize", this.#fit);
+  }
+
+  override disconnected() {
+    this.#observer.disconnect();
+    window.removeEventListener("resize", this.#fit);
+  }
+}
+
+export const fillWindow = directive(FillWindow);
 
 /** A Phosphor icon, from one of `icons.ts`'s paths. */
 export const icon = (path: string) =>

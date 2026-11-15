@@ -48,6 +48,7 @@ import {
   duration,
   empty,
   externalLink,
+  fillWindow,
   jobName,
   shared,
   stateBadge,
@@ -953,6 +954,7 @@ export class UpkeepRuns extends LitElement {
       storage-key=${this.#storageKey}
       label="Runs"
       contained
+      ${fillWindow()}
       row-key="id"
       search="always"
       search-label="Search runs"
