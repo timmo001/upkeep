@@ -16,7 +16,7 @@
     "@effect/platform-bun": "4.1.4",
     "@effect/sql-sqlite-bun": "4.1.4",
     "@timmo001/effect-triage": "0.24.1",
-    "@timmo001/groundwork-pwa": "0.49.0",
+    "@timmo001/groundwork-pwa": "0.48.0",
     "@upkeep/api": "workspace:*",
     "@upkeep/dashboard": "workspace:*",
     "effect": "4.1.4"
