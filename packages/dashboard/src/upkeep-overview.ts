@@ -4,8 +4,8 @@
  * which need one given) and, for a parked job, why and
  * a button to unpark it, and a switch to pause or resume one that starts by
  * itself; then each
- * worker's agents, with their roles, models and what they're for; then the
- * latest runs. Each table starts with its groups folded away.
+ * worker's agents, with their roles, models and what they're for. Each table
+ * starts with its groups folded away. The latest runs have their own page.
  */
 import type {
   TableColumn,
@@ -40,7 +40,6 @@ import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
-import "./upkeep-runs.ts";
 
 /** Each lane's heading: a lane runs one run at a time, so a job waits only behind its own lane. */
 const laneLabels = new Map<string, string>([
@@ -323,19 +322,12 @@ export class UpkeepOverview extends LitElement {
         AsyncResult.isFailure(this.#jobs.value)
           ? null
           : html`<gw-section
-                class="section"
-                heading="Agents"
-                storage-key="upkeep.jobs.section.agents"
-              >
-                ${view(this.#workers.value, (list) => this.#agents(list))}
-              </gw-section>
-              <gw-section
-                class="section"
-                heading="Latest runs"
-                storage-key="upkeep.jobs.section.runs"
-              >
-                <upkeep-runs></upkeep-runs>
-              </gw-section>`
+              class="section"
+              heading="Agents"
+              storage-key="upkeep.jobs.section.agents"
+            >
+              ${view(this.#workers.value, (list) => this.#agents(list))}
+            </gw-section>`
       }
     `;
   }

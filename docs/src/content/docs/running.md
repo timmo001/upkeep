@@ -187,14 +187,16 @@ fills it, and the `watch` job adds the commits it reads. It's
 the release its changes need, and hands it to an agent to publish. See
 [Releases](#releases).
 
-**Jobs** lists the jobs with their last run and whether they're parked or
-paused, then the latest runs as one list, newest first; press anywhere in a
+**Runs** lists the latest runs as one list, newest first; press anywhere in a
 run's row to open it. Its filters narrow the runs by state, job, trigger,
 repository and worker, and by date: today, yesterday or any day before, which
 loads that day's runs straight away. Each run shows its summary, its commits,
-its
-heal record and its log, which follows the run as it goes. Jobs can be run,
-paused or unparked, and runs cancelled, from there.
+its heal record and its log, which follows the run as it goes. Runs can be
+cancelled from there.
+
+**Jobs** lists the jobs with their last run and whether they're parked or
+paused, and each worker's agents. Jobs can be run, paused or unparked from
+there.
 
 The inbox is `GET /api/inbox?days=7`. What happened in the last day, by run,
 is `GET /api/activity?hours=24`, and the `activity` tool in MCP and Code Mode.

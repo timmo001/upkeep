@@ -898,6 +898,7 @@ export type Route = Data.TaggedEnum<{
   Repo: { readonly repo: string };
   Jobs: {};
   Job: { readonly id: string };
+  Runs: {};
   Run: { readonly id: string };
 }>;
 
@@ -907,6 +908,8 @@ export const Route = Data.taggedEnum<Route>();
 const basePath = new URL(document.baseURI).pathname;
 
 const jobsPattern = new URLPattern({ pathname: "/jobs{/}?" });
+
+const runsPattern = new URLPattern({ pathname: "/runs{/}?" });
 
 const reposPattern = new URLPattern({ pathname: "/repos{/}?" });
 
@@ -934,6 +937,8 @@ const parseRoute = (): Route => {
     : location.pathname;
 
   if (jobsPattern.test({ pathname: path })) return Route.Jobs();
+
+  if (runsPattern.test({ pathname: path })) return Route.Runs();
 
   if (reposPattern.test({ pathname: path })) return Route.Repos();
 
@@ -1073,6 +1078,8 @@ export const toggleHomeAssistantSidebar = () =>
 export const homeHref = "./";
 
 export const jobsHref = "jobs";
+
+export const runsHref = "runs";
 
 export const reposHref = "repos";
 

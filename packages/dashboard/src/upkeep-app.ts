@@ -33,6 +33,7 @@ import {
   reposHref,
   Route,
   route,
+  runsHref,
   serverVersion,
   skillsHref,
   skillsPage,
@@ -52,6 +53,7 @@ import "./upkeep-releases.ts";
 import "./upkeep-repo.ts";
 import "./upkeep-repos.ts";
 import "./upkeep-run.ts";
+import "./upkeep-runs-page.ts";
 import "./upkeep-skills.ts";
 
 /** A count beside a menu link, in its own colour, and what it counts. */
@@ -240,10 +242,8 @@ export class UpkeepApp extends LitElement {
     const onReleases =
       Route.$is("Releases")(current) || Route.$is("Release")(current);
 
-    const onJobs =
-      Route.$is("Jobs")(current) ||
-      Route.$is("Job")(current) ||
-      Route.$is("Run")(current);
+    const onJobs = Route.$is("Jobs")(current) || Route.$is("Job")(current);
+    const onRuns = Route.$is("Runs")(current) || Route.$is("Run")(current);
 
     const kiosk = this.#kiosk.value;
     const narrow = this.#narrow.matches;
@@ -283,6 +283,7 @@ export class UpkeepApp extends LitElement {
         ${this.#link(skillsHref, "Skills", onSkills, counted(this.#waiting()))}
         ${this.#link(releasesHref, "Releases", onReleases, this.#unreleased())}
         ${this.#link(reposHref, "Repositories", onRepos)}
+        ${this.#link(runsHref, "Runs", onRuns)}
         ${this.#link(jobsHref, "Jobs", onJobs)}
         ${
           kiosk && narrow
@@ -363,6 +364,7 @@ export class UpkeepApp extends LitElement {
             Repo: ({ repo }) => html`<upkeep-repo .repo=${repo}></upkeep-repo>`,
             Jobs: () => html`<upkeep-overview></upkeep-overview>`,
             Job: ({ id }) => html`<upkeep-job .jobId=${id}></upkeep-job>`,
+            Runs: () => html`<upkeep-runs-page></upkeep-runs-page>`,
             Run: ({ id }) => html`<upkeep-run .runId=${id}></upkeep-run>`,
           })}
         </gw-page>
