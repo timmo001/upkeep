@@ -8,7 +8,7 @@
     "./bundle": "./bundle.ts"
   },
   "scripts": {
-    "build": "rm -rf ${DASHBOARD_OUT:-dist} && bun build index.html --outdir ${DASHBOARD_OUT:-dist} --production && bun scripts/inline-boot.ts",
+    "build": "rm -rf ${DASHBOARD_OUT:-dist} && bun build index.html --outdir ${DASHBOARD_OUT:-dist} --production --define \"process.env.UPKEEP_BUILD_VERSION='${UPKEEP_BUILD_VERSION:-dev}'\" && bun scripts/inline-boot.ts && bun scripts/pwa.ts",
     "icons": "bun scripts/icons.ts",
     "test": "bun test --pass-with-no-tests",
     "lint": "oxlint .",
@@ -19,6 +19,7 @@
     "@fontsource-variable/geist-mono": "5.3.0",
     "@fontsource-variable/mona-sans": "5.3.0",
     "@tanstack/lit-virtual": "3.15.3",
+    "@timmo001/groundwork-pwa": "0.45.0",
     "@timmo001/groundwork-tokens": "0.45.0",
     "@timmo001/groundwork-ui": "0.45.0",
     "@upkeep/api": "workspace:*",

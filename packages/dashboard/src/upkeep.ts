@@ -23,6 +23,7 @@ import {
 } from "effect/http";
 import { HttpApiMiddleware } from "effect/http-api";
 import { Atom, AtomHttpApi, Reactivity } from "effect/reactivity";
+import { versioned } from "./update.ts";
 
 const storage = Atom.runtime(BrowserKeyValueStore.layerLocalStorage);
 
@@ -54,10 +55,11 @@ export class UpkeepApi extends AtomHttpApi.Service<UpkeepApi>()(
     },
     baseUrl: new URL(".", document.baseURI).href.replace(/\/$/, ""),
     // Covers the server restarting, so a poll doesn't show an error.
-    transformClient: HttpClient.retryTransient({
-      schedule: Schedule.exponential("250 millis"),
-      times: 5,
-    }),
+    transformClient: (http) =>
+      HttpClient.retryTransient(versioned(http), {
+        schedule: Schedule.exponential("250 millis"),
+        times: 5,
+      }),
   },
 ) {}
 

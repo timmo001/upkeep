@@ -47,6 +47,7 @@ import "./upkeep-attention.ts";
 import "./upkeep-inbox.ts";
 import "./upkeep-job.ts";
 import "./upkeep-overview.ts";
+import "./upkeep-pwa.ts";
 import "./upkeep-releases.ts";
 import "./upkeep-repo.ts";
 import "./upkeep-repos.ts";
@@ -248,6 +249,7 @@ export class UpkeepApp extends LitElement {
     const narrow = this.#narrow.matches;
 
     return html`
+      <upkeep-notices></upkeep-notices>
       <gw-app-bar
         size="wide"
         class=${kiosk ? "kiosk" : ""}
@@ -293,6 +295,7 @@ export class UpkeepApp extends LitElement {
               >`
             : nothing
         }
+        <upkeep-install slot="actions"></upkeep-install>
         <gw-theme-picker
           slot="actions"
           no-import
