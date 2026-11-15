@@ -14,7 +14,15 @@
  */
 import { Api, Search } from "@timmo001/effect-gh";
 import { Catalogue } from "@upkeep/api";
-import { Config, Effect, Path, Schedule, Schema, Stream } from "effect";
+import {
+  type Cause,
+  Config,
+  Effect,
+  Path,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
@@ -247,6 +255,21 @@ export const sync = Effect.fnUntraced(function* () {
   }
 
   const failed: Array<string> = [];
+  const reasons: Array<string> = [];
+
+  const fail = (repo: string) => (cause: Cause.Cause<unknown>) => {
+    const line = `${repo}: ${reason(cause)}`;
+
+    return RunLog.warn(line).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          failed.push(repo);
+          reasons.push(line);
+        }),
+      ),
+    );
+  };
+
   const apps = new Map<string, { branch: string; directory: string }>();
 
   yield* RunLog.info(
@@ -273,13 +296,7 @@ export const sync = Effect.fnUntraced(function* () {
         const directory = yield* worktrees.checkout(repo, info.default_branch);
 
         apps.set(repo, { branch: info.default_branch, directory });
-      }).pipe(
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catchCause(fail(repo))),
     { concurrency: 4, discard: true },
   );
 
@@ -378,13 +395,7 @@ export const sync = Effect.fnUntraced(function* () {
           return yield* new SyncFailed({
             message: `${flagged.map((change) => change.path).join(", ")} changed in both the app and groundwork: move the app's edit into groundwork or a wrapper, then run groundwork's sync`,
           });
-      }).pipe(
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catchCause(fail(repo))),
     { concurrency: 2, discard: true },
   );
 
@@ -398,5 +409,6 @@ export const sync = Effect.fnUntraced(function* () {
     return yield* new ConsumersFailed({
       action: "sync",
       repos: failed.toSorted(),
+      reasons: reasons.toSorted(),
     });
 }, Effect.scoped);

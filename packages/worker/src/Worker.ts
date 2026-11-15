@@ -129,14 +129,24 @@ export class RunLost extends Schema.TaggedError<RunLost>()("RunLost", {
 
 /**
  * Some of a job's consumers failed. The server queues a heal for each one,
- * rather than one for Upkeep itself.
+ * rather than one for Upkeep itself. Why each failed follows, as the job
+ * logged it, so the run's error says what went wrong.
  */
 export class ConsumersFailed extends Schema.TaggedError<ConsumersFailed>()(
   "ConsumersFailed",
-  { action: Schema.String, repos: Schema.Array(Schema.String) },
+  {
+    action: Schema.String,
+    repos: Schema.Array(Schema.String),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
+  },
 ) {
   override get message() {
-    return `Couldn't ${this.action} ${this.repos.join(", ")}`;
+    const reasons = this.reasons ?? [];
+
+    return [
+      `Couldn't ${this.action} ${this.repos.join(", ")}${reasons.length > 0 ? ":" : ""}`,
+      ...reasons,
+    ].join("\n");
   }
 }
 

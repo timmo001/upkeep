@@ -13,7 +13,15 @@
  */
 import { Api, Search } from "@timmo001/effect-gh";
 import { Catalogue, EventJobs } from "@upkeep/api";
-import { Config, Effect, FileSystem, Path, Schedule, Schema } from "effect";
+import {
+  type Cause,
+  Config,
+  Effect,
+  FileSystem,
+  Path,
+  Schedule,
+  Schema,
+} from "effect";
 import { Yaml } from "effect/encoding";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
@@ -489,6 +497,25 @@ export const driftRepository = Effect.fnUntraced(function* (
   return moved.length > 0 ? "updated" : ("current" satisfies Outcome);
 });
 
+/**
+ * Log why a repository failed, and keep the line with the failures so the
+ * run's error says it too.
+ */
+const failing =
+  (failed: { repos: Array<string>; reasons: Array<string> }, repo: string) =>
+  (cause: Cause.Cause<unknown>) => {
+    const line = `${repo}: ${reason(cause)}`;
+
+    return RunLog.warn(line).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          failed.repos.push(repo);
+          failed.reasons.push(line);
+        }),
+      ),
+    );
+  };
+
 /** Check every repository with a tooling.yml, two at a time. */
 export const drift = Effect.fnUntraced(function* () {
   const worktrees = yield* Worktrees.forRun("drift");
@@ -499,7 +526,8 @@ export const drift = Effect.fnUntraced(function* () {
 
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
-  const failed: Array<string> = [];
+  const failures = { repos: new Array<string>(), reasons: new Array<string>() };
+  const failed = failures.repos;
   const reviewing: Array<string> = [];
   const updated: Array<string> = [];
 
@@ -527,11 +555,7 @@ export const drift = Effect.fnUntraced(function* () {
             if (outcome === "review") reviewing.push(repo);
           }),
         ),
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
+        Effect.catchCause(failing(failures, repo)),
       ),
     { concurrency: 2, discard: true },
   );
@@ -546,6 +570,12 @@ export const drift = Effect.fnUntraced(function* () {
     return yield* new ConsumersFailed({
       action: "drift",
       repos: [...failed, ...reviewing].toSorted(),
+      reasons: [
+        ...failures.reasons.toSorted(),
+        ...(reviewing.length > 0
+          ? [`${listed(reviewing)}: a tool release to review`]
+          : []),
+      ],
     });
 
   if (reviewing.length > 0 && !dryRun)
@@ -619,7 +649,8 @@ export const driftReview = Effect.fnUntraced(function* () {
   const worktrees = yield* Worktrees.forRun("drift");
   const tracked = yield* trackedFor(Catalogue.drift.id);
   const repos = (yield* repositories()).filter(tracked);
-  const failed: Array<string> = [];
+  const failures = { repos: new Array<string>(), reasons: new Array<string>() };
+  const failed = failures.repos;
   const reviewing: Array<string> = [];
 
   yield* RunLog.info(`Reviewing ${repos.length} repositories as a whole`);
@@ -633,11 +664,7 @@ export const driftReview = Effect.fnUntraced(function* () {
             if (outcome === "review") reviewing.push(repo);
           }),
         ),
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
+        Effect.catchCause(failing(failures, repo)),
       ),
     { concurrency: 2, discard: true },
   );
@@ -657,6 +684,12 @@ export const driftReview = Effect.fnUntraced(function* () {
     return yield* new ConsumersFailed({
       action: "review",
       repos: [...failed, ...reviewing].toSorted(),
+      reasons: [
+        ...failures.reasons.toSorted(),
+        ...(reviewing.length > 0
+          ? [`${listed(reviewing)}: handed to an agent to review`]
+          : []),
+      ],
     });
 
   if (reviewing.length > 0)

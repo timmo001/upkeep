@@ -394,6 +394,7 @@ export const ci = Effect.fnUntraced(function* () {
   yield* RunLog.info(`Reading CI on ${repos.length} repositories`);
 
   const failed: Array<string> = [];
+  const reasons: Array<string> = [];
   const rerun: Array<string> = [];
   const limited: Array<string> = [];
   const unread: Array<string> = [];
@@ -402,11 +403,14 @@ export const ci = Effect.fnUntraced(function* () {
     repos,
     (repo) =>
       ciRepository(repo, { worktrees, settings, threads, kept }).pipe(
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: couldn't check its CI: ${pretty(cause)}`).pipe(
+        Effect.catchCause((cause) => {
+          const line = `${repo}: couldn't check its CI: ${pretty(cause)}`;
+
+          return RunLog.warn(line).pipe(
+            Effect.andThen(Effect.sync(() => reasons.push(line))),
             Effect.as("red" as const),
-          ),
-        ),
+          );
+        }),
         Effect.tap((state) =>
           Effect.sync(() => {
             if (state === "red") failed.push(repo);
@@ -457,5 +461,6 @@ export const ci = Effect.fnUntraced(function* () {
     return yield* new ConsumersFailed({
       action: "get CI green on",
       repos: failed.toSorted(),
+      reasons: reasons.toSorted(),
     });
 }, Effect.scoped);

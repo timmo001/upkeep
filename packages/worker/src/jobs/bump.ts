@@ -1379,6 +1379,7 @@ export const bump = Effect.fnUntraced(function* (
   };
 
   const failed: Array<string> = [];
+  const reasons: Array<string> = [];
   const updated: Array<string> = [];
   const held: Array<string> = [];
 
@@ -1413,11 +1414,18 @@ export const bump = Effect.fnUntraced(function* (
             if (outcome === "held") held.push(repo);
           }),
         ),
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
+        Effect.catchCause((cause) => {
+          const line = `${repo}: ${reason(cause)}`;
+
+          return RunLog.warn(line).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                failed.push(repo);
+                reasons.push(line);
+              }),
+            ),
+          );
+        }),
       ),
     { concurrency: "unbounded", discard: true },
   );
@@ -1447,6 +1455,12 @@ export const bump = Effect.fnUntraced(function* (
     return yield* new ConsumersFailed({
       action: "bump",
       repos: [...failed, ...(dryRun ? [] : held)].toSorted(),
+      reasons: [
+        ...reasons.toSorted(),
+        ...(held.length > 0 && !dryRun
+          ? [`${listed(held)}: held for a regression check`]
+          : []),
+      ],
     });
   }
 

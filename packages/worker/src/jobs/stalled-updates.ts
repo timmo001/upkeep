@@ -333,6 +333,7 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
   );
 
   const failed: Array<string> = [];
+  const reasons: Array<string> = [];
 
   yield* Effect.forEach(
     [...byRepo].toSorted(([a], [b]) => a.localeCompare(b)),
@@ -342,11 +343,18 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
         (pr) => takeOver(pr, { worktrees, settings, dryRun }),
         { discard: true },
       ).pipe(
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo))),
-          ),
-        ),
+        Effect.catchCause((cause) => {
+          const line = `${repo}: ${reason(cause)}`;
+
+          return RunLog.warn(line).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                failed.push(repo);
+                reasons.push(line);
+              }),
+            ),
+          );
+        }),
       ),
     { concurrency: 4, discard: true },
   );
@@ -370,5 +378,6 @@ export const stalledUpdates = Effect.fnUntraced(function* () {
   return yield* new ConsumersFailed({
     action: "take over stalled updates in",
     repos: failed.toSorted(),
+    reasons: reasons.toSorted(),
   });
 }, Effect.scoped);

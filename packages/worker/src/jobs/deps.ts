@@ -987,6 +987,7 @@ const applyRepository = Effect.fnUntraced(function* (
   context: ApplyContext,
 ) {
   let applied = 0;
+  // What failed, as logged, for the run's error
   const failed: Array<string> = [];
   const held: Array<string> = [];
 
@@ -997,15 +998,18 @@ const applyRepository = Effect.fnUntraced(function* (
       if (done === "held") held.push(topic);
     });
 
+  const fail = (line: string) =>
+    RunLog.warn(line).pipe(
+      Effect.andThen(Effect.sync(() => failed.push(line))),
+    );
+
   for (const group of groups) {
     if (group.owner !== "upkeep") continue;
 
     yield* applyGroup(repo, branch, group, context).pipe(
       Effect.tap(count(group.branch)),
       Effect.catchCause((cause) =>
-        RunLog.warn(`${repo}: renovate/${group.branch}: ${reason(cause)}`).pipe(
-          Effect.andThen(Effect.sync(() => failed.push(group.branch))),
-        ),
+        fail(`${repo}: renovate/${group.branch}: ${reason(cause)}`),
       ),
     );
   }
@@ -1020,11 +1024,7 @@ const applyRepository = Effect.fnUntraced(function* (
     ).pipe(
       Effect.tap(count(maintenanceBranch)),
       Effect.catchCause((cause) =>
-        RunLog.warn(
-          `${repo}: renovate/${maintenanceBranch}: ${reason(cause)}`,
-        ).pipe(
-          Effect.andThen(Effect.sync(() => failed.push(maintenanceBranch))),
-        ),
+        fail(`${repo}: renovate/${maintenanceBranch}: ${reason(cause)}`),
       ),
     );
 
@@ -1049,14 +1049,12 @@ const applyRepository = Effect.fnUntraced(function* (
         // review in a deps run is part of landing the update
         Effect.tap((outcome) =>
           outcome === "review"
-            ? Effect.sync(() => failed.push("drift"))
+            ? Effect.sync(() =>
+                failed.push(`${repo}: drift: a tool release to review`),
+              )
             : Effect.void,
         ),
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo}: drift: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push("drift"))),
-          ),
-        ),
+        Effect.catchCause((cause) => fail(`${repo}: drift: ${reason(cause)}`)),
       );
     }
   }
@@ -1089,6 +1087,7 @@ export const deps = Effect.fnUntraced(function* () {
     );
 
   const failed: Array<string> = [];
+  const reasons: Array<string> = [];
   const held: Array<string> = [];
   let planned = 0;
   let groups = 0;
@@ -1136,15 +1135,25 @@ export const deps = Effect.fnUntraced(function* () {
 
         applied += outcome.applied;
 
-        if (outcome.failed.length > 0) failed.push(repo.full_name);
+        if (outcome.failed.length > 0) {
+          failed.push(repo.full_name);
+          reasons.push(...outcome.failed);
+        }
 
         if (outcome.held.length > 0) held.push(repo.full_name);
       }).pipe(
-        Effect.catchCause((cause) =>
-          RunLog.warn(`${repo.full_name}: ${reason(cause)}`).pipe(
-            Effect.andThen(Effect.sync(() => failed.push(repo.full_name))),
-          ),
-        ),
+        Effect.catchCause((cause) => {
+          const line = `${repo.full_name}: ${reason(cause)}`;
+
+          return RunLog.warn(line).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                failed.push(repo.full_name);
+                reasons.push(line);
+              }),
+            ),
+          );
+        }),
       ),
     { concurrency: 2, discard: true },
   ).pipe(Effect.provide([Datasources.layer, Updaters.layer]));
@@ -1177,5 +1186,11 @@ export const deps = Effect.fnUntraced(function* () {
     return yield* new ConsumersFailed({
       action: "update the dependencies of",
       repos: heal,
+      reasons: [
+        ...reasons.toSorted(),
+        ...(held.length > 0 && !dryRun
+          ? [`${listed(held.toSorted())}: held for a regression check`]
+          : []),
+      ],
     });
 }, Effect.scoped);
