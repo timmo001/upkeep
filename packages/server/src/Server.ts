@@ -308,14 +308,30 @@ const queueMachine = Effect.fn("queueMachine")(function* (
   return Option.fromNullishOr(queued[0]);
 });
 
+/** Whether a heal of `healing` covers a failure of `target`. */
+const covers = (healing: Domain.Target, target: Domain.Target) => {
+  if (healing.kind === "upkeep" || target.kind === "upkeep")
+    return healing.kind === target.kind;
+
+  const repos = new Set(
+    Domain.targetRepos(healing).map((repo) => repo.toLowerCase()),
+  );
+
+  return Domain.targetRepos(target).every((repo) =>
+    repos.has(repo.toLowerCase()),
+  );
+};
+
 /**
  * Queue the heals of a failed, lost or handed-off run: one for Upkeep itself,
  * or for the consumers of a bump that failed, one heal over all of them, so a
  * single agent session makes the same fix everywhere. A handed-off run gets a
  * heal for each repository instead. A failed heal never
- * queues another. A target past its heals for the day gets no more for now: a
+ * queues another. A failure of a target a heal is already under way for joins
+ * that heal. A target past its heals for the day gets no more for now: a
  * consumer's heal waits until its heals free up, and a job failing in itself
  * is parked. A handed-off run broke nothing, so it raises no triage issue.
+ * The failed run's state follows: `healing`, `heal-waiting` or `parked`.
  */
 const heal = Effect.fn("heal")(function* (
   run: Domain.Run,
@@ -330,8 +346,13 @@ const heal = Effect.fn("heal")(function* (
     run.job === Catalogue.change.id ||
     run.command?.kind === "machine" ||
     (run.state !== "failed" && run.state !== "handed-off")
-  )
+  ) {
+    // One that said it needs you, such as a worker missing a tool, does
+    if (run.heal === null && run.state === "failed" && run.attention)
+      yield* (yield* Store).moveFailed(run.id, "needs-you");
+
     return;
+  }
 
   const store = yield* Store;
   const limit = yield* healsPerDay;
@@ -351,13 +372,34 @@ const heal = Effect.fn("heal")(function* (
       ? []
       : yield* Effect.forEach(targets, (target) => triage.report(run, target));
 
+  // A failure while a heal of the same job and target is under way joins
+  // it, so one fault doesn't start a heal for every run that hit it
+  const active =
+    run.state === "failed" ? yield* store.activeHeals(run.job) : [];
+
   const healing: Array<{
     readonly repo: string;
     readonly issue: string | null;
+    /** An earlier failure whose heal was waiting, which this one takes over. */
+    readonly held: string | null;
   }> = [];
 
   for (const [index, target] of targets.entries()) {
     const issue = Option.getOrNull(issues[index] ?? Option.none());
+
+    const joined = active.find(
+      (going) => going.heal !== null && covers(going.heal.target, target),
+    );
+
+    if (joined !== undefined) {
+      yield* store.joinHeal(run.id, joined.id);
+      yield* Effect.logInfo(
+        `Joined ${run.job} for ${Domain.targetName(target)} to the heal under way`,
+      ).pipe(Effect.annotateLogs({ run: run.id, heal: joined.id }));
+
+      continue;
+    }
+
     const used = yield* store.healsSince(run.job, target, since);
 
     if (used >= limit) {
@@ -375,6 +417,7 @@ const heal = Effect.fn("heal")(function* (
       const reason = `${run.job} failed again after ${used} heals in 24 hours, past the limit of ${limit}`;
 
       yield* store.park(run.job, reason, issue);
+      yield* store.moveFailed(run.id, "parked");
       yield* Effect.logWarning(`Parked ${run.job}`).pipe(
         Effect.annotateLogs({ run: run.id, reason }),
       );
@@ -394,8 +437,15 @@ const heal = Effect.fn("heal")(function* (
     }
 
     for (const repo of Domain.targetRepos(target)) {
+      const held = (yield* store.waiting()).find(
+        (waiting) =>
+          waiting.job === run.job &&
+          waiting.repo.toLowerCase() === repo.toLowerCase() &&
+          waiting.run !== run.id,
+      );
+
       yield* store.stopWaiting(run.job, repo);
-      healing.push({ repo, issue });
+      healing.push({ repo, issue, held: held?.run ?? null });
     }
   }
 
@@ -424,7 +474,7 @@ const heal = Effect.fn("heal")(function* (
 
   if (first === undefined) return;
 
-  yield* queue({
+  const queued = yield* queue({
     job: Catalogue.heal.id,
     trigger: "heal",
     release: run.release,
@@ -441,6 +491,11 @@ const heal = Effect.fn("heal")(function* (
       issue: healing.find(({ issue }) => issue !== null)?.issue ?? null,
     },
   });
+
+  if (Option.isNone(queued)) return;
+
+  for (const held of new Set(healing.flatMap(({ held }) => held ?? [])))
+    yield* store.joinHeal(held, queued.value.id);
 });
 
 /**
@@ -527,6 +582,13 @@ const settleWaiting = Effect.fn("settleWaiting")(function* (
       yield* Effect.logInfo(
         `Dropped a waiting heal of ${waiting.job} for ${waiting.repo}: a later run reached it`,
       ).pipe(Effect.annotateLogs({ run: run.id }));
+
+      // Its failure is over once nothing is waiting to heal it elsewhere
+      const still = (yield* store.waiting()).some(
+        (other) => other.run === waiting.run,
+      );
+
+      if (!still) yield* store.settleRuns([waiting.run], run.id);
     }
   }
 });
@@ -536,7 +598,7 @@ const settleWaiting = Effect.fn("settleWaiting")(function* (
  * same job, for the same released repository, raised before it was queued,
  * whose consumers it reached without failing. A heal of Upkeep itself is
  * settled by a run that succeeded or handed off. Fixes made outside Upkeep then stop
- * asking for a person.
+ * asking for a person, and the failed runs those heals were for are healed.
  */
 const settleHeals = Effect.fn("settleHeals")(function* (
   run: Domain.Run,
@@ -576,6 +638,10 @@ const settleHeals = Effect.fn("settleHeals")(function* (
   yield* store.settleHeals(
     run.job,
     settled.map(({ id }) => id),
+  );
+  yield* store.settleRuns(
+    settled.map(({ id }) => id),
+    run.id,
   );
   yield* Effect.logInfo(
     `Settled ${settled.length} heal${settled.length === 1 ? "" : "s"} of ${run.job}: a later run got through`,
@@ -781,6 +847,7 @@ const RunsHandlers = HttpApiBuilder.group(
             job: query.job,
             state: query.state,
             states: runStates(query.states),
+            open: query.open === "true",
             limit: bounded(query.limit, defaultRuns, Api.maxRuns),
             before: query.before,
             since: query.since,
@@ -838,6 +905,9 @@ const RunsHandlers = HttpApiBuilder.group(
               });
 
           yield* store.dismissRun(params.id);
+
+          if (found.heal === null && Option.isSome(queued))
+            yield* store.retried(params.id, queued.value.id);
 
           yield* Effect.logInfo(`Ran ${found.job} again`).pipe(
             Effect.annotateLogs({ run: params.id, admin: admin.name }),
@@ -1314,6 +1384,9 @@ const WorkHandlers = HttpApiBuilder.group(
             release: run.release,
             repo: run.repo ?? null,
           });
+
+          if (Option.isSome(queued))
+            yield* store.retried(params.id, queued.value.id);
 
           return { run: Option.getOrNull(queued) };
         }).pipe(

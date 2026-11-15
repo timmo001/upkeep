@@ -28,6 +28,7 @@ import { SecureRandom } from "effect/crypto";
 import { SqlClient, type Statement } from "effect/sql";
 import * as Attention from "./Attention";
 import * as Entries from "./Entries";
+import * as RunStates from "./RunStates";
 
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", {
   cause: Schema.Defect(),
@@ -804,7 +805,66 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* joinUpdates(rows);
   }),
+  // A failed run's state says where its heals have got to, and links to them,
+  // its retry and the run that settled it; a heal run ends as what it did
+  "0040_run_states": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN heals TEXT NOT NULL DEFAULT '[]'`;
+    yield* sql`ALTER TABLE runs ADD COLUMN retry TEXT`;
+    yield* sql`ALTER TABLE runs ADD COLUMN retry_of TEXT`;
+    yield* sql`ALTER TABLE runs ADD COLUMN settled_by TEXT`;
+
+    const rows = yield* sql`
+      SELECT id, job, state, scope_repo, release_repo, command, queued_at,
+        attention, changes != '[]' AS changed, heal_of, heal_decision,
+        coalesce(heal_actions, '[]') AS heal_actions, heal_commit, heal_session
+      FROM runs
+    `.pipe(Effect.flatMap(decodeBackfill));
+
+    const waiting = yield* sql<{ readonly runId: string }>`
+      SELECT run_id FROM waiting_heals
+    `;
+
+    const filled = RunStates.backfill(
+      rows.map((row) => ({
+        ...row,
+        attention: row.attention !== 0,
+        changed: row.changed !== 0,
+      })),
+      new Set(waiting.map(({ runId }) => runId)),
+    );
+
+    for (const { id, heals, ...fill } of filled) {
+      yield* sql`
+        UPDATE runs SET ${sql.update({ ...fill, heals: JSON.stringify(heals) })}
+        WHERE id = ${id}
+      `;
+    }
+  }),
 });
+
+/** A run's columns as they were when run states came in, for their backfill. */
+const decodeBackfill = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      job: Schema.String,
+      state: Domain.RunState,
+      scopeRepo: Schema.NullOr(Schema.String),
+      releaseRepo: Schema.NullOr(Schema.String),
+      command: Schema.NullOr(Schema.String),
+      queuedAt: Schema.Finite,
+      attention: Schema.Number,
+      changed: Schema.Number,
+      healOf: Schema.NullOr(Schema.String),
+      healDecision: Schema.NullOr(Domain.HealDecision),
+      healActions: Schema.fromJsonString(Schema.Array(Schema.String)),
+      healCommit: Schema.NullOr(Schema.String),
+      healSession: Schema.NullOr(Schema.String),
+    }),
+  ),
+);
 
 const RunRow = Schema.Struct({
   id: Schema.String,
@@ -842,6 +902,10 @@ const RunRow = Schema.Struct({
   period: Schema.NullOr(Schema.fromJsonString(Domain.Period)),
   agent: Schema.NullOr(Schema.fromJsonString(Domain.AgentModel)),
   command: Schema.NullOr(Schema.fromJsonString(Domain.Command)),
+  heals: Schema.fromJsonString(Schema.Array(Schema.String)),
+  retry: Schema.NullOr(Schema.String),
+  retryOf: Schema.NullOr(Schema.String),
+  settledBy: Schema.NullOr(Schema.String),
 });
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
@@ -1273,13 +1337,15 @@ export class Store extends Context.Service<
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
-     * queued before it. `states` keeps only runs in one of them, and `since`
-     * and `until` only those queued from one time up to the other.
+     * queued before it. `states` keeps only runs in one of them, `open` only
+     * failures nothing has settled yet, and `since` and `until` only those
+     * queued from one time up to the other.
      */
     runs(filter: {
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
       readonly states?: ReadonlyArray<Domain.RunState> | undefined;
+      readonly open?: boolean | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
       readonly since?: number | undefined;
@@ -1676,6 +1742,43 @@ export class Store extends Context.Service<
       job: string,
       ids: ReadonlyArray<string>,
     ): Effect.Effect<void, StoreError>;
+    /**
+     * The heals of `job` that are queued or running, oldest first, besides
+     * ones reviewing a handed-off run.
+     */
+    activeHeals(
+      job: string,
+    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /**
+     * Join a failed run to a heal already under way for the same job and
+     * target, instead of starting another: it's `healing`, linked to it.
+     */
+    joinHeal(id: string, heal: string): Effect.Effect<void, StoreError>;
+    /**
+     * Move a failed run nothing is healing on to `state`, such as `parked`
+     * when its job was parked instead.
+     */
+    moveFailed(
+      id: string,
+      state: Domain.RunState,
+    ): Effect.Effect<void, StoreError>;
+    /**
+     * Link the retry a heal queued to the heal, to the runs it heals, which
+     * are then `retrying`, and back to the run it retries.
+     */
+    retried(
+      heal: string,
+      retry: string,
+    ): Effect.Effect<void, Api.RunNotFound | StoreError>;
+    /**
+     * Settle failed runs that `by` got through for after all, as `healed`
+     * when a heal was involved or `recovered` when none was: each of `ids`
+     * that's a failed run, and the failed runs each one that's a heal heals.
+     */
+    settleRuns(
+      ids: ReadonlyArray<string>,
+      by: string,
+    ): Effect.Effect<void, StoreError>;
     /** Which of these commits are already in the inbox. */
     known(
       commits: ReadonlyArray<Api.CommitRef>,
@@ -1824,14 +1927,20 @@ export class Store extends Context.Service<
       return rows.map(toRun);
     });
 
-    const queueRun = Effect.fn("Store.queueRun")(
-      function* ({ job, trigger, release, repo, command, heal }: NewRun) {
-        const commandColumn =
-          command === undefined ? null : JSON.stringify(command);
+    const placeRun = Effect.fnUntraced(function* ({
+      job,
+      trigger,
+      release,
+      repo,
+      command,
+      heal,
+    }: NewRun) {
+      const commandColumn =
+        command === undefined ? null : JSON.stringify(command);
 
-        const scope = repo ?? null;
+      const scope = repo ?? null;
 
-        const same = sql`
+      const same = sql`
           job = ${job}
             AND state = 'queued'
             AND coalesce(release_repo, '') = ${release?.repo ?? ""}
@@ -1841,9 +1950,9 @@ export class Store extends Context.Service<
             AND coalesce(heal_target, '') = ${heal === undefined ? "" : targetColumn(heal.target)}
         `;
 
-        // Repositories are matched ignoring case, as GitHub does, and a run
-        // for every repository covers one for a single repository
-        const waiting = yield* selectRuns(sql`
+      // Repositories are matched ignoring case, as GitHub does, and a run
+      // for every repository covers one for a single repository
+      const waiting = yield* selectRuns(sql`
           SELECT * FROM runs
           WHERE ${same}
             AND (
@@ -1854,43 +1963,43 @@ export class Store extends Context.Service<
           LIMIT 1
         `);
 
-        if (waiting[0] !== undefined) return waiting[0];
+      if (waiting[0] !== undefined) return waiting[0];
 
-        // A run for every repository would only do again what the waiting
-        // runs for one do, so the oldest becomes it and the rest go. A manual
-        // one stays manual, so it keeps its place ahead of the others.
-        if (scope === null) {
-          const scoped = yield* selectRuns(sql`
+      // A run for every repository would only do again what the waiting
+      // runs for one do, so the oldest becomes it and the rest go. A manual
+      // one stays manual, so it keeps its place ahead of the others.
+      if (scope === null) {
+        const scoped = yield* selectRuns(sql`
             SELECT * FROM runs
             WHERE ${same} AND scope_repo IS NOT NULL
             ORDER BY queued_at, id
           `);
 
-          const [oldest, ...rest] = scoped;
+        const [oldest, ...rest] = scoped;
 
-          if (oldest !== undefined) {
-            const manual =
-              trigger === "manual" ||
-              scoped.some((each) => each.trigger === "manual");
+        if (oldest !== undefined) {
+          const manual =
+            trigger === "manual" ||
+            scoped.some((each) => each.trigger === "manual");
 
-            if (rest.length > 0)
-              yield* sql`DELETE FROM runs WHERE ${sql.in(
-                "id",
-                rest.map((each) => each.id),
-              )}`;
+          if (rest.length > 0)
+            yield* sql`DELETE FROM runs WHERE ${sql.in(
+              "id",
+              rest.map((each) => each.id),
+            )}`;
 
-            const [widened] = yield* selectRuns(sql`
+          const [widened] = yield* selectRuns(sql`
               UPDATE runs
               SET scope_repo = NULL, trigger = ${manual ? "manual" : trigger}
               WHERE id = ${oldest.id}
               RETURNING *
             `);
 
-            if (widened !== undefined) return widened;
-          }
+          if (widened !== undefined) return widened;
         }
+      }
 
-        const [created] = yield* selectRuns(sql`
+      const [created] = yield* selectRuns(sql`
           INSERT INTO runs ${sql.insert({
             id: yield* random.ulid,
             job,
@@ -1911,20 +2020,215 @@ export class Store extends Context.Service<
           RETURNING *
         `);
 
-        if (created === undefined) {
-          return yield* Effect.die(new Error("The new run wasn't returned"));
-        }
+      if (created === undefined) {
+        return yield* Effect.die(new Error("The new run wasn't returned"));
+      }
 
-        return created;
+      return created;
+    });
+
+    /** Whether a run links to the heal, as the run it heals or one that joined it. */
+    const linked = (heal: string) =>
+      sql`EXISTS (SELECT 1 FROM json_each(runs.heals) WHERE value = ${heal})`;
+
+    /**
+     * Link a heal to the run it heals, which starts being healed if nothing
+     * was healing it yet.
+     */
+    const linkHeal = (of: string, heal: string) => sql`
+      UPDATE runs
+      SET heals = json_insert(heals, '$[#]', ${heal}),
+        state = CASE
+          WHEN state IN ('failed', 'heal-waiting') THEN 'healing'
+          ELSE state
+        END
+      WHERE id = ${of} AND NOT ${linked(heal)}
+    `;
+
+    const queueRun = Effect.fn("Store.queueRun")(
+      function* (newRun: NewRun) {
+        const queued = yield* placeRun(newRun);
+
+        if (newRun.heal !== undefined)
+          yield* linkHeal(newRun.heal.of, queued.id);
+
+        return queued;
       },
       sql.withTransaction,
       Effect.mapError(storeError),
+    );
+
+    /**
+     * Join a failure to a heal already under way for the same job and target,
+     * instead of starting another.
+     */
+    const joinHeal = Effect.fn("Store.joinHeal")(function* (
+      id: string,
+      heal: string,
+    ) {
+      yield* linkHeal(id, heal);
+    }, Effect.mapError(storeError));
+
+    /** The job's heals of failures that are queued or running, oldest first. */
+    const activeHeals = Effect.fn("Store.activeHeals")(function* (job: string) {
+      return yield* selectRuns(sql`
+        SELECT * FROM runs
+        WHERE heal_job = ${job} AND state IN ('queued', 'running')
+          AND heal_of NOT IN (
+            SELECT id FROM runs WHERE state = 'handed-off'
+          )
+        ORDER BY queued_at, id
+      `);
+    }, Effect.mapError(storeError));
+
+    /**
+     * Move a failed run nothing is healing on, such as to `parked` when its
+     * job is parked, or `needs-you` when it left something for you.
+     */
+    const moveFailed = Effect.fn("Store.moveFailed")(function* (
+      id: string,
+      state: Domain.RunState,
+    ) {
+      yield* sql`
+        UPDATE runs SET state = ${state} WHERE id = ${id} AND state = 'failed'
+      `;
+    }, Effect.mapError(storeError));
+
+    /**
+     * Where the runs a heal was healing stand once it's stopped, unless
+     * another of their heals is still going or they've been settled.
+     */
+    const leaveHeal = (heal: string, state: Domain.RunState) =>
+      sql`
+        UPDATE runs SET state = ${state}
+        WHERE state IN ('healing', 'with-agent', 'retrying')
+          AND ${linked(heal)}
+          AND NOT EXISTS (
+            SELECT 1 FROM json_each(runs.heals) AS other
+            JOIN runs AS going ON going.id = other.value
+            WHERE going.id != ${heal}
+              AND going.state IN ('queued', 'running')
+          )
+      `.pipe(Effect.asVoid);
+
+    /** Where the runs a heal was healing stand now it's ended. */
+    const endHeal = (heal: Domain.Run) =>
+      RunStates.isHealResult(heal.state)
+        ? leaveHeal(heal.id, RunStates.failureAfter(heal.state))
+        : leaveHeal(heal.id, "failed");
+
+    /**
+     * Follow a run ending on the runs it's linked to: a heal's failures, the
+     * failures one that passed settles, or the failure a retry that didn't
+     * pass was retrying, which is back to having nothing healing it.
+     */
+    const ended = (done: Domain.Run) => {
+      if (done.heal !== null) return endHeal(done);
+
+      if (RunStates.passing.includes(done.state))
+        return settleBy(done).pipe(Effect.asVoid);
+
+      return done.retryOf == null
+        ? Effect.void
+        : sql`
+            UPDATE runs SET state = 'failed'
+            WHERE id = ${done.retryOf} AND state = 'retrying'
+              AND retry = ${done.id}
+          `.pipe(Effect.asVoid);
+    };
+
+    /**
+     * Settle the failures a run that passed shows are over: earlier runs of
+     * the same job and command, for the same released repository, that it
+     * covers. One a heal was involved in is `healed`, any other `recovered`.
+     */
+    const settleBy = (passed: Domain.Run) =>
+      sql`
+        UPDATE runs
+        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+          settled_by = ${passed.id}
+        WHERE ${sql.and([
+          sql`job = ${passed.job}`,
+          sql`heal_of IS NULL`,
+          sql.in("state", Domain.openStates),
+          sql`(queued_at, id) < (SELECT queued_at, id FROM runs WHERE id = ${passed.id})`,
+          sql`coalesce(command, '') = (SELECT coalesce(command, '') FROM runs WHERE id = ${passed.id})`,
+          sql`coalesce(lower(release_repo), '') = ${passed.release?.repo.toLowerCase() ?? ""}`,
+          ...(passed.repo == null
+            ? []
+            : [sql`lower(scope_repo) = ${passed.repo.toLowerCase()}`]),
+        ])}
+      `;
+
+    /**
+     * Settle failed runs a later run got through for, by its consumers rather
+     * than as a whole, given by their own IDs or their heals'.
+     */
+    const settleRuns = Effect.fn("Store.settleRuns")(function* (
+      ids: ReadonlyArray<string>,
+      by: string,
+    ) {
+      if (ids.length === 0) return;
+
+      yield* sql`
+        UPDATE runs
+        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+          settled_by = ${by}
+        WHERE (
+            ${sql.in("id", ids)}
+            OR EXISTS (
+              SELECT 1 FROM json_each(runs.heals) WHERE ${sql.in("value", ids)}
+            )
+          )
+          AND heal_of IS NULL
+          AND ${sql.in("state", Domain.openStates)}
+      `;
+    }, Effect.mapError(storeError));
+
+    /**
+     * Link a retry to the run it retries: a failure run again by hand, or the
+     * runs a heal that queued it heals.
+     */
+    const retried = Effect.fn("Store.retried")(
+      function* (id: string, retry: string) {
+        const current = yield* run(id);
+
+        if (current.heal === null) {
+          if (!Domain.isOpen(current)) return;
+
+          yield* sql`
+            UPDATE runs SET retry = ${retry}, state = 'retrying'
+            WHERE id = ${id}
+          `;
+          yield* sql`UPDATE runs SET retry_of = ${id} WHERE id = ${retry}`;
+
+          return;
+        }
+
+        yield* sql`UPDATE runs SET retry = ${retry} WHERE id = ${id}`;
+        yield* sql`
+          UPDATE runs SET retry_of = ${current.heal.of} WHERE id = ${retry}
+        `;
+        yield* sql`
+          UPDATE runs
+          SET retry = ${retry},
+            state = CASE
+              WHEN state IN ('healing', 'with-agent') THEN 'retrying'
+              ELSE state
+            END
+          WHERE ${linked(id)}
+        `;
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
     const runs = Effect.fn("Store.runs")(function* (filter: {
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
       readonly states?: ReadonlyArray<Domain.RunState> | undefined;
+      /** Only failures nothing has settled yet. */
+      readonly open?: boolean | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
       readonly since?: number | undefined;
@@ -1942,6 +2246,9 @@ export class Store extends Context.Service<
         ...(filter.states === undefined || filter.states.length === 0
           ? []
           : [sql.in("state", filter.states)]),
+        ...(filter.open === true
+          ? [sql.in("state", Domain.openStates), sql`heal_of IS NULL`]
+          : []),
         // In the list's own order, so runs queued in the same millisecond
         // aren't skipped or repeated between pages
         ...(filter.before === undefined
@@ -2119,21 +2426,41 @@ export class Store extends Context.Service<
       ) {
         yield* claimed(id, worker);
 
-        const [ended] = yield* selectRuns(sql`
+        const current = yield* run(id);
+
+        // A heal ends as what it did, which its failed runs then follow
+        const state =
+          current.heal === null
+            ? outcome
+            : RunStates.healResult(
+                {
+                  attention: current.attention,
+                  decision: current.heal.decision,
+                  actions: current.heal.actions,
+                  commit: current.heal.commit,
+                  retry: current.retry ?? null,
+                  changed: current.changes.length > 0,
+                },
+                outcome === "failed",
+              );
+
+        const [done] = yield* selectRuns(sql`
           UPDATE runs
-          SET state = ${outcome}, finished_at = ${yield* Clock.currentTimeMillis},
+          SET state = ${state}, finished_at = ${yield* Clock.currentTimeMillis},
             error = ${error}
           WHERE id = ${id}
           RETURNING *
         `).pipe(Effect.mapError(storeError));
 
-        if (ended === undefined) {
+        if (done === undefined) {
           return yield* Effect.die(
             new Error("The finished run wasn't returned"),
           );
         }
 
-        return ended;
+        yield* ended(done).pipe(Effect.mapError(storeError));
+
+        return done;
       },
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
@@ -2166,6 +2493,14 @@ export class Store extends Context.Service<
           })}
           WHERE id = ${id}
         `.pipe(Effect.mapError(storeError));
+
+        // The agent's session starting puts the failure with it
+        if (update.session !== undefined) {
+          yield* sql`
+            UPDATE runs SET state = 'with-agent'
+            WHERE state = 'healing' AND ${linked(id)}
+          `.pipe(Effect.mapError(storeError));
+        }
       },
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
@@ -2280,6 +2615,17 @@ export class Store extends Context.Service<
           .filter((row) => row.state === state)
           .reduce((sum, row) => sum + row.count, 0);
 
+      // A failure counts as one however it's been healed since, and a heal
+      // that didn't break as having succeeded, as before there were states
+      const failed: ReadonlySet<string> = new Set(Domain.failedStates);
+
+      const healed: ReadonlySet<string> = new Set(
+        Domain.healResults.filter((result) => result !== "failed"),
+      );
+
+      const sum = (keep: (row: (typeof counts)[number]) => boolean) =>
+        counts.filter(keep).reduce((all, row) => all + row.count, 0);
+
       const changed = yield* selectRuns(sql`
         SELECT * FROM runs
         WHERE queued_at >= ${since} AND changes != '[]'
@@ -2295,10 +2641,16 @@ export class Store extends Context.Service<
       return {
         since,
         runs: {
-          succeeded: total("succeeded"),
+          succeeded: sum(
+            (row) =>
+              row.state === "succeeded" ||
+              (row.heals !== 0 && healed.has(row.state)),
+          ),
           skipped: total("skipped"),
           handedOff: total("handed-off"),
-          failed: total("failed"),
+          failed: sum((row) =>
+            row.heals === 0 ? failed.has(row.state) : row.state === "failed",
+          ),
           cancelled: total("cancelled"),
           heals: counts
             .filter((row) => row.heals !== 0)
@@ -2429,7 +2781,22 @@ export class Store extends Context.Service<
         SET run_id = excluded.run_id, issue = excluded.issue,
           waiting_at = excluded.waiting_at
       `;
+
+      yield* sql`
+        UPDATE runs SET state = 'heal-waiting'
+        WHERE id = ${runId} AND state = 'failed'
+      `;
+
+      yield* unheld;
     }, Effect.mapError(storeError));
+
+    // A failure no heal is waiting for any more, such as one a newer failure
+    // took the place of, is back to having nothing healing it
+    const unheld = sql`
+      UPDATE runs SET state = 'failed'
+      WHERE state = 'heal-waiting'
+        AND id NOT IN (SELECT run_id FROM waiting_heals)
+    `;
 
     const stopWaiting = Effect.fn("Store.stopWaiting")(function* (
       job: string,
@@ -2439,6 +2806,8 @@ export class Store extends Context.Service<
         DELETE FROM waiting_heals WHERE job = ${job} AND repo = ${repo}
         RETURNING job
       `;
+
+      yield* unheld;
 
       return rows.length > 0;
     }, Effect.mapError(storeError));
@@ -3644,6 +4013,19 @@ export class Store extends Context.Service<
             Effect.mapError(storeError),
           );
 
+          // A heal dropped before it started was never one
+          if (found.heal !== null) {
+            yield* leaveHeal(id, "failed");
+            yield* sql`
+              UPDATE runs
+              SET heals = (
+                SELECT json_group_array(value) FROM json_each(runs.heals)
+                WHERE value != ${id}
+              )
+              WHERE ${linked(id)}
+            `;
+          }
+
           return { run: found, dropped: true };
         }
 
@@ -3665,6 +4047,8 @@ export class Store extends Context.Service<
             new Error("The cancelled run wasn't returned"),
           );
         }
+
+        yield* ended(cancelled);
 
         return { run: cancelled, dropped: false };
       },
@@ -3738,6 +4122,9 @@ export class Store extends Context.Service<
           RETURNING *
         `);
 
+        // A run lost for good broke, which the runs linked to it then follow
+        for (const lost of failed) yield* ended(lost);
+
         return { requeued: requeuedRuns, failed };
       },
       sql.withTransaction,
@@ -3752,7 +4139,7 @@ export class Store extends Context.Service<
               PARTITION BY job ORDER BY queued_at DESC, id DESC
             ) AS rank
             FROM runs
-            WHERE state IN ('succeeded', 'skipped', 'handed-off', 'failed', 'cancelled')
+            WHERE state NOT IN ('queued', 'running')
           )
           WHERE rank > ${keep} AND queued_at < ${before}
         `;
@@ -4967,6 +5354,14 @@ export class Store extends Context.Service<
         ({ args: [, ids] }) =>
           ids.length === 0 ? [] : [{ topic: "runs" }, { topic: "inbox" }],
         settleHeals,
+      ),
+      activeHeals,
+      joinHeal: announce(touchesRun("runs"), joinHeal),
+      moveFailed: announce(touchesRun("runs"), moveFailed),
+      retried: announce(touches("runs"), retried),
+      settleRuns: announce(
+        ({ args: [ids] }) => (ids.length === 0 ? [] : [{ topic: "runs" }]),
+        settleRuns,
       ),
       known,
       seen: announce(touches("inbox"), seen),

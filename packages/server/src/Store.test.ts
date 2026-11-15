@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import type { Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Option } from "effect";
+import * as RunStates from "./RunStates";
 import { Store } from "./Store";
 
 const run = <A, E>(effect: Effect.Effect<A, E, Store>) =>
@@ -12,6 +13,26 @@ const run = <A, E>(effect: Effect.Effect<A, E, Store>) =>
       Effect.provide(BunServices.layer),
     ),
   );
+
+/** Queue a run of `job`, take it and end it as `outcome`. */
+const finished = Effect.fnUntraced(function* (
+  job: Domain.JobId,
+  outcome: Domain.Outcome,
+  repo: string | null = null,
+) {
+  const store = yield* Store;
+
+  const queued = yield* store.queueRun({
+    job,
+    trigger: "manual",
+    release: null,
+    repo,
+  });
+
+  yield* store.claim([job], "desktop");
+
+  return yield* store.finish(queued.id, "desktop", outcome, null);
+});
 
 const found = (
   number: number,
@@ -1210,6 +1231,223 @@ test("settling a job's heals clears its entry once none still needs a person", (
       expect(yield* needs()).toEqual([]);
     }),
   ));
+
+test("a failed run follows its heal's retry, and the retry passing heals it", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const failed = yield* finished("labels", "failed");
+
+      expect(failed.state).toBe("failed");
+
+      const heal = yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: { of: failed.id, job: "labels", target: { kind: "upkeep" } },
+      });
+
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "healing",
+        heals: [heal.id],
+      });
+
+      yield* store.claim(["heal"], "desktop");
+      yield* store.updateHeal(heal.id, "desktop", { decision: "retry" });
+
+      const retry = yield* store.queueRun({
+        job: "labels",
+        trigger: "heal",
+        release: null,
+      });
+
+      yield* store.retried(heal.id, retry.id);
+      yield* store.finish(heal.id, "desktop", "succeeded", null);
+
+      expect((yield* store.run(heal.id)).state).toBe("retried");
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "retrying",
+        retry: retry.id,
+      });
+      expect((yield* store.run(retry.id)).retryOf).toBe(failed.id);
+
+      yield* store.claim(["labels"], "desktop");
+      yield* store.finish(retry.id, "desktop", "succeeded", null);
+
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "healed",
+        settledBy: retry.id,
+      });
+    }),
+  ));
+
+test("a failure joining a heal under way follows it, and stays open until a run passes", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const first = yield* finished("labels", "failed");
+
+      const heal = yield* store.queueRun({
+        job: "heal",
+        trigger: "heal",
+        release: null,
+        heal: { of: first.id, job: "labels", target: { kind: "upkeep" } },
+      });
+
+      const second = yield* finished("labels", "failed");
+
+      expect((yield* store.activeHeals("labels")).map(({ id }) => id)).toEqual([
+        heal.id,
+      ]);
+
+      yield* store.joinHeal(second.id, heal.id);
+
+      yield* store.claim(["heal"], "desktop");
+      yield* store.updateHeal(heal.id, "desktop", {
+        decision: "fix",
+        session: "ses_a",
+      });
+
+      for (const { id } of [first, second])
+        expect((yield* store.run(id)).state).toBe("with-agent");
+
+      yield* store.report(heal.id, "desktop", { attention: true });
+      yield* store.finish(heal.id, "desktop", "succeeded", null);
+
+      expect((yield* store.run(heal.id)).state).toBe("needs-you");
+      expect(
+        (yield* store.runs({ open: true, limit: 10 })).map(({ id, state }) => [
+          id,
+          state,
+        ]),
+      ).toEqual([
+        [second.id, "needs-you"],
+        [first.id, "needs-you"],
+      ]);
+
+      const passed = yield* finished("labels", "succeeded");
+
+      for (const { id } of [first, second])
+        expect(yield* store.run(id)).toMatchObject({
+          state: "healed",
+          settledBy: passed.id,
+        });
+
+      expect(yield* store.runs({ open: true, limit: 10 })).toEqual([]);
+    }),
+  ));
+
+test("a failure with no heal recovers once a run covering its repository passes", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const failed = yield* finished("labels", "failed", "timmo001/a");
+
+      yield* finished("labels", "succeeded", "timmo001/b");
+
+      expect((yield* store.run(failed.id)).state).toBe("failed");
+
+      const passed = yield* finished("labels", "succeeded");
+
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "recovered",
+        settledBy: passed.id,
+      });
+    }),
+  ));
+
+test("a failure's heal waiting on the limit, or its job parked, shows on its run", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const held = yield* finished("bump", "failed");
+
+      yield* store.wait("bump", "timmo001/a", held.id, null);
+
+      expect((yield* store.run(held.id)).state).toBe("heal-waiting");
+
+      const parked = yield* finished("labels", "failed");
+
+      yield* store.moveFailed(parked.id, "parked");
+
+      expect((yield* store.run(parked.id)).state).toBe("parked");
+    }),
+  ));
+
+test("runs from before run states are filled in from their heals and later runs", () => {
+  const row = (
+    id: string,
+    queuedAt: number,
+    fields: Partial<RunStates.Row> = {},
+  ): RunStates.Row => ({
+    id,
+    job: "labels",
+    state: "failed",
+    scopeRepo: null,
+    releaseRepo: null,
+    command: null,
+    queuedAt,
+    attention: false,
+    changed: false,
+    healOf: null,
+    healDecision: null,
+    healActions: [],
+    healCommit: null,
+    healSession: null,
+    ...fields,
+  });
+
+  const heal = (id: string, queuedAt: number, of: string, fields = {}) =>
+    row(id, queuedAt, {
+      job: "heal",
+      state: "succeeded",
+      healOf: of,
+      ...fields,
+    });
+
+  const filled = RunStates.backfill(
+    [
+      row("f1", 1),
+      heal("h1", 2, "f1", {
+        healDecision: "retry",
+        healActions: ["Queued labels again as r1"],
+      }),
+      row("r1", 3, { state: "succeeded" }),
+      row("f2", 4, { job: "bump" }),
+      row("f3", 5, { job: "deps" }),
+      heal("h3", 6, "f3", { healDecision: "fix", attention: true }),
+      row("f4", 7, { job: "drift" }),
+      heal("h4", 8, "f4", { healDecision: "fix", healCommit: "abc1234" }),
+      row("f5", 9, { job: "ci", scopeRepo: "timmo001/a" }),
+      row("p5", 10, { job: "ci", state: "succeeded", scopeRepo: "timmo001/b" }),
+    ],
+    new Set(["f2"]),
+  );
+
+  const of = (id: string) => filled.find((fill) => fill.id === id);
+
+  expect(of("f1")).toEqual({
+    id: "f1",
+    state: "healed",
+    heals: ["h1"],
+    retry: "r1",
+    retryOf: null,
+    settledBy: "r1",
+  });
+  expect(of("h1")).toMatchObject({ state: "retried", retry: "r1" });
+  expect(of("r1")).toMatchObject({ state: "succeeded", retryOf: "f1" });
+  expect(of("f2")?.state).toBe("heal-waiting");
+  expect(of("h3")?.state).toBe("needs-you");
+  expect(of("f3")?.state).toBe("needs-you");
+  expect(of("h4")?.state).toBe("fix-pushed");
+  expect(of("f4")?.state).toBe("fix-pushed");
+  // Another repository passing says nothing about this one
+  expect(of("f5")).toBeUndefined();
+});
 
 test("a newer waiting heal replaces the older one for the same consumer", () =>
   run(
