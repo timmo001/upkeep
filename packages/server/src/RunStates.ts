@@ -86,11 +86,13 @@ export const failureAfter = (result: HealResult): Domain.RunState => {
 };
 
 /**
- * The states a later run passing ends in, as a settled failure's own. A run
- * that handed off may have handed off the very thing that failed, so it
- * settles failures only through the heals and waiting heals it reached.
+ * The states a later run passing ends in, as a settled failure's own: one
+ * that did its work, or found none to do, such as a machine job with nothing
+ * to update. A run that handed off may have handed off the very thing that
+ * failed, so it settles failures only through the heals and waiting heals it
+ * reached.
  */
-export const passing: ReadonlyArray<Domain.RunState> = ["succeeded"];
+export const passing: ReadonlyArray<Domain.RunState> = ["succeeded", "skipped"];
 
 /** A run as the backfill reads it, from the columns that existed then. */
 export interface Row {

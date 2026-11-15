@@ -1356,6 +1356,15 @@ test("a failure with no heal recovers once a run covering its repository passes"
         state: "recovered",
         settledBy: passed.id,
       });
+
+      // A run that found nothing to do got through too
+      const again = yield* finished("labels", "failed");
+      const quiet = yield* finished("labels", "skipped");
+
+      expect(yield* store.run(again.id)).toMatchObject({
+        state: "recovered",
+        settledBy: quiet.id,
+      });
     }),
   ));
 

@@ -488,7 +488,8 @@ it.
 | `healed`       | Is over: a later run passed, after a heal                              |
 | `recovered`    | Is over: a later run passed, with no heal involved                     |
 
-A later run settles a failure when it succeeds for the same job and command,
+A later run settles a failure when it succeeds, or finds nothing to do, for the
+same job and command,
 for the same released repository and covering its repository: a run narrowed
 to another repository doesn't. A run that reaches the consumers a heal was for,
 or whose heal was held for, settles their failures too. Each failed run links
