@@ -6,7 +6,8 @@
  * it off. A date there narrows the list to one day's runs, which the server
  * picks, so any day can be looked at without scrolling back to it, and Still
  * open keeps only the failures nothing has settled yet. Every filter offers
- * each value it can take, not only those the runs shown have. The filters
+ * each value it can take, not only those the runs shown have. Until the State
+ * filter is changed, only the runs waiting, going or failed show. The filters
  * are kept in the page's query, so a link keeps them; the table's own view
  * state stays in groundwork's shared store.
  * Older runs load a page at a time as the table scrolls to its end.
@@ -210,8 +211,16 @@ const setQuery = (part: ReadonlyMap<string, string | null>) => {
   history.replaceState(history.state, "", url);
 };
 
-/** The state every job's runs leave out until someone changes the filter. */
-const leftOut: Domain.RunState = "skipped";
+/**
+ * The states the runs show until someone changes the filter: what's waiting
+ * or going, and the failures nothing has settled yet. Runs that passed, were
+ * settled or did nothing are a pick away.
+ */
+const shownByDefault: ReadonlySet<string> = new Set<Domain.RunState>([
+  "queued",
+  "running",
+  ...Domain.openStates,
+]);
 
 const sameValues = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
   a.length === b.length && a.every((value) => b.includes(value));
@@ -458,15 +467,14 @@ export class UpkeepRuns extends LitElement {
   }
 
   /**
-   * The states the server keeps for older pages: the ones chosen, every one
-   * but those the default leaves out, or all of them (empty).
+   * The states the server keeps for older pages: the ones chosen, or those
+   * shown by default.
    */
   #serverStates(chosen: ReadonlyArray<string> | undefined) {
-    if (chosen !== undefined) return chosen;
-
-    return this.job === ""
-      ? Domain.RunState.literals.filter((state) => state !== leftOut)
-      : [];
+    return (
+      chosen ??
+      Domain.RunState.literals.filter((state) => shownByDefault.has(state))
+    );
   }
 
   #laneOf(job: string) {
@@ -483,13 +491,12 @@ export class UpkeepRuns extends LitElement {
   }
 
   /**
-   * What a filter shows until someone changes it: everything, but every
-   * job's runs leave out the ones that found nothing to do, which a job's own
-   * page still lists.
+   * What a filter shows until someone changes it: everything, but only the
+   * runs waiting, going or failed, on every job's page and one job's alike.
    */
   #defaultOf(filter: RunFilter, values: ReadonlyArray<string>) {
-    return filter.id === "state" && this.job === ""
-      ? values.filter((value) => value !== leftOut)
+    return filter.id === "state"
+      ? values.filter((value) => shownByDefault.has(value))
       : [];
   }
 
