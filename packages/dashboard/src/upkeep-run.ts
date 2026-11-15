@@ -138,6 +138,52 @@ const fact = (label: string, value: string | TemplateResult) =>
 
 const target = (heal: Domain.Heal) => Domain.targetName(heal.target);
 
+/**
+ * The runs a run is linked to: for a failure its heals, its retry and the run
+ * that settled it, for a retry the run it retries, and for a heal the retry
+ * it queued. Each is missing from older servers.
+ */
+const runLinks = (current: Domain.Run) => {
+  const heals = current.heals ?? [];
+
+  return html`
+    ${
+      heals.length === 0
+        ? null
+        : fact(
+            "Heals",
+            html`${heals.map(
+              (id, index) =>
+                html`${index === 0 ? null : ", "}<a href=${runHref(id)}
+                    >${heals.length === 1 ? "Heal" : `Heal ${index + 1}`}</a
+                  >`,
+            )}`,
+          )
+    }
+    ${
+      current.retryOf == null
+        ? null
+        : fact(
+            "Retry of",
+            html`<a href=${runHref(current.retryOf)}>The failed run</a>`,
+          )
+    }
+    ${
+      current.retry == null
+        ? null
+        : fact("Retry", html`<a href=${runHref(current.retry)}>The new run</a>`)
+    }
+    ${
+      current.settledBy == null
+        ? null
+        : fact(
+            "Settled by",
+            html`<a href=${runHref(current.settledBy)}>The run that passed</a>`,
+          )
+    }
+  `;
+};
+
 const healFacts = (
   heal: Domain.Heal,
   worker: string | null,
@@ -408,11 +454,11 @@ export class UpkeepRun extends LitElement {
         </gw-page-header>
         <dl>
           ${fact(
-            "State",
+            current.heal === null ? "State" : "Result",
             html`${stateBadge(current.state)}
             ${current.attention ? attentionBadge : null}`,
           )}
-          ${fact("Trigger", capitalise(current.trigger))}
+          ${runLinks(current)} ${fact("Trigger", capitalise(current.trigger))}
           ${
             current.release === null
               ? null
