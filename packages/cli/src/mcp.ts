@@ -35,10 +35,11 @@ const JobsTool = Tool.make("jobs", {
 
 const Runs = Tool.make("runs", {
   description:
-    "List runs on the server in $UPKEEP_SERVER, newest first, optionally of one job or in one state",
+    "List runs on the server in $UPKEEP_SERVER, newest first, optionally of one job or in one state, or with open only the failures nothing has settled yet",
   parameters: Schema.Struct({
     job: Schema.optionalKey(Domain.JobId),
     state: Schema.optionalKey(Domain.RunState),
+    open: Schema.optionalKey(Schema.Boolean),
     limit: Schema.optionalKey(Schema.Int),
   }),
   success: Schema.Struct({ runs: Schema.Array(Domain.Run) }),
@@ -306,11 +307,21 @@ export const toolsLayer = Tools.toLayer(
       runs: (query: {
         readonly job?: string | undefined;
         readonly state?: Domain.RunState | undefined;
+        readonly open?: boolean | undefined;
         readonly limit?: number | undefined;
       }) =>
         onServer(
           Client.use((client) =>
-            client.runs.list({ query }).pipe(Effect.map((runs) => ({ runs }))),
+            client.runs
+              .list({
+                query: {
+                  job: query.job,
+                  state: query.state,
+                  open: query.open === undefined ? undefined : `${query.open}`,
+                  limit: query.limit,
+                },
+              })
+              .pipe(Effect.map((runs) => ({ runs }))),
           ),
         ),
       activity: (input: { readonly hours?: number | undefined }) =>
