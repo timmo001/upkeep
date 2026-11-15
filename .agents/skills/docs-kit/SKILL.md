@@ -32,15 +32,17 @@ on `main`, follow the installed release.
    Groundwork's set renders its stylesheet with `blumeThemeCss` from
    `@timmo001/groundwork-tokens/runtime` in a site script, which writes it into
    `theme.css` between marker comments, as the docs-kit README shows, with
+   the `css` `runtimeTheme` returns beside it, since the theme picker's
+   controls read the Groundwork tokens under the site theme's id, and
    `blumeThemesCss` too to offer it in the theme picker. Blume
    copies `theme.css` into its build folder, so a relative `@import` of a
    generated file breaks the build. Leave `theme.accent` out of the
    config. Put site overrides, such as the `--home-banner-*` properties, after
    them. `HeaderSearch` brings a Light, Dark and Darker picker; to offer more
    themes, import `themes/all.css` too and pass `themes` to `HeaderSearch` from
-   a wrapper, as the README shows: the site's own theme first, then any other
-   Groundwork themes, then the optional ones from `optionalThemeChoices`,
-   which carry their `family` and `mode`. For a site in another language, pass
+   a wrapper, as the README shows, from `themeChoices(<site theme>)`: the
+   site's own theme first with no heading, then Groundwork's core themes,
+   then the optional ones under their `family`. For a site in another language, pass
    `label`, `modeLabel`, `modeLabels`, `unavailableHint` and `githubLabel` to
    `HeaderSearch`.
 5. Generate brand images with `writeBrandImages` from a site script rather than
