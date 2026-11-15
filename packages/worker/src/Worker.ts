@@ -112,8 +112,10 @@ export interface WorkOptions {
    */
   readonly drain?: Effect.Effect<void>;
   /**
-   * How long a drain waits for the runs in hand, 15 minutes by default, so a
-   * long run doesn't hold up every other job. What's still going then is
+   * How long a drain waits for the runs in hand, 2 hours by default, so a
+   * run that never ends doesn't hold up every other job. A full `deps` run
+   * takes up to that long, and each release of Upkeep drains the worker, so a
+   * shorter limit cut it off over and over. What's still going then is
    * interrupted, and the server puts it back at the front of the queue.
    */
   readonly drainLimit?: Duration.Input;
@@ -761,7 +763,7 @@ export const work = Effect.fn("Worker.work")(function* (
   // Past the drain's limit, the lanes' runs are interrupted by losing the
   // race, and the ones beside them here
   const cutOff = Deferred.await(draining).pipe(
-    Effect.andThen(Effect.sleep(options.drainLimit ?? "15 minutes")),
+    Effect.andThen(Effect.sleep(options.drainLimit ?? "2 hours")),
     Effect.andThen(
       Effect.logInfo(
         "Still draining at the limit: interrupting the runs left, so they run again",
