@@ -892,6 +892,7 @@ const RunsHandlers = HttpApiBuilder.group(
             trigger: "manual" as const,
             release: found.release,
             repo: found.repo ?? null,
+            command: found.command,
           };
 
           const queued = yield* found.heal === null
@@ -1385,6 +1386,7 @@ const WorkHandlers = HttpApiBuilder.group(
             trigger: "heal",
             release: run.release,
             repo: run.repo ?? null,
+            command: run.command,
           });
 
           if (Option.isSome(queued))

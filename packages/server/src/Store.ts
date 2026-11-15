@@ -1315,7 +1315,7 @@ export interface NewRun {
   /** The one repository it works on, or every one the job tracks without it. */
   readonly repo?: string | null;
   /** For a command run: what it's asked to do. */
-  readonly command?: Domain.Command;
+  readonly command?: Domain.Command | null;
   /** For a heal: the failed run, its job, what to heal and its triage issue. */
   readonly heal?: {
     readonly of: string;
@@ -1936,8 +1936,7 @@ export class Store extends Context.Service<
       command,
       heal,
     }: NewRun) {
-      const commandColumn =
-        command === undefined ? null : JSON.stringify(command);
+      const commandColumn = command == null ? null : JSON.stringify(command);
 
       const scope = repo ?? null;
 
