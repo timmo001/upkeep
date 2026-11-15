@@ -45,8 +45,8 @@ waits for it.
 
 ## Rollout
 
-Changes made here are pushed as they land, with no go-ahead needed. Once
-`mise run check` passes for a change:
+Changes made here are pushed as they land, with no go-ahead needed and no
+Plannotator review. Once `mise run check` passes for a change:
 
 1. Commit the session's own changes through `dot git commit`, leaving other
    sessions' work alone, and push.
