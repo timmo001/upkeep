@@ -219,7 +219,8 @@ export type ReleaseRepo = typeof ReleaseRepo.Type;
 
 /**
  * How this worker tells you something new needs you, such as a heal that
- * asked, a parked job or a skill change waiting. `command` runs once for each,
+ * asked, a parked job, a skill change waiting or a new item in the Attention
+ * page's Needs you. `command` runs once for each,
  * with `{title}` and `{url}` (its dashboard page) replaced, such as
  * `notify-send`. `dashboard` is where the pages are, `$UPKEEP_SERVER` by
  * default; set it to the Home Assistant sidebar's address to open them there.

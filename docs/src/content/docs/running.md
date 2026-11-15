@@ -82,11 +82,16 @@ listing what does, and an `upkeep-<health>` class.
 
 A worker with `notify` in its config file tells you when something new needs
 you, and nothing else: no green runs, and decisions still go to the
-Plannotator Inbox. Once a minute it reads the status and runs `command` for
-each item it hasn't seen, with `{title}` and `{url}` (the item's dashboard
-page) filled in. `dashboard` is where those pages are, `$UPKEEP_SERVER` by
-default. The first read after the worker starts only records what's there, so
-a restart doesn't repeat old notifications.
+Plannotator Inbox. Once a minute it reads the status and the Attention page,
+and runs `command` for each item it hasn't seen, with `{title}` and `{url}`
+(the item's dashboard page) filled in. From the Attention page that's each new
+item in Needs you, such as a review asked of you or your pull request ready to
+merge, titled with its repository, number and why; hidden items wait until
+they change, and work items stay quiet outside work time, as the attention
+job's `workTime` command last said, and don't arrive later. `dashboard` is
+where those pages are, `$UPKEEP_SERVER` by default. The first read after the
+worker starts only records what's there, so a restart doesn't repeat old
+notifications.
 
 ```json
 {
