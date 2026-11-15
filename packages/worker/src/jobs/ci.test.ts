@@ -29,7 +29,6 @@ test("only the latest finished run of each workflow counts", () => {
       run("Build", "success"),
       run("Build", "failure"),
       run("Lint", "failure"),
-      run("Docs", null, { status: "in_progress" }),
       run("Docs", "success"),
     ],
     active,
@@ -37,6 +36,22 @@ test("only the latest finished run of each workflow counts", () => {
 
   expect(failed.map((item) => item.workflowName)).toEqual(["Lint"]);
   expect([...passing].toSorted()).toEqual(["Build", "Docs"]);
+});
+
+test("a workflow still running isn't red for the old run before it", () => {
+  const { failed, passing, pending } = latest(
+    [
+      run("Build", null, { status: "in_progress" }),
+      run("Build", "failure"),
+      run("Lint", null, { status: "queued" }),
+      run("Lint", "success"),
+    ],
+    active,
+  );
+
+  expect(failed).toHaveLength(0);
+  expect(passing.size).toBe(0);
+  expect([...pending].toSorted()).toEqual(["Build", "Lint"]);
 });
 
 test("cancelled, pull request and dynamic runs say nothing about the branch", () => {

@@ -51,8 +51,10 @@ type Thread = typeof Thread.Type;
 const passed = new Set(["success", "skipped", "neutral"]);
 
 /**
- * How the branch stands: the latest finished run of each workflow that's
- * still active, so one since removed or turned off doesn't count.
+ * How the branch stands: the latest run of each workflow that's still
+ * active, so one since removed or turned off doesn't count. A workflow whose
+ * newest run is still going is pending: the finished run before it is about
+ * the previous commit, so it says nothing about the branch now.
  */
 export const latest = (
   runs: ReadonlyArray<Workflow.Run>,
@@ -61,6 +63,7 @@ export const latest = (
   const seen = new Set<string>();
   const failed: Array<Workflow.Run> = [];
   const passing = new Set<string>();
+  const pending = new Set<string>();
 
   // Runs come newest first; a cancelled run was usually replaced, so it says
   // nothing about the branch either way. Dynamic runs are GitHub's own jobs,
@@ -71,7 +74,6 @@ export const latest = (
     if (
       item.event.startsWith("pull_request") ||
       item.event === "dynamic" ||
-      item.status !== "completed" ||
       item.conclusion === "cancelled" ||
       !active.has(workflow) ||
       seen.has(workflow)
@@ -80,11 +82,12 @@ export const latest = (
 
     seen.add(workflow);
 
-    if (passed.has(item.conclusion ?? "")) passing.add(workflow);
+    if (item.status !== "completed") pending.add(workflow);
+    else if (passed.has(item.conclusion ?? "")) passing.add(workflow);
     else failed.push(item);
   }
 
-  return { failed, passing };
+  return { failed, passing, pending };
 };
 
 /** The workflow and branch a CI failure notification is about. */
@@ -339,7 +342,12 @@ const ciRepository = Effect.fnUntraced(function* (
 
   if (read.state === undefined) return "green" as const;
 
-  const { branch, failed, passing } = read.state;
+  const { branch, failed, passing, pending } = read.state;
+
+  if (pending.size > 0)
+    yield* RunLog.info(
+      `${repo}: ${listed([...pending].toSorted())} still running on ${branch}, so not counted red; its completion queues ci again`,
+    );
 
   yield* dismiss(repo, branch, passing, context.threads);
 
