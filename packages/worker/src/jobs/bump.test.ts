@@ -5,9 +5,36 @@ import {
   currentVersions,
   Edit,
   failedOutput,
+  missingOnNpm,
   needed,
   rewrite,
+  tarballOf,
 } from "./bump";
+
+test("an install fails for a version npm doesn't serve yet only on those errors", () => {
+  expect(
+    missingOnNpm(
+      'error: No version matching "1.2.3" found for specifier "x" (but package exists)',
+    ),
+  ).toBe(true);
+  expect(
+    missingOnNpm("ERR_PNPM_NO_MATCHING_VERSION  No matching version"),
+  ).toBe(true);
+  expect(
+    missingOnNpm("GET https://registry.npmjs.org/x/-/x-1.2.3.tgz - 404"),
+  ).toBe(true);
+  expect(missingOnNpm("error: tests failed")).toBe(false);
+});
+
+test("a version is served once the package's list has it with its tarball", () => {
+  const packument = {
+    versions: { "1.0.0": { dist: { tarball: "https://r/x-1.0.0.tgz" } } },
+  };
+
+  expect(tarballOf(packument, "1.0.0")).toBe("https://r/x-1.0.0.tgz");
+  expect(tarballOf(packument, "1.1.0")).toBeUndefined();
+  expect(tarballOf({ versions: {} }, "1.0.0")).toBeUndefined();
+});
 
 const old = "a".repeat(40);
 const sha = "b".repeat(40);

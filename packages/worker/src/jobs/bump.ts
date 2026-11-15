@@ -26,6 +26,7 @@ import {
   Match,
   Option,
   Path,
+  Predicate,
   Schedule,
   Schema,
   Semaphore,
@@ -275,17 +276,67 @@ export const needed = (
 };
 
 /**
+ * How npm answers when a version isn't served yet, though its own address
+ * already answers: the installer reads the package's version list, which
+ * lags, and then downloads the tarball, which can 404 for a while after.
+ */
+const notOnNpm =
+  /No version matching|ERR_PNPM_NO_MATCHING_VERSION|\(but package exists\)|The latest release of \S+ is|ETARGET|No matching version found|\.tgz\b.*\b404\b|\b404\b.*\.tgz\b/;
+
+/** Whether an install failed only because a new version isn't on npm yet. */
+export const missingOnNpm = (output: string) => notOnNpm.test(output);
+
+const Packument = Schema.Struct({
+  versions: Schema.Record(
+    Schema.String,
+    Schema.Struct({ dist: Schema.Struct({ tarball: Schema.String }) }),
+  ),
+});
+
+/** Where a version's tarball is, once npm's version list has the version. */
+export const tarballOf = (packument: typeof Packument.Type, version: string) =>
+  packument.versions[version]?.dist.tarball;
+
+/**
+ * Whether a version can be installed from npm: its package's version list has
+ * it and its tarball downloads. The version's own address answers before
+ * either, which sends the installers away with "No version matching" or a 404.
+ */
+const servedByNpm = Effect.fnUntraced(function* (
+  name: string,
+  version: string,
+) {
+  const listed = yield* HttpClient.get(
+    `https://registry.npmjs.org/${name.replace("/", "%2F")}`,
+    { headers: { accept: "application/vnd.npm.install-v1+json" } },
+  );
+
+  if (listed.status !== 200) return false;
+
+  const packument = Schema.decodeUnknownOption(Packument)(yield* listed.json);
+
+  if (Option.isNone(packument)) return false;
+
+  const tarball = tarballOf(packument.value, version);
+
+  if (tarball === undefined) return false;
+
+  return (yield* HttpClient.head(tarball)).status === 200;
+});
+
+/**
  * Wait for a version to reach npm, since the release usually starts the
  * publish. Checks every 15 seconds and gives up after 20 minutes, warning
  * that its consumers are left.
  */
 const published = Effect.fnUntraced(function* (name: string, version: string) {
   for (let attempt = 0; attempt < 80; attempt++) {
-    const response = yield* HttpClient.get(
-      `https://registry.npmjs.org/${name}/${version}`,
+    // A failed look is the same as not yet, and the next one tries again
+    const served = yield* servedByNpm(name, version).pipe(
+      Effect.catch(() => Effect.succeed(false)),
     );
 
-    if (response.status === 200) {
+    if (served) {
       if (attempt > 0) yield* RunLog.info(`${name}@${version} is on npm`);
 
       return true;
@@ -527,7 +578,24 @@ export const install = Effect.fnUntraced(function* (
         yield* tool(options.mise, found[1], found[2], {
           cwd: path.join(directory, folder),
           trusted: options.trusted,
-        });
+        }).pipe(
+          // npm can still be catching up with a version just published
+          Effect.tapError((error) =>
+            Predicate.hasProperty(error, "message") &&
+            missingOnNpm(String(error.message))
+              ? RunLog.info(
+                  `${found[1]} install in ${lockfile}: a new version isn't on npm yet, waiting`,
+                )
+              : Effect.void,
+          ),
+          Effect.retry({
+            while: (error) =>
+              Predicate.hasProperty(error, "message") &&
+              missingOnNpm(String(error.message)),
+            schedule: Schedule.exponential("15 seconds"),
+            times: 5,
+          }),
+        );
 
         done.add(lockfile);
       }
