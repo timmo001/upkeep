@@ -123,7 +123,8 @@ const opencodeHere = Effect.gen(function* () {
 
 /**
  * Every schedule on the sessions the server says this worker's agents ran
- * in. A session OpenCode here no longer has shows none.
+ * in. A session OpenCode here no longer has, or whose project has schedules
+ * off, shows none rather than hiding every other session's.
  */
 const gather = Effect.gen(function* () {
   const client = yield* Client;
@@ -132,7 +133,14 @@ const gather = Effect.gen(function* () {
 
   const found = yield* Effect.forEach(
     sessions,
-    ({ session }) => list(opencode, session, options),
+    ({ session }) =>
+      list(opencode, session, options).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug(`No schedules read for ${session}`, cause).pipe(
+            Effect.as([]),
+          ),
+        ),
+      ),
     { concurrency: 4 },
   );
 
