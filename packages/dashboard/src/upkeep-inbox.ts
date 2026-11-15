@@ -12,6 +12,8 @@ import { always, AtomController, registry } from "./AtomController.ts";
 import { plural, summarise, titlesOf, type Titles } from "./entries.ts";
 import {
   phArrowRight,
+  phChatCircle,
+  phCheck,
   phCheckCircle,
   phChecks,
   phClockCounterClockwise,
@@ -21,6 +23,7 @@ import {
 import { agentSession, empty, jobName, shared, time, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import {
+  askInbox,
   dismissEntry,
   inbox,
   jobHref,
@@ -137,6 +140,27 @@ export class UpkeepInbox extends LitElement {
               variant="neutral"
               icon=${phArrowRight}
               ><a href=${runHref(entry.run)}>Open the run</a></gw-button
+            >`
+      }
+      ${
+        entry.ask === null || entry.session === null
+          ? nothing
+          : html`<gw-button
+              slot="actions"
+              size="small"
+              appearance="outlined"
+              variant="neutral"
+              icon=${phChatCircle}
+              @click=${(event: Event) => {
+                const button = event.currentTarget;
+
+                if (entry.ask !== null && entry.session !== null)
+                  registry.set(askInbox, { ...entry.session, run: entry.ask });
+
+                if (button instanceof HTMLElement)
+                  button.setAttribute("icon", phCheck);
+              }}
+              >Ask me in the Inbox</gw-button
             >`
       }
       <gw-button

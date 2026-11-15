@@ -1288,6 +1288,13 @@ export const Entry = Schema.Struct({
   runJob: Schema.NullOr(JobId),
   /** For an agent waiting on you: its session, to open it. */
   session: Schema.NullOr(EntrySession),
+  /**
+   * The run whose agent left work for you, when its session can ask you in
+   * the Plannotator Inbox. A permission prompt's agent can't, as it waits.
+   */
+  ask: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   /** Only routine changes, or moved there, so it's folded away. */
   routine: Schema.Boolean,
   /** Who decided `routine`. */

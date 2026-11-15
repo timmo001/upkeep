@@ -1175,6 +1175,95 @@ test("dismissing a heal's entry or run clears what it needs", () =>
     }),
   ));
 
+test("dismissing the latest of a job's heals keeps the entry for the ones still waiting", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const needing = Effect.fnUntraced(function* (repo: string) {
+        yield* store.queueRun({
+          job: "heal",
+          trigger: "heal",
+          release: null,
+          heal: {
+            of: `failed-${repo}`,
+            job: "drift",
+            target: { kind: "consumer", repo },
+          },
+        });
+
+        const id = Option.getOrThrow(
+          yield* store.claim(["heal"], "desktop"),
+        ).id;
+
+        yield* store.updateHeal(id, "desktop", { decision: "fix" });
+        yield* store.report(id, "desktop", {
+          summary: `Left ${repo} for you`,
+          attention: true,
+        });
+        yield* store.finish(id, "desktop", "succeeded", null);
+
+        return id;
+      });
+
+      const first = yield* needing("timmo001/a");
+      const second = yield* needing("timmo001/b");
+
+      const needs = () =>
+        store
+          .inbox(0)
+          .pipe(
+            Effect.map(({ entries }) =>
+              entries.filter((entry) => entry.kind === "needs"),
+            ),
+          );
+
+      yield* store.dismissRun(second);
+
+      const [entry] = yield* needs();
+
+      expect(entry?.run).toBe(first);
+      expect(entry?.detail).toBe("Left timmo001/a for you");
+
+      yield* store.dismissRun(first);
+
+      expect(yield* needs()).toEqual([]);
+    }),
+  ));
+
+test("a run that isn't a heal needs you when it leaves something for you", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({ job: "bump", trigger: "manual", release: null });
+
+      const id = Option.getOrThrow(yield* store.claim(["bump"], "desktop")).id;
+
+      yield* store.report(id, "desktop", { attention: true });
+      yield* store.report(id, "desktop", { summary: "Held an update back" });
+
+      const needs = () =>
+        store
+          .inbox(0)
+          .pipe(
+            Effect.map(({ entries }) =>
+              entries.filter((entry) => entry.kind === "needs"),
+            ),
+          );
+
+      const [entry] = yield* needs();
+
+      expect(entry?.run).toBe(id);
+      expect(entry?.detail).toBe("Held an update back");
+      expect(entry?.count).toBe(1);
+
+      yield* store.dismissRun(id);
+
+      expect(yield* needs()).toEqual([]);
+    }),
+  ));
+
 test("settling a job's heals clears its entry once none still needs a person", () =>
   run(
     Effect.gen(function* () {
@@ -1984,7 +2073,8 @@ test("parking needs a person until the job is unparked", () =>
 
       yield* store.markRead(undefined);
 
-      expect((yield* store.inbox(Date.now() + 1)).entries).toEqual([]);
+      // Read and old, it still needs you
+      expect((yield* store.inbox(Date.now() + 1)).entries.length).toBe(1);
 
       yield* store.unpark("bump");
 

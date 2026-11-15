@@ -917,6 +917,31 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* settleHealRuns(sql);
   }),
+  // A heal's entry went when you dealt with the latest of the heals sharing
+  // it, and a parked heal kept waiting on you after its job was unparked
+  "0044_waiting_needs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      UPDATE runs SET attention = 0
+      WHERE heal_decision = 'park' AND attention = 1
+        AND heal_job NOT IN (SELECT job FROM parked)
+    `;
+
+    const latest = (column: string) => sql`
+      SELECT ${sql(column)} FROM runs
+      WHERE runs.attention = 1 AND 'needs:heal:' || runs.heal_job || ':' || coalesce(runs.heal_decision, 'ask') = entries.key
+      ORDER BY runs.queued_at DESC LIMIT 1
+    `;
+
+    yield* sql`
+      UPDATE entries
+      SET dismissed_at = NULL, run = (${latest("id")}),
+        detail = coalesce((${latest("summary")}), detail)
+      WHERE kind = 'needs' AND key LIKE 'needs:heal:%'
+        AND dismissed_at IS NOT NULL AND EXISTS (${latest("id")})
+    `;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1410,6 +1435,9 @@ const jobName = (id: string) =>
 
 /** The entry of a parked job. */
 const parkedKey = (job: string) => `needs:parked:${job}`;
+
+/** The entry for a run, not a heal, that left something for a person. */
+const runNeedsKey = (run: string) => `needs:run:${run}`;
 
 /** The start of the entries for the permission prompts on a worker's machine. */
 const promptPrefix = (worker: string) => `needs:permission:${worker}:`;
@@ -2351,6 +2379,23 @@ export class Store extends Context.Service<
           AND ${sql.in("state", Domain.openStates)}
       `;
       yield* settleHealRuns(sql);
+
+      // A run that left something for you no longer needs you once settled
+      const cleared = yield* sql<{ id: string }>`
+        UPDATE runs SET attention = 0
+        WHERE settled_by = ${by} AND heal_of IS NULL AND attention = 1
+        RETURNING id
+      `;
+
+      if (cleared.length > 0) {
+        yield* sql`
+          UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+          WHERE dismissed_at IS NULL AND ${sql.in(
+            "key",
+            cleared.map((row) => runNeedsKey(row.id)),
+          )}
+        `;
+      }
     }, Effect.mapError(storeError));
 
     /**
@@ -2766,6 +2811,31 @@ export class Store extends Context.Service<
             run: id,
           });
         }
+
+        // Any other run that leaves something for a person needs them too,
+        // such as an update it held back for you to check
+        if (
+          healing === null &&
+          update.attention === true &&
+          !current.attention
+        ) {
+          yield* needs({
+            key: runNeedsKey(id),
+            title: `${jobName(current.job)} needs you`,
+            detail: update.summary ?? current.summary,
+            job: current.job,
+            run: id,
+          });
+        } else if (
+          healing === null &&
+          current.attention &&
+          update.summary !== undefined
+        ) {
+          yield* sql`
+            UPDATE entries SET detail = ${update.summary}
+            WHERE key = ${runNeedsKey(id)} AND dismissed_at IS NULL
+          `.pipe(Effect.mapError(storeError));
+        }
       },
       sql.withTransaction,
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
@@ -2921,6 +2991,12 @@ export class Store extends Context.Service<
       `;
 
       yield* settle(parkedKey(job));
+
+      // The heals that parked it no longer wait on you
+      yield* sql`
+        UPDATE runs SET attention = 0
+        WHERE heal_job = ${job} AND heal_decision = 'park' AND attention = 1
+      `;
 
       return rows.length > 0;
     }, Effect.mapError(storeError));
@@ -4684,15 +4760,36 @@ export class Store extends Context.Service<
       first_at, last_at, read_at, session, NULL AS run_job
     `;
 
+    // What needs you stays until it's dealt with, however long ago it came
+    // up or whether it was read. An entry for a run whose agent left work for
+    // you gets the agent's session, which can ask you in the Inbox.
     const inbox = Effect.fn("Store.inbox")(function* (since: number) {
       const entries = yield* selectEntries(sql`
         SELECT
-          id, key, kind, title, detail, url, job, run, routine, you, count,
-          first_at, last_at, read_at, session,
+          entries.id, entries.key, entries.kind, entries.title,
+          entries.detail, entries.url, entries.job, entries.run,
+          entries.routine, entries.you, entries.count, entries.first_at,
+          entries.last_at, entries.read_at,
+          coalesce(entries.session, CASE WHEN asker.id IS NOT NULL THEN
+            json_object(
+              'worker', asker.worker, 'session', asker.heal_session,
+              'directory', asker.heal_directory, 'title', entries.title
+            )
+          END) AS session,
+          CASE WHEN entries.session IS NULL THEN asker.id END AS ask,
           (SELECT runs.job FROM runs WHERE runs.id = entries.run) AS run_job
         FROM entries
-        WHERE dismissed_at IS NULL AND (last_at >= ${since} OR read_at IS NULL)
-        ORDER BY last_at DESC, id DESC
+        LEFT JOIN runs AS asker ON asker.id = entries.run
+          AND entries.kind = 'needs' AND asker.attention = 1
+          AND asker.heal_session IS NOT NULL
+          AND asker.heal_directory IS NOT NULL
+          AND asker.worker IS NOT NULL
+        WHERE entries.dismissed_at IS NULL
+          AND (
+            entries.last_at >= ${since} OR entries.read_at IS NULL
+            OR entries.kind = 'needs'
+          )
+        ORDER BY entries.last_at DESC, entries.id DESC
         LIMIT 500
       `);
 
@@ -4834,11 +4931,7 @@ export class Store extends Context.Service<
       function* (id: string) {
         yield* run(id);
 
-        yield* sql`
-          UPDATE entries
-          SET dismissed_at = ${yield* Clock.currentTimeMillis}
-          WHERE run = ${id} AND kind = 'needs' AND dismissed_at IS NULL
-        `;
+        const now = yield* Clock.currentTimeMillis;
 
         const [dismissed] = yield* selectRuns(sql`
           UPDATE runs SET attention = 0 WHERE id = ${id} RETURNING *
@@ -4848,6 +4941,28 @@ export class Store extends Context.Service<
           return yield* Effect.die(
             new Error("The dismissed run wasn't returned"),
           );
+
+        // A heal's entry is shared by the job's heals that chose the same, so
+        // it moves to the latest of them still waiting on you, and goes once
+        // none is
+        const latest = (column: string) => sql`
+          SELECT ${sql(column)} FROM runs
+          WHERE runs.attention = 1 AND 'needs:heal:' || runs.heal_job || ':' || coalesce(runs.heal_decision, 'ask') = entries.key
+          ORDER BY runs.queued_at DESC LIMIT 1
+        `;
+
+        yield* sql`
+          UPDATE entries
+          SET run = (${latest("id")}),
+            detail = coalesce((${latest("summary")}), detail)
+          WHERE run = ${id} AND kind = 'needs' AND dismissed_at IS NULL
+            AND EXISTS (${latest("id")})
+        `;
+
+        yield* sql`
+          UPDATE entries SET dismissed_at = ${now}
+          WHERE kind = 'needs' AND dismissed_at IS NULL AND run = ${id}
+        `;
 
         return dismissed;
       },
