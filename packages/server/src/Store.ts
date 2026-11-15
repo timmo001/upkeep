@@ -842,7 +842,68 @@ const migrations = SqliteMigrator.fromRecord({
       `;
     }
   }),
+  // A run that finds nothing to do now settles earlier failures too, and a
+  // retry keeps its run's command, so give retries from before that theirs
+  // back, send back a retrying run whose retry didn't pass, and settle what
+  // later runs already settle
+  "0041_settle_passed": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      UPDATE runs
+      SET command = (SELECT failed.command FROM runs AS failed
+        WHERE failed.id = runs.retry_of)
+      WHERE command IS NULL AND retry_of IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM runs AS failed
+          WHERE failed.id = runs.retry_of AND failed.command IS NOT NULL
+            AND coalesce(json_extract(failed.command, '$.worker'), runs.worker)
+              IS runs.worker
+        )
+    `;
+
+    yield* sql`
+      UPDATE runs SET state = 'failed'
+      WHERE state = 'retrying'
+        AND EXISTS (
+          SELECT 1 FROM runs AS retry
+          WHERE retry.id = runs.retry
+            AND retry.state NOT IN ('queued', 'running', 'succeeded', 'skipped')
+        )
+    `;
+
+    const rows = yield* sql`
+      SELECT id, job, state, scope_repo, release_repo, command, queued_at
+      FROM runs
+      WHERE heal_of IS NULL
+        AND ${sql.in("state", [...Domain.openStates, ...RunStates.passing])}
+    `.pipe(Effect.flatMap(decodeSettling));
+
+    for (const { id, settledBy } of RunStates.settledLater(rows)) {
+      yield* sql`
+        UPDATE runs
+        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+          settled_by = ${settledBy}
+        WHERE id = ${id}
+      `;
+    }
+  }),
 });
+
+/** A run's columns for settling the failures before it. */
+const decodeSettling = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      job: Schema.String,
+      state: Domain.RunState,
+      scopeRepo: Schema.NullOr(Schema.String),
+      releaseRepo: Schema.NullOr(Schema.String),
+      command: Schema.NullOr(Schema.String),
+      queuedAt: Schema.Finite,
+    }),
+  ),
+);
 
 /** A run's columns as they were when run states came in, for their backfill. */
 const decodeBackfill = Schema.decodeUnknownEffect(

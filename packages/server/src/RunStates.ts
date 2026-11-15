@@ -138,8 +138,10 @@ export const settles = (
   (later.scopeRepo === null ||
     lower(later.scopeRepo) === lower(failed.scopeRepo));
 
-const before = (a: Row, b: Row) =>
-  a.queuedAt < b.queuedAt || (a.queuedAt === b.queuedAt && a.id < b.id);
+const before = (
+  a: Pick<Row, "id" | "queuedAt">,
+  b: Pick<Row, "id" | "queuedAt">,
+) => a.queuedAt < b.queuedAt || (a.queuedAt === b.queuedAt && a.id < b.id);
 
 /**
  * Fill in the states and links of runs from before them: each heal run's
@@ -262,5 +264,33 @@ export const backfill = (
     const fill = filled.get(row.id);
 
     return fill === undefined || unchanged(row, fill) ? [] : [fill];
+  });
+};
+
+/** A run as settling earlier failures reads it. */
+export type Settling = Pick<
+  Row,
+  "id" | "job" | "state" | "scopeRepo" | "releaseRepo" | "command" | "queuedAt"
+>;
+
+const open: ReadonlySet<Domain.RunState> = new Set(Domain.openStates);
+
+/**
+ * The open failures a later run already settles, each with the first run
+ * after it that passed and settles it.
+ */
+export const settledLater = (
+  rows: ReadonlyArray<Settling>,
+): ReadonlyArray<{ readonly id: string; readonly settledBy: string }> => {
+  const ordered = rows.toSorted((a, b) => (before(a, b) ? -1 : 1));
+
+  return ordered.flatMap((row, index) => {
+    if (!open.has(row.state)) return [];
+
+    const by = ordered
+      .slice(index + 1)
+      .find((later) => passing.includes(later.state) && settles(later, row));
+
+    return by === undefined ? [] : [{ id: row.id, settledBy: by.id }];
   });
 };
