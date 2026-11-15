@@ -16,6 +16,22 @@ export class UpkeepError extends Schema.TaggedError<UpkeepError>()(
   { message: Schema.String },
 ) {}
 
+/** The worker and session a run's agent worked in, to change its schedules there. */
+export const runSession = Effect.fn("runSession")(function* (run: string) {
+  const client = yield* Client;
+  const found = yield* client.runs.schedules({ params: { id: run } });
+
+  if (found.worker === null || found.session === null) {
+    return yield* Effect.fail(
+      new UpkeepError({
+        message: `Run ${run} had no agent session, so it has no schedules`,
+      }),
+    );
+  }
+
+  return { worker: found.worker, session: found.session };
+});
+
 // Failures go back to the client as the tool's result, so an agent can read
 // them and carry on.
 const Status = Tool.make("status", {
@@ -256,6 +272,49 @@ const InboxRule = Tool.make("inbox_rule", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+const Schedules = Tool.make("schedules", {
+  description:
+    "The OpenCode schedules on the agent's session a run worked in, such as a heal's, and the worker that session is on. Both are null when the run had no agent.",
+  parameters: Schema.Struct({ run: Schema.String }),
+  success: Domain.RunSchedules,
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const Schedule = Tool.make("schedule", {
+  description:
+    "Pause, resume or delete a schedule on the agent's session a run worked in. It's done on the session's worker by a command run, which is returned.",
+  parameters: Schema.Struct({
+    run: Schema.String,
+    schedule: Schema.String,
+    action: Schema.Literals(["pause", "resume", "delete"]),
+  }),
+  success: Domain.Run,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
+const ScheduleAdd = Tool.make("schedule_add", {
+  description:
+    'Schedule a prompt in the agent\'s session a run worked in, on the session\'s worker by a command run, which is returned. `when` is as OpenCode takes it: `{ "in": "2 hours" }`, `{ "at": "2026-11-16T09:00" }`, `{ "every": "30 minutes" }` or `{ "cron": "0 9 * * *" }`. With `condition`, a shell command, it only wakes once that passes.',
+  parameters: Schema.Struct({
+    run: Schema.String,
+    when: Domain.ScheduleWhen,
+    prompt: Schema.String,
+    name: Schema.optionalKey(Schema.String),
+    condition: Schema.optionalKey(Schema.String),
+  }),
+  success: Domain.Run,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
 export const Tools = Toolkit.make(
   Status,
@@ -270,6 +329,9 @@ export const Tools = Toolkit.make(
   Unpark,
   Pause,
   Resume,
+  Schedules,
+  Schedule,
+  ScheduleAdd,
   Repos,
   Track,
   Rename,
@@ -411,6 +473,57 @@ export const toolsLayer = Tools.toLayer(
           Client.use((client) =>
             client.repos.list().pipe(Effect.map((repos) => ({ repos }))),
           ),
+        ),
+      schedules: (input: { readonly run: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.runs.schedules({ params: { id: input.run } }),
+          ),
+        ),
+      schedule: (input: {
+        readonly run: string;
+        readonly schedule: string;
+        readonly action: "pause" | "resume" | "delete";
+      }) =>
+        onServer(
+          Effect.gen(function* () {
+            const client = yield* Client;
+            const target = yield* runSession(input.run);
+
+            return yield* client.attention.command({
+              payload: {
+                kind: `schedule-${input.action}`,
+                ...target,
+                schedule: input.schedule,
+              },
+            });
+          }),
+        ),
+      schedule_add: (input: {
+        readonly run: string;
+        readonly when: Domain.ScheduleWhen;
+        readonly prompt: string;
+        readonly name?: string | undefined;
+        readonly condition?: string | undefined;
+      }) =>
+        onServer(
+          Effect.gen(function* () {
+            const client = yield* Client;
+            const target = yield* runSession(input.run);
+
+            return yield* client.attention.command({
+              payload: {
+                kind: "schedule-add",
+                ...target,
+                when: input.when,
+                prompt: input.prompt,
+                ...(input.name !== undefined && { name: input.name }),
+                ...(input.condition !== undefined && {
+                  condition: input.condition,
+                }),
+              },
+            });
+          }),
         ),
       track: (input: {
         readonly repo: string;

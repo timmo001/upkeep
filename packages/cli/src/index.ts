@@ -27,7 +27,7 @@ import { FetchHttpClient } from "effect/http";
 import { call, manifest } from "./agent";
 import { adminClient, workerClient } from "./clients";
 import { Jobs } from "./jobs/Jobs";
-import { serveMcp } from "./mcp";
+import { runSession, serveMcp } from "./mcp";
 import { toolNames } from "./operations";
 import { layerAdminEnv, layerOptions } from "./options";
 import * as Status from "./status";
@@ -1106,6 +1106,173 @@ const inbox = Command.make("inbox").pipe(
   Command.withSubcommands([inboxList, inboxMove, inboxRules, inboxRule]),
 );
 
+const scheduleRun = Argument.String("run").pipe(
+  Argument.withDescription("The ID of the run whose agent session it's on"),
+);
+
+const schedulesList = Command.make(
+  "list",
+  { run: scheduleRun, server, json },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const found = yield* client.runs.schedules({ params: { id: input.run } });
+
+      if (input.json) return yield* Console.log(JSON.stringify(found, null, 2));
+
+      if (found.session === null) {
+        return yield* Console.log("That run had no agent session");
+      }
+
+      if (found.schedules.length === 0) {
+        return yield* Console.log(`No schedules on ${found.session}`);
+      }
+
+      for (const each of found.schedules) {
+        yield* Console.log(
+          `${each.id}  ${each.status}  ${each.when}  ${each.name ?? each.prompt}`,
+        );
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "List the schedules on the agent's session a run worked in",
+  ),
+);
+
+const scheduleChange = (action: "pause" | "resume" | "delete") =>
+  Command.make(
+    action,
+    {
+      run: scheduleRun,
+      schedule: Argument.String("schedule").pipe(
+        Argument.withDescription("The schedule's ID, sch_…"),
+      ),
+      server,
+    },
+    Effect.fn(
+      function* (input) {
+        const client = yield* Client;
+        const target = yield* runSession(input.run);
+
+        const queued = yield* client.attention.command({
+          payload: {
+            kind: `schedule-${action}`,
+            ...target,
+            schedule: input.schedule,
+          },
+        });
+
+        yield* Console.log(`Queued on ${target.worker} as ${queued.id}`);
+      },
+      (effect, input) => Effect.provide(effect, adminClient(input.server)),
+    ),
+  ).pipe(
+    Command.withDescription(
+      `${action[0]?.toUpperCase()}${action.slice(1)} a schedule on the agent's session a run worked in`,
+    ),
+  );
+
+/** `every 30 minutes` as OpenCode takes it, from the word before the rest. */
+const whenOf = (text: string): Domain.ScheduleWhen | null => {
+  const [kind = "", ...rest] = text.trim().split(/\s+/);
+  const value = rest.join(" ");
+
+  if (value === "") return null;
+
+  switch (kind) {
+    case "in":
+      return { in: value };
+    case "at":
+      return { at: value };
+    case "every":
+      return { every: value };
+    case "cron":
+      return { cron: value };
+    default:
+      return null;
+  }
+};
+
+const schedulesAdd = Command.make(
+  "add",
+  {
+    run: scheduleRun,
+    when: Argument.String("when").pipe(
+      Argument.withDescription(
+        'When it wakes: "in 2 hours", "at 2026-11-16T09:00", "every 30 minutes" or "cron 0 9 * * *"',
+      ),
+      Argument.mapEffect((value) => {
+        const when = whenOf(value);
+
+        return when === null
+          ? Effect.fail(
+              new CliError.InvalidValue({
+                option: "when",
+                value,
+                expected: '"in …", "at …", "every …" or "cron …"',
+                kind: "argument",
+              }),
+            )
+          : Effect.succeed(when);
+      }),
+    ),
+    prompt: Argument.String("prompt").pipe(
+      Argument.withDescription("What to tell the agent when it wakes"),
+    ),
+    name: Flag.String("name").pipe(
+      Flag.withDescription("A name to show it by"),
+      Flag.optional,
+    ),
+    condition: Flag.String("condition").pipe(
+      Flag.withDescription("A shell command that must pass before it wakes"),
+      Flag.optional,
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const target = yield* runSession(input.run);
+      const name = Option.getOrUndefined(input.name);
+      const condition = Option.getOrUndefined(input.condition);
+
+      const queued = yield* client.attention.command({
+        payload: {
+          kind: "schedule-add",
+          ...target,
+          when: input.when,
+          prompt: input.prompt,
+          ...(name !== undefined && { name }),
+          ...(condition !== undefined && { condition }),
+        },
+      });
+
+      yield* Console.log(`Queued on ${target.worker} as ${queued.id}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Schedule a prompt in the agent's session a run worked in",
+  ),
+);
+
+const schedules = Command.make("schedules").pipe(
+  Command.withDescription(
+    "See and change the OpenCode schedules on a run's agent session",
+  ),
+  Command.withSubcommands([
+    schedulesList,
+    schedulesAdd,
+    scheduleChange("pause"),
+    scheduleChange("resume"),
+    scheduleChange("delete"),
+  ]),
+);
+
 /** A session from `upkeep://open/<session>?directory=…&title=…`, or its bare ID. */
 const sessionOf = (target: string) => {
   if (!target.startsWith("upkeep:")) return { session: target, directory: "" };
@@ -1185,6 +1352,7 @@ const upkeep = Command.make("upkeep").pipe(
     resume,
     repos,
     inbox,
+    schedules,
     open,
     serve,
     worker,

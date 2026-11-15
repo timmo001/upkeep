@@ -388,6 +388,16 @@ session is left for you as before. Agents are also told they can schedule
 their own wake-up, with `/schedule`, when they have to wait for something
 slower than their time, such as CI or a release upstream.
 
+A run's page lists the schedules on its agent's session, with when each wakes
+next, how often it has run and its last outcome, and lets you pause, resume,
+delete or add one. The worker checks its sessions' schedules every few minutes
+and straight after each change it makes, and sends the server any that
+changed, so the list can be a few minutes behind one an agent changed itself.
+Changes go to the session's worker as a command run. `upkeep schedules list <run>` and
+`upkeep schedules pause|resume|delete <run> <schedule>` do the same from the
+CLI, and `upkeep schedules add <run> "every 30 minutes" <prompt>` adds one,
+with `--condition` for a shell command that must pass first.
+
 `upkeep github check <part>...` runs the same check by hand, failing when a
 part doesn't answer.
 
