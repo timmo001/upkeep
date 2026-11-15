@@ -1,7 +1,7 @@
-/** How a failed gh command reads in a run's error and log. */
+/** How a failure reads in a run's error and log. */
 import { GhCommandError, GhTimeoutError } from "@timmo001/effect-gh";
 import { expect, test } from "bun:test";
-import { Cause } from "effect";
+import { Cause, Schema } from "effect";
 import { pretty, reason } from "./Failure";
 
 const failure = (output: {
@@ -55,4 +55,20 @@ test("a run's error names gh's reason on its first line", () => {
   const text = pretty(Cause.fail(failure({ stderr: "gh: Bad credentials" })));
 
   expect(text.split("\n")[0]).toBe("GhCommandError: gh: Bad credentials");
+});
+
+test("a run's error leaves the stack out for an expected error, not a defect", () => {
+  class StageFailed extends Schema.TaggedError<StageFailed>()("StageFailed", {
+    error: Schema.String,
+  }) {
+    override get message() {
+      return `dot up plugins failed: ${this.error}`;
+    }
+  }
+
+  expect(
+    pretty(Cause.fail(new StageFailed({ error: "exited with 1: no plugins" }))),
+  ).toBe("StageFailed: dot up plugins failed: exited with 1: no plugins");
+
+  expect(pretty(Cause.die(new Error("bug")))).toContain("\n    at ");
 });

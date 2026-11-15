@@ -43,6 +43,21 @@ export class StageFailed extends Schema.TaggedError<StageFailed>()(
 /** What Graphviz's `dot` prints when it's given a command it doesn't know. */
 const notDotfiles = /Usage: dot \[|graphviz|Error: dot: option/i;
 
+/**
+ * Why a stage gave no result, from the last line it printed, since dot's own
+ * error comes last: Graphviz's `dot` in its place, or what dot said.
+ */
+const noResult = (code: number, printed: ReadonlyArray<string>) => {
+  if (notDotfiles.test(printed.join("\n")))
+    return `${Bun.which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`;
+
+  const last = printed.findLast((line) => line.trim() !== "")?.trim();
+
+  return last === undefined
+    ? `exited with ${code}, printing nothing`
+    : `exited with ${code}: ${last}`;
+};
+
 /** Run `dot up <stage> --json`, logging stderr, and decode what it prints. */
 const stage = Effect.fnUntraced(function* (name: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -84,13 +99,7 @@ const stage = Effect.fnUntraced(function* (name: string) {
     Schema.fromJsonString(StageResult),
   )(stdout).pipe(
     Effect.mapError(
-      () =>
-        new StageFailed({
-          stage: name,
-          error: notDotfiles.test(errors.join("\n"))
-            ? `${Bun.which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`
-            : `exited with ${code} without a result`,
-        }),
+      () => new StageFailed({ stage: name, error: noResult(code, errors) }),
     ),
   );
 

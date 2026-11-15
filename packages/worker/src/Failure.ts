@@ -63,15 +63,33 @@ export const reason = (cause: Cause.Cause<unknown>) => {
     : error.message;
 };
 
-/** A cause in full, with a gh failure's reason in place of its empty message. */
-export const pretty = (cause: Cause.Cause<unknown>) => {
-  const text = Cause.pretty(cause);
-  const error = Cause.squash(cause);
+/**
+ * An expected error in words: its tag and message, or gh's reason, then what
+ * caused it, as a spawn failing names the missing executable only there.
+ */
+const described = ({ error }: Cause.Fail<unknown>) => {
+  if (error instanceof GhCommandError || error instanceof GhTimeoutError)
+    return `${error._tag}: ${ghMessage(error)}`;
 
-  if (!(error instanceof GhCommandError || error instanceof GhTimeoutError))
-    return text;
+  if (!Predicate.isError(error)) return String(error);
 
-  const [, ...stack] = text.split("\n");
+  const tag = Predicate.hasProperty(error, "_tag")
+    ? String(error._tag)
+    : error.name;
 
-  return [`${error._tag}: ${ghMessage(error)}`, ...stack].join("\n");
+  const text = error.message === "" ? tag : `${tag}: ${error.message}`;
+
+  return Predicate.isError(error.cause) && !text.includes(error.cause.message)
+    ? `${text}\nCaused by: ${error.cause.message}`
+    : text;
 };
+
+/**
+ * A cause in words: each expected error in turn, without its stack, since
+ * that only points into the bundled binary, or a defect in full, stack and
+ * all, since that's a bug to find.
+ */
+export const pretty = (cause: Cause.Cause<unknown>) =>
+  Cause.hasDies(cause) || !Cause.hasFails(cause)
+    ? Cause.pretty(cause)
+    : cause.reasons.filter(Cause.isFailReason).map(described).join("\n");
