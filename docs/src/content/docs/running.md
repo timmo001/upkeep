@@ -335,6 +335,40 @@ seconds, which costs none of them, and its status reads `Paused for GitHub's
 rate limit until` the reset. A run that hits a spent limit anyway waits for
 the reset and carries on, rather than failing.
 
+### GitHub outages
+
+GitHub often goes down in part, such as Git while the API answers, and comes
+back on its own, so a run waits out an outage rather than failing. Nothing is
+checked before a step, so a push is never held up: only when a run fails does
+the worker check the parts of GitHub its job uses, with one small read each, as
+the run's login (the App's for a job that runs as the App):
+
+| Part          | Checked with                      | Used by                                     |
+| ------------- | --------------------------------- | ------------------------------------------- |
+| REST API      | A repository's details            | Every job                                   |
+| GraphQL API   | A query of the rate limit         | `releases`, `labels` and the attention jobs |
+| Git           | `git ls-remote`                   | Jobs that push or pull, and machine jobs    |
+| Issues        | A repository's first issue        | `labels`, `attention`                       |
+| Pull requests | A repository's first pull request | Jobs that open or watch pull requests       |
+| Actions       | A repository's latest run         | `bump`, `ci`                                |
+
+A part counts as down when it doesn't answer: a timeout, a dropped
+connection, a 5xx, or `gh` printing nothing. Any other answer, even a refusal,
+means it's up. When every part answers, the run fails as usual. When one
+doesn't, the run's log says so, with what GitHub's status page says about it,
+which is only a hint since the page can lag either way. The worker checks the
+part every 2 minutes and runs the job again once it's back, without a heal,
+for up to 2 hours from when it was first found down. A run that's still
+waiting then ends as `github-down`.
+
+While a run finds the REST API down, the worker takes no new runs, except what
+the dashboard asks for, until it answers. Its status reads `waiting on GitHub`
+with the parts it's waiting on.
+
+The server runs a `github-down` run again 30 minutes after it ended, or you can
+from its page. It never gets a heal, and a later run passing settles it like a
+failure.
+
 When a job pushes and watches CI, it goes by how long that repository's CI
 usually takes on a push, kept per repository in
 `$XDG_CACHE_HOME/upkeep/ci-timings/` from the last ten passing runs of each
@@ -485,6 +519,7 @@ it.
 | `fix-pushed`   | Has a fix pushed by its heal, and waits for a run to show it worked    |
 | `needs-you`    | Was left for you, by its heal or because it said it needs a person     |
 | `parked`       | Got its job parked, by its heal or for having too many heals           |
+| `github-down`  | Stopped because a part of GitHub stayed down, and is run again later   |
 | `healed`       | Is over: a later run passed, after a heal                              |
 | `recovered`    | Is over: a later run passed, with no heal involved                     |
 
@@ -571,8 +606,10 @@ model chooses what to do:
 
 An agent that can't start because of GitHub, such as a rate limit, a network
 error or `gh` failing without a word, starts again after a minute, then two,
-then four. If it still can't and the run failed on `gh` too, it looks like a
-GitHub outage, so the job is queued again instead of left for you.
+then four. When GitHub's API isn't answering, it waits for it first, for up to
+2 hours, and starts as soon as it's back. If it still can't and the run failed
+on `gh` too, it looks like a GitHub outage, so the job is queued again instead
+of left for you.
 
 A heal's run page shows its session as the `opencode2 --session` command
 that resumes it, with a button to copy it and **Resume in Herdr**, which

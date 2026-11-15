@@ -2181,7 +2181,8 @@ export class Store extends Context.Service<
     /**
      * Follow a run ending on the runs it's linked to: a heal's failures, the
      * failures one that passed settles, or the failure a retry that didn't
-     * pass was retrying, which is back to having nothing healing it.
+     * pass was retrying, which is back to having nothing healing it, or to
+     * waiting on GitHub when GitHub stopped the retry too.
      */
     const ended = (done: Domain.Run) => {
       if (done.heal !== null) return endHeal(done);
@@ -2192,7 +2193,8 @@ export class Store extends Context.Service<
       return done.retryOf == null
         ? Effect.void
         : sql`
-            UPDATE runs SET state = 'failed'
+            UPDATE runs
+            SET state = ${done.state === "github-down" ? "github-down" : "failed"}
             WHERE id = ${done.retryOf} AND state = 'retrying'
               AND retry = ${done.id}
           `.pipe(Effect.asVoid);
@@ -2502,7 +2504,7 @@ export class Store extends Context.Service<
                   retry: current.retry ?? null,
                   changed: current.changes.length > 0,
                 },
-                outcome === "failed",
+                outcome === "failed" || outcome === "github-down",
               );
 
         const [done] = yield* selectRuns(sql`

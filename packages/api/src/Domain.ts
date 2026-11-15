@@ -256,7 +256,9 @@ export type Trigger = typeof Trigger.Type;
  * deciding, then `retrying`, `with-agent`, `fix-pushed`, `needs-you` or
  * `parked` as the heal goes. A later run of the same job and scope passing
  * settles it as `healed` after a heal, or `recovered` without one. `failed`
- * is left for a failure nothing is healing.
+ * is left for a failure nothing is healing. A run that stopped because a part
+ * of GitHub stayed down is `github-down`: it's run again rather than healed,
+ * and settles the same way.
  *
  * A heal run ends as what it did: `retried`, `fix-pushed`, `nothing-to-fix`,
  * `needs-you` or `parked`, or `failed` when the heal itself broke.
@@ -275,6 +277,7 @@ export const RunState = Schema.Literals([
   "fix-pushed",
   "needs-you",
   "parked",
+  "github-down",
   "healed",
   "recovered",
   "retried",
@@ -285,8 +288,8 @@ export const RunState = Schema.Literals([
 export type RunState = typeof RunState.Type;
 
 /**
- * The states of a failure nothing has settled yet: red, being healed, or
- * waiting on you.
+ * The states of a failure nothing has settled yet: red, being healed, waiting
+ * on you, or on GitHub.
  */
 export const openStates = [
   "failed",
@@ -297,6 +300,7 @@ export const openStates = [
   "fix-pushed",
   "needs-you",
   "parked",
+  "github-down",
 ] as const satisfies ReadonlyArray<RunState>;
 
 /** The states of a run that failed, whether it's been settled or not. */
@@ -327,12 +331,13 @@ export const isOpen = (run: {
   readonly heal: unknown;
 }) => run.heal === null && open.has(run.state);
 
-/** How a run can end. */
+/** How a run can end. `github-down` is a failure GitHub caused. */
 export const Outcome = Schema.Literals([
   "succeeded",
   "skipped",
   "handed-off",
   "failed",
+  "github-down",
 ]);
 
 export type Outcome = typeof Outcome.Type;

@@ -13,11 +13,13 @@ import {
   isTransient,
 } from "@timmo001/effect-gh";
 import { Catalogue, Domain } from "@upkeep/api";
-import { Cause, Clock, Duration, Effect, Option, Schema } from "effect";
+import { Cause, Clock, Duration, Effect, Match, Option, Schema } from "effect";
 import { Decision, DecisionModel } from "effect/ai";
+import type { HttpClient } from "effect/http";
 import * as Decisions from "../Decisions";
 import { reason as failureReason } from "../Failure";
 import * as Names from "../Names";
+import * as Outages from "../Outages";
 import * as RateLimits from "../RateLimits";
 import { attention, Reporter, summary, type Healing } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -341,8 +343,10 @@ const failedOnGh = (run: Domain.Run) =>
 
 /**
  * How long to wait before starting the agent again: until GitHub's rate limit
- * resets, or a backoff of a minute, then two, then four, for a network error
- * or a GitHub outage. None for a failure waiting won't fix.
+ * resets, or a backoff of a minute, then two, then four, for a network error.
+ * When GitHub's API is down, it's waited for first, for up to two hours, and
+ * the agent starts again as soon as it's back. None for a failure waiting
+ * won't fix, or an outage that outlasts the wait.
  */
 const startDelay = Effect.fnUntraced(function* (
   cause: Cause.Cause<unknown>,
@@ -355,7 +359,19 @@ const startDelay = Effect.fnUntraced(function* (
 
   const backoff = Duration.minutes(2 ** attempt);
 
-  if (!isRateLimited(error)) return Option.some(backoff);
+  if (!isRateLimited(error)) {
+    const outage = yield* Outages.waitOut(
+      ["rest", "graphql"],
+      "The agent couldn't start",
+    );
+
+    return Match.value(outage).pipe(
+      Match.when("up", () => Option.some(backoff)),
+      Match.when("back", () => Option.some(Duration.zero)),
+      Match.when("down", () => Option.none<Duration.Duration>()),
+      Match.exhaustive,
+    );
+  }
 
   const reset = yield* RateLimits.spentUntil();
   const now = yield* Clock.currentTimeMillis;
@@ -391,7 +407,7 @@ const handOff = Effect.fnUntraced(function* (
   ): Effect.Effect<
     Effect.Success<ReturnType<typeof fix>>,
     unknown,
-    Effect.Services<ReturnType<typeof fix>>
+    Effect.Services<ReturnType<typeof fix>> | HttpClient.HttpClient
   > =>
     fix(
       healing.heal,
@@ -416,7 +432,7 @@ const handOff = Effect.fnUntraced(function* (
           if (Option.isNone(delay)) return yield* Effect.failCause(cause);
 
           yield* RunLog.warn(
-            `The agent couldn't start, ${failureReason(cause)}. Trying again in ${Duration.format(delay.value)}`,
+            `The agent couldn't start, ${failureReason(cause)}. Trying again ${Duration.isZero(delay.value) ? "now" : `in ${Duration.format(delay.value)}`}`,
           );
           yield* Effect.sleep(delay.value);
 

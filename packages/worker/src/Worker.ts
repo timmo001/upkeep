@@ -6,7 +6,9 @@
  * keeps going through a failed job or a server restart. No lane takes new
  * work while the machine login's GitHub rate limit is down to its reserve,
  * and a run that fails while a limit is spent runs again once it resets, with
- * no new work taken until then. Asked to drain, such as after an upgrade, it
+ * no new work taken until then. A run that fails while a part of GitHub it
+ * uses is down waits for it and runs again, and no lane takes new work while
+ * the REST API is down. Asked to drain, such as after an upgrade, it
  * finishes the runs it has and stops, rather than cutting them off, unless
  * they take longer than the drain's limit.
  */
@@ -36,6 +38,7 @@ import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
 import * as Lane from "./Lane";
 import * as Notify from "./Notify";
+import * as Outages from "./Outages";
 import * as Prompts from "./Prompts";
 import * as RateLimits from "./RateLimits";
 import { narrowTo, Reporter } from "./Reporter";
@@ -153,9 +156,11 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
     };
   }
 
-  const failed = Cause.findErrorOption(exit.cause).pipe(
-    Option.filter(Schema.is(ConsumersFailed)),
-  );
+  const error = Cause.findErrorOption(exit.cause);
+  const failed = error.pipe(Option.filter(Schema.is(ConsumersFailed)));
+
+  if (Option.isSome(Option.filter(error, Schema.is(Outages.GitHubDown))))
+    return { outcome: "github-down" as const, error: reason(exit.cause) };
 
   const interrupted = Cause.hasInterruptsOnly(exit.cause);
 
@@ -179,12 +184,23 @@ const limitWaits = 2;
 const remaining = (interval: Duration.Input, elapsed: number) =>
   Duration.millis(Math.max(Duration.toMillis(interval) - elapsed, 0));
 
+/** What the worker hears from its runs about GitHub outages. */
+interface Outage {
+  /** Wait on a part of GitHub, shown in the status while it's waited on. */
+  readonly waiting: (
+    part: Outages.Part,
+  ) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  /** A run found the REST API down, so new runs wait for it. */
+  readonly apiDown: Effect.Effect<void>;
+}
+
 /** Run one claimed run to the end and report how it went. */
 const execute = Effect.fnUntraced(function* (
   handler: Handler,
   run: Domain.Run,
   heartbeatInterval: Duration.Input,
   hold: (until: number) => Effect.Effect<void>,
+  outage: Outage,
   app: GitHubApp.Runs,
 ) {
   const client = yield* Client;
@@ -238,10 +254,14 @@ const execute = Effect.fnUntraced(function* (
 
   // A run that failed while GitHub's rate limit was spent most likely failed
   // on it, so it runs again once the limit resets rather than failing and
-  // using up a heal. A heal is left alone: it waits for its agent itself, and
-  // mustn't start a second one.
+  // using up a heal. Otherwise the parts of GitHub its job uses are checked:
+  // one that doesn't answer is waited for, up to two hours from when it was
+  // first found down, and the run goes again once it's back. One that stays
+  // down ends the run as GitHub down, which no heal is for. A heal is left
+  // alone: it waits for its agent itself, and mustn't start a second one.
   const attempt = (
     waited: number,
+    downSince: number | null,
   ): Effect.Effect<
     Effect.Success<ReturnType<Handler>>,
     unknown,
@@ -250,33 +270,73 @@ const execute = Effect.fnUntraced(function* (
     handler(run.release, run.command).pipe(
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
-          if (
-            waited >= limitWaits ||
-            run.job === Catalogue.heal.id ||
-            Cause.hasInterruptsOnly(cause)
-          )
+          if (run.job === Catalogue.heal.id || Cause.hasInterruptsOnly(cause))
             return yield* Effect.failCause(cause);
 
-          const reset = yield* RateLimits.spentUntil();
+          const reset =
+            waited >= limitWaits
+              ? Option.none<number>()
+              : yield* RateLimits.spentUntil();
 
-          if (Option.isNone(reset)) return yield* Effect.failCause(cause);
+          if (Option.isSome(reset)) {
+            yield* hold(reset.value);
 
-          yield* hold(reset.value);
+            const delay = RateLimits.waitUntil(
+              reset.value,
+              yield* Clock.currentTimeMillis,
+            );
 
-          const delay = RateLimits.waitUntil(
-            reset.value,
-            yield* Clock.currentTimeMillis,
-          );
+            yield* RunLog.use((log) =>
+              log.write(
+                "warn",
+                `Failed while GitHub's rate limit was spent, ${reason(cause)}. Running again after it resets at ${RateLimits.at(reset.value)}, in ${Duration.format(delay)}`,
+              ),
+            );
+            yield* Effect.sleep(delay);
+
+            return yield* attempt(waited + 1, downSince);
+          }
+
+          const found = yield* Outages.down(Outages.uses(run.job));
+
+          if (Option.isNone(found)) return yield* Effect.failCause(cause);
+
+          const part = found.value;
+          const since = downSince ?? (yield* Clock.currentTimeMillis);
+          const until = since + Duration.toMillis(Outages.maxWait);
+
+          if (part === "rest") yield* outage.apiDown;
+
+          const page = yield* Outages.statusPage(part);
 
           yield* RunLog.use((log) =>
             log.write(
               "warn",
-              `Failed while GitHub's rate limit was spent, ${reason(cause)}. Running again after it resets at ${RateLimits.at(reset.value)}, in ${Duration.format(delay)}`,
+              `Failed while GitHub's ${Outages.names[part]} wasn't answering, ${reason(cause)}. Running again once it's back, checking every ${Duration.format(Outages.checkEvery)}, for up to ${Duration.format(Outages.maxWait)}. ${page}`,
             ),
           );
-          yield* Effect.sleep(delay);
 
-          return yield* attempt(waited + 1);
+          const back = yield* Outages.waitBack(part, until).pipe(
+            outage.waiting(part),
+          );
+
+          if (!back)
+            return yield* new Outages.GitHubDown({
+              part,
+              minutes: Math.round(
+                ((yield* Clock.currentTimeMillis) - since) / 60_000,
+              ),
+              error: reason(cause),
+            });
+
+          yield* RunLog.use((log) =>
+            log.write(
+              "info",
+              `GitHub's ${Outages.names[part]} is back, so running again`,
+            ),
+          );
+
+          return yield* attempt(waited, since);
         }),
       ),
     );
@@ -284,8 +344,9 @@ const execute = Effect.fnUntraced(function* (
   const scope = run.repo ?? null;
 
   // A job that runs as the App has its spawner and `gh` swapped for the run,
-  // including the rate limit read when it fails, which is the App's then
-  const attempts = attempt(0).pipe(Effect.provide(asApp));
+  // including the rate limit read and GitHub checks when it fails, which are
+  // the App's then
+  const attempts = attempt(0, null).pipe(Effect.provide(asApp));
 
   return yield* (
     scope === null
@@ -362,6 +423,64 @@ export const work = Effect.fn("Worker.work")(function* (
   const hold = (until: number) =>
     Ref.update(heldUntil, (current) => Math.max(current, until));
 
+  // The parts of GitHub runs are waiting on, once for each run, for the
+  // status. When a run finds the REST API down, no lane but the command lane
+  // takes new work until it answers again, checked every 2 minutes for every
+  // lane together, since nearly every job reads it.
+  const waitingOn = yield* Ref.make<ReadonlyArray<Outages.Part>>([]);
+  const apiDown = yield* Ref.make(false);
+
+  const [restUp, recheckRest] = yield* Effect.cachedInvalidateWithTTL(
+    Outages.down(["rest"]).pipe(Effect.map(Option.isNone)),
+    Outages.checkEvery,
+  );
+
+  const showWaiting = (
+    change: (parts: ReadonlyArray<Outages.Part>) => ReadonlyArray<Outages.Part>,
+  ) =>
+    Ref.updateAndGet(waitingOn, change).pipe(
+      Effect.flatMap((parts) =>
+        status.update({
+          outage: Outages.parts
+            .filter((part) => parts.includes(part))
+            .map((part) => Outages.names[part]),
+        }),
+      ),
+    );
+
+  const outage: Outage = {
+    waiting: (part) => (effect) =>
+      Effect.acquireUseRelease(
+        showWaiting((parts) => [...parts, part]),
+        () => effect,
+        () =>
+          showWaiting((parts) => {
+            const index = parts.indexOf(part);
+
+            return parts.filter((_, at) => at !== index);
+          }),
+      ),
+    apiDown: recheckRest.pipe(
+      Effect.andThen(Ref.getAndSet(apiDown, true)),
+      Effect.flatMap((was) =>
+        was
+          ? Effect.void
+          : Effect.logWarning(
+              "GitHub's REST API isn't answering, so new runs wait for it",
+            ),
+      ),
+    ),
+  };
+
+  const waitForApi = Effect.gen(function* () {
+    while (!(yield* restUp)) yield* Effect.sleep(Outages.checkEvery);
+
+    if (yield* Ref.getAndSet(apiDown, false))
+      yield* Effect.logInfo(
+        "GitHub's REST API is back, so new runs start again",
+      );
+  }).pipe(outage.waiting("rest"));
+
   // Before a claim, the machine login's limits are read, at most every 30
   // seconds for every lane together. While one is down to its reserve, no lane
   // but the command lane takes new work until it resets, so the account's
@@ -372,6 +491,8 @@ export const work = Effect.fn("Worker.work")(function* (
 
   const holdOff = (command: boolean) =>
     Effect.gen(function* () {
+      if (!command && (yield* Ref.get(apiDown))) yield* waitForApi;
+
       if (!command) {
         const low = yield* budget;
 
@@ -531,6 +652,7 @@ export const work = Effect.fn("Worker.work")(function* (
                   claimed,
                   heartbeatInterval,
                   hold,
+                  outage,
                   app,
                 ),
               ),

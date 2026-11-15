@@ -126,7 +126,7 @@ export class RepoNotScopable extends Schema.TaggedError<RepoNotScopable>()(
  * the server refuses older workers before handing them a run rather than
  * leaving it stranded until the lost-run sweep.
  */
-export const protocol = 5;
+export const protocol = 6;
 
 /** A worker claimed work with an older protocol than the server's. */
 export class WorkerOutdated extends Schema.TaggedError<WorkerOutdated>()(

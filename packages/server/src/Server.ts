@@ -703,6 +703,61 @@ export const healWaiting = Layer.effectDiscard(
   }),
 );
 
+/**
+ * Run each run GitHub stopped again, 30 minutes after it ended, checked every
+ * 5 minutes: the worker waited up to two hours for GitHub already, so it's
+ * likely back, and a run that hits it again waits again. Only the latest of a
+ * chain of such runs is run again, and none from more than 2 days ago, which
+ * the job's later runs have long covered or you can run again by hand. A
+ * parked or paused job's wait until it's let go.
+ */
+export const retryGitHubDown = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+
+    yield* Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const parked = yield* store.parked();
+      const paused = yield* store.paused();
+
+      const due = (yield* store.runs({
+        state: "github-down",
+        limit: 100,
+      })).filter(
+        ({ job, retry, finishedAt }) =>
+          !parked.has(job) &&
+          !paused.has(job) &&
+          retry == null &&
+          finishedAt !== null &&
+          finishedAt <= now - Duration.toMillis("30 minutes") &&
+          finishedAt >= now - Duration.toMillis("2 days"),
+      );
+
+      for (const down of due) {
+        const queued = yield* queue({
+          job: down.job,
+          trigger: down.trigger,
+          release: down.release,
+          repo: down.repo ?? null,
+          command: down.command,
+        });
+
+        if (Option.isNone(queued)) continue;
+
+        yield* store.retried(down.id, queued.value.id);
+        yield* Effect.logInfo(`Ran ${down.job} again: GitHub stopped it`).pipe(
+          Effect.annotateLogs({ run: down.id, retry: queued.value.id }),
+        );
+      }
+    }).pipe(
+      Effect.provideService(Store, store),
+      Effect.catchCause(Effect.logError),
+      Effect.repeat(Schedule.spaced(Duration.minutes(5))),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 /** A heal run's record and the run it's healing. Other runs aren't found. */
 const healedRun = Effect.fnUntraced(function* (id: string) {
   const store = yield* Store;
@@ -2472,6 +2527,7 @@ export const layer = (options: ServeOptions) =>
     lostRuns,
     unparkResolved,
     healWaiting,
+    retryGitHubDown,
     pruneRuns,
     pullEvents,
   ).pipe(

@@ -26,6 +26,8 @@ export interface State {
    * it, in epoch milliseconds.
    */
   readonly limited: number | null;
+  /** The parts of GitHub runs or new work are waiting on, as people read them. */
+  readonly outage: ReadonlyArray<string>;
 }
 
 export const initial: State = {
@@ -37,6 +39,7 @@ export const initial: State = {
   missing: [],
   quiet: false,
   limited: null,
+  outage: [],
 };
 
 /** The status a monitor reads: its health and one line saying why. */
@@ -51,6 +54,9 @@ export const report = (state: State) => {
             ? `Paused for GitHub's rate limit until ${RateLimits.at(state.limited)}`
             : "Waiting for runs"
       : "Can't reach the server",
+    ...(state.outage.length === 0
+      ? []
+      : [`waiting on GitHub (${state.outage.join(", ")})`]),
     ...(state.last === null
       ? []
       : [

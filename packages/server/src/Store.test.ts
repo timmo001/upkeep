@@ -1368,6 +1368,41 @@ test("a failure with no heal recovers once a run covering its repository passes"
     }),
   ));
 
+test("a run GitHub stopped stays open through retries GitHub stops too, until one passes", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const down = yield* finished("labels", "github-down");
+
+      expect(down.state).toBe("github-down");
+
+      const retry = yield* store.queueRun({
+        job: "labels",
+        trigger: "manual",
+        release: null,
+        repo: null,
+      });
+
+      yield* store.retried(down.id, retry.id);
+
+      expect((yield* store.run(down.id)).state).toBe("retrying");
+
+      yield* store.claim(["labels"], "desktop");
+      yield* store.finish(retry.id, "desktop", "github-down", null);
+
+      expect((yield* store.run(down.id)).state).toBe("github-down");
+
+      const passed = yield* finished("labels", "succeeded");
+
+      for (const id of [down.id, retry.id])
+        expect(yield* store.run(id)).toMatchObject({
+          state: "recovered",
+          settledBy: passed.id,
+        });
+    }),
+  ));
+
 test("a failure's heal waiting on the limit, or its job parked, shows on its run", () =>
   run(
     Effect.gen(function* () {
