@@ -8,5 +8,3 @@ export { Client, type ClientOptions } from "./Client";
 export * as Domain from "./Domain";
 
 export * as EventJobs from "./EventJobs";
-
-export { versionHeader, versionMismatchStatus } from "./Version";

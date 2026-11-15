@@ -6,6 +6,11 @@
  * that prunes old runs, and the pull of GitHub's events from their queue.
  */
 import { BunHttpServer } from "@effect/platform-bun";
+import {
+  fileResponse,
+  isPwaFile,
+  versionGuard as guardVersion,
+} from "@timmo001/groundwork-pwa/server";
 import { Api, Catalogue, Domain, EventJobs } from "@upkeep/api";
 import * as Releases from "@upkeep/api/releases";
 import { bundleDashboard } from "@upkeep/dashboard/bundle" with { type: "macro" };
@@ -31,7 +36,6 @@ import {
 import { HttpApiBuilder } from "effect/http-api";
 import { Events } from "./Events";
 import { GitHubApp } from "./GitHubApp";
-import { takePwaFiles, versionGuard } from "./Pwa";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -2004,6 +2008,19 @@ const IngressAdminAuthorizationLayer = Layer.succeed(
   }),
 );
 
+/**
+ * Refuses an API call from a dashboard of another version than the server's
+ * with a 426, so the page moves itself onto the new release. Callers that
+ * don't say a version, such as the CLI, workers and the page's event stream,
+ * are let through, as are the paths a page learns the version from.
+ */
+const versionGuard = guardVersion({
+  app: "upkeep",
+  version,
+  anyVersion: ["/api/health", "/api/version"],
+  guards: (path) => path.startsWith("/api/"),
+});
+
 /** Answers only the Supervisor on the ingress port, refusing everyone else. */
 const ingressGuard =
   (supervisor: string) =>
@@ -2028,7 +2045,26 @@ const contentTypes = new Map([
 
 const { "index.html": indexHtml = "", ...bundled } = bundleDashboard();
 
-const { assets, files: pwaFiles } = takePwaFiles(bundled);
+/**
+ * The PWA's files, as responses. The worker must be fetched fresh for a new
+ * release to be noticed, and the icons and manifest carry no hash, so none of
+ * them are cached for long. The icons come base64 encoded.
+ */
+const pwaFiles = new Map(
+  Object.entries(bundled)
+    .filter(([name]) => isPwaFile(name))
+    .map(([name, body]) => [
+      name,
+      fileResponse(
+        name,
+        name.endsWith(".png") ? Buffer.from(body, "base64") : body,
+      ),
+    ]),
+);
+
+const assets = Object.fromEntries(
+  Object.entries(bundled).filter(([name]) => !isPwaFile(name)),
+);
 
 /** Assets at least this big are also kept gzipped, for browsers that take it. */
 const compressFrom = 1024;

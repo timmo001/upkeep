@@ -9,6 +9,7 @@
     "noUncheckedIndexedAccess": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["bun"],
     "plugins": [
