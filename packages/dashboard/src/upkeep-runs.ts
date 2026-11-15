@@ -7,7 +7,8 @@
  * picks, so any day can be looked at without scrolling back to it, and Still
  * open keeps only the failures nothing has settled yet. Every filter offers
  * each value it can take, not only those the runs shown have. Until the State
- * filter is changed, only the runs waiting, going or failed show. The filters
+ * filter is changed, only the runs waiting, going or failed show; presets
+ * beside Filters pick the State filter in one press. The filters
  * are kept in the page's query, so a link keeps them; the table's own view
  * state stays in groundwork's shared store.
  * Older runs load a page at a time as the table scrolls to its end.
@@ -18,6 +19,7 @@ import {
   GwDatePicker,
 } from "@timmo001/groundwork-ui/gw-date-picker.ts";
 import { GwFilter } from "@timmo001/groundwork-ui/gw-filter.ts";
+import { GwSegmented } from "@timmo001/groundwork-ui/gw-segmented.ts";
 import { GwSheet } from "@timmo001/groundwork-ui/gw-sheet.ts";
 import type {
   TableColumn,
@@ -67,6 +69,7 @@ import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-checkbox.ts";
 import "@timmo001/groundwork-ui/define/gw-date-picker.ts";
 import "@timmo001/groundwork-ui/define/gw-filter.ts";
+import "@timmo001/groundwork-ui/define/gw-segmented.ts";
 import "@timmo001/groundwork-ui/define/gw-sheet.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 
@@ -211,6 +214,9 @@ const setQuery = (part: ReadonlyMap<string, string | null>) => {
   history.replaceState(history.state, "", url);
 };
 
+const sameValues = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+  a.length === b.length && a.every((value) => b.includes(value));
+
 /**
  * The states the runs show until someone changes the filter: what's waiting
  * or going, and the failures nothing has settled yet. Runs that passed, were
@@ -222,8 +228,57 @@ const shownByDefault: ReadonlySet<string> = new Set<Domain.RunState>([
   ...Domain.openStates,
 ]);
 
-const sameValues = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
-  a.length === b.length && a.every((value) => b.includes(value));
+/**
+ * A quick pick of the State filter beside Filters, by the states it shows:
+ * none for the default, which takes the filter off.
+ */
+interface Preset {
+  readonly value: string;
+  readonly label: string;
+  readonly hint: string;
+  readonly states: ReadonlyArray<Domain.RunState> | null;
+}
+
+const presets: ReadonlyArray<Preset> = [
+  {
+    value: "default",
+    label: "Default",
+    hint: "Queued, running and failures nothing has settled",
+    states: null,
+  },
+  {
+    value: "everything",
+    label: "Everything",
+    hint: "Every run, whatever its state",
+    states: Domain.RunState.literals,
+  },
+  {
+    value: "failures",
+    label: "Failures",
+    hint: "Failures nothing has settled, healing or not",
+    states: Domain.openStates,
+  },
+  {
+    value: "waiting",
+    label: "Waiting on you",
+    hint: "Needs you and parked",
+    states: ["needs-you", "parked"],
+  },
+  {
+    value: "running",
+    label: "Running",
+    hint: "Queued and running",
+    states: ["queued", "running"],
+  },
+];
+
+/** The preset the State filter's chosen states are, or none. */
+const presetOf = (chosen: ReadonlyArray<string> | undefined) =>
+  presets.find(({ states }) =>
+    states === null
+      ? chosen === undefined
+      : chosen !== undefined && sameValues(chosen, states),
+  );
 
 /** The release a run is for, or the one repository it was narrowed to. */
 const release = (run: Domain.Run) =>
@@ -527,6 +582,15 @@ export class UpkeepRuns extends LitElement {
     this.requestUpdate();
   }
 
+  /** Shows a preset's states, or takes the State filter off for the default. */
+  #setPreset({ states }: Preset) {
+    setQuery(new Map([["state", states === null ? null : states.join(",")]]));
+
+    // Older pages were loaded for the states shown before
+    this.#resetPages();
+    this.requestUpdate();
+  }
+
   /** Narrows the list to the failures still open, or shows every run. */
   #setOpen(open: boolean) {
     setQuery(new Map([["open", open ? "" : null]]));
@@ -588,9 +652,9 @@ export class UpkeepRuns extends LitElement {
   }
 
   /**
-   * The Filters button beside the table's search, counting the filters that
-   * are on, with a chip for each that takes it off, and the sheet it opens,
-   * as the inbox's filters work.
+   * The State presets, then the Filters button beside the table's search,
+   * counting the filters that are on, with a chip for each that takes it
+   * off, and the sheet it opens, as the inbox's filters work.
    */
   #toolbar(
     filters: ReadonlyArray<{
@@ -612,7 +676,28 @@ export class UpkeepRuns extends LitElement {
     const count = on.length + (day === "" ? 0 : 1) + (open ? 1 : 0);
 
     // The button and its chips share one size, so neither dwarfs the other
-    return html`<gw-button
+    return html`<gw-segmented
+        slot="toolbar"
+        size="small"
+        overflow
+        label="Show"
+        value=${presetOf(listedAt("state"))?.value ?? ""}
+        .options=${presets.map(({ value, label, hint }) => ({
+          value,
+          label,
+          hint,
+        }))}
+        @change=${(event: Event) => {
+          const picked = presets.find(
+            ({ value }) =>
+              event.currentTarget instanceof GwSegmented &&
+              value === event.currentTarget.value,
+          );
+
+          if (picked !== undefined) this.#setPreset(picked);
+        }}
+      ></gw-segmented>
+      <gw-button
         slot="toolbar"
         size="small"
         appearance=${count > 0 ? "accent" : "outlined"}
