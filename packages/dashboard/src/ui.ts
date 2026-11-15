@@ -127,6 +127,13 @@ export const shared = css`
     overflow-x: auto;
   }
 
+  /* A table scrolls once it's half the screen, so a long one leaves room for
+     what's around it, but always shows about four rows first. One with a cap
+     of its own keeps it */
+  gw-table {
+    --gw-table-max-height: max(13rem, 50vh);
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;
