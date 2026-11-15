@@ -942,6 +942,20 @@ const migrations = SqliteMigrator.fromRecord({
         AND dismissed_at IS NOT NULL AND EXISTS (${latest("id")})
     `;
   }),
+  // The schedules on agents' sessions, as each worker last reported them
+  "0045_schedules": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE schedules (
+        id TEXT PRIMARY KEY,
+        worker TEXT NOT NULL,
+        session TEXT NOT NULL,
+        body TEXT NOT NULL
+      )
+    `;
+    yield* sql`CREATE INDEX schedules_session ON schedules (session)`;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1973,6 +1987,22 @@ export class Store extends Context.Service<
       worker: string,
       prompts: ReadonlyArray<Domain.PermissionPrompt>,
     ): Effect.Effect<void, StoreError>;
+    /**
+     * The agent sessions `worker`'s runs worked in over the last two days,
+     * for it to report what's scheduled on them.
+     */
+    workerSessions(
+      worker: string,
+    ): Effect.Effect<ReadonlyArray<Domain.WorkerSession>, StoreError>;
+    /** Keep the schedules `worker` reported, replacing what it sent last. */
+    putSchedules(
+      worker: string,
+      schedules: ReadonlyArray<Domain.SessionSchedule>,
+    ): Effect.Effect<void, StoreError>;
+    /** The schedules on the agent's session the run `id` worked in. */
+    runSchedules(
+      id: string,
+    ): Effect.Effect<Domain.RunSchedules, Api.RunNotFound | StoreError>;
     /** Delete read or dismissed entries last changed before `before`. */
     pruneInbox(before: number): Effect.Effect<number, StoreError>;
     /**
@@ -4679,6 +4709,64 @@ export class Store extends Context.Service<
       Effect.mapError(storeError),
     );
 
+    const workerSessions = Effect.fn("Store.workerSessions")(function* (
+      worker: string,
+    ) {
+      const since = (yield* Clock.currentTimeMillis) - 2 * 24 * 60 * 60 * 1000;
+
+      return yield* sql<Domain.WorkerSession>`
+        SELECT heal_session AS session, max(heal_directory) AS directory
+        FROM runs
+        WHERE worker = ${worker} AND heal_session IS NOT NULL
+          AND heal_directory IS NOT NULL AND queued_at >= ${since}
+        GROUP BY heal_session
+      `;
+    }, Effect.mapError(storeError));
+
+    const putSchedules = Effect.fn("Store.putSchedules")(
+      function* (
+        worker: string,
+        schedules: ReadonlyArray<Domain.SessionSchedule>,
+      ) {
+        yield* sql`DELETE FROM schedules WHERE worker = ${worker}`;
+
+        for (const schedule of schedules) {
+          yield* sql`
+            INSERT INTO schedules (id, worker, session, body)
+            VALUES (
+              ${schedule.id}, ${worker}, ${schedule.session},
+              ${JSON.stringify(schedule)}
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              worker = excluded.worker, session = excluded.session,
+              body = excluded.body
+          `;
+        }
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const runSchedules = Effect.fn("Store.runSchedules")(function* (
+      id: string,
+    ) {
+      const current = yield* run(id);
+      const session = current.heal?.session ?? null;
+
+      if (session === null || current.worker === null)
+        return { worker: null, session: null, schedules: [] };
+
+      const rows = yield* sql<{ body: string }>`
+        SELECT body FROM schedules WHERE session = ${session} ORDER BY id
+      `.pipe(Effect.mapError(storeError));
+
+      const schedules = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.fromJsonString(Domain.SessionSchedule)),
+      )(rows.map((row) => row.body)).pipe(Effect.mapError(storeError));
+
+      return { worker: current.worker, session, schedules };
+    });
+
     const ruleRows = sql`
       SELECT repo AS place, routine, at FROM inbox_rules ORDER BY repo
     `.pipe(Effect.flatMap(decodePlaces));
@@ -5661,6 +5749,9 @@ export class Store extends Context.Service<
       needs: announce(touches("inbox"), needs),
       settle: announce(touches("inbox"), settle),
       putPrompts: announce(touches("inbox"), putPrompts),
+      workerSessions,
+      putSchedules: announce(touches("schedules"), putSchedules),
+      runSchedules,
       pruneInbox: announce(
         touchesIf((pruned: number) => pruned > 0, "inbox"),
         pruneInbox,

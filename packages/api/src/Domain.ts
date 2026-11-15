@@ -1012,12 +1012,26 @@ export const ReleasesPage = Schema.Struct({
 export type ReleasesPage = typeof ReleasesPage.Type;
 
 /**
+ * When a schedule added to an agent's session wakes, as OpenCode takes it:
+ * after a while, at a time, every so often, or on a cron.
+ */
+export const ScheduleWhen = Schema.Union([
+  Schema.Struct({ in: Schema.String }),
+  Schema.Struct({ at: Schema.String }),
+  Schema.Struct({ every: Schema.String }),
+  Schema.Struct({ cron: Schema.String }),
+]);
+
+export type ScheduleWhen = typeof ScheduleWhen.Type;
+
+/**
  * Something the server asks a worker to do once, on demand, as a run of the
  * `command` job: `mark-read` marks a GitHub notification thread read,
  * `start-agent` opens an agent on one worker, which only that one claims,
  * `open-session` opens an agent's OpenCode session on the worker named, and
- * `ask-inbox` has that session ask you in the Plannotator Inbox there, and
- * `release-agent` opens an agent to prepare a release on the worker named.
+ * `ask-inbox` has that session ask you in the Plannotator Inbox there,
+ * `release-agent` opens an agent to prepare a release on the worker named,
+ * and the `schedule-*` commands change the schedules on an agent's session.
  * The `skill-*` commands run as the `skill-change` job instead, `change` as
  * the `change` job, and `machine` names the worker a machine job's run is
  * for.
@@ -1131,6 +1145,39 @@ export const Command = Schema.Union([
     worker: Schema.String,
     repo: RepoName,
     snapshot: Schema.String,
+  }),
+  /**
+   * Pause, resume or delete a schedule on an agent's session, on the worker
+   * the session is on.
+   */
+  Schema.Struct({
+    kind: Schema.Literals([
+      "schedule-pause",
+      "schedule-resume",
+      "schedule-delete",
+    ]),
+    worker: Schema.String,
+    session: Schema.String,
+    schedule: Schema.String.check(Schema.isPattern(/^sch_/)),
+  }),
+  /**
+   * Schedule a prompt in an agent's session, on the worker the session is
+   * on: `when` as OpenCode takes it, such as `{ every: "5 minutes" }`, and,
+   * with `condition`, only once that shell command passes.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("schedule-add"),
+    worker: Schema.String,
+    session: Schema.String,
+    name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+    when: ScheduleWhen,
+    condition: Schema.optionalKey(
+      Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+    ),
+    prompt: Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(4000),
+    ),
   }),
 ]);
 
@@ -1442,11 +1489,71 @@ export interface PermissionPrompts extends Schema.Schema.Type<
 > {}
 
 /**
+ * An OpenCode schedule on an agent's session Upkeep started, as its worker
+ * last saw it: a prompt the session gets when it wakes, on a timer and,
+ * with `condition`, only once a check passes.
+ */
+export const SessionSchedule = Schema.Struct({
+  id: Schema.String,
+  session: Schema.String,
+  name: Schema.NullOr(Schema.String),
+  /** When it wakes, such as `every 5 minutes`, `in 1 hour` or `cron 0 9 * * *`. */
+  when: Schema.String,
+  /** The check that must pass before it wakes, such as a shell command. */
+  condition: Schema.NullOr(Schema.String),
+  prompt: Schema.String,
+  status: Schema.Literals(["active", "paused", "done"]),
+  nextDueAt: Schema.NullOr(Schema.Finite),
+  endsAt: Schema.NullOr(Schema.Finite),
+  runCount: Schema.Number,
+  lastFiredAt: Schema.NullOr(Schema.Finite),
+  lastOutcome: Schema.NullOr(Schema.String),
+});
+
+export interface SessionSchedule extends Schema.Schema.Type<
+  typeof SessionSchedule
+> {}
+
+/**
+ * Every schedule on the sessions a worker's agents ran in, replacing what it
+ * sent last.
+ */
+export const SessionSchedules = Schema.Struct({
+  schedules: Schema.Array(SessionSchedule),
+});
+
+export interface SessionSchedules extends Schema.Schema.Type<
+  typeof SessionSchedules
+> {}
+
+/** An agent session on a worker, for it to keep an eye on its schedules. */
+export const WorkerSession = Schema.Struct({
+  session: Schema.String,
+  directory: Schema.String,
+});
+
+export interface WorkerSession extends Schema.Schema.Type<
+  typeof WorkerSession
+> {}
+
+/**
+ * The schedules on the agent's session a run worked in, and the worker the
+ * session is on, to change them there. Both null when the run had no agent.
+ */
+export const RunSchedules = Schema.Struct({
+  worker: Schema.NullOr(Schema.String),
+  session: Schema.NullOr(Schema.String),
+  schedules: Schema.Array(SessionSchedule),
+});
+
+export interface RunSchedules extends Schema.Schema.Type<typeof RunSchedules> {}
+
+/**
  * A part of the server's state that a change touched: `runs` covers runs and
  * jobs, `log` a run's log, `inbox` the inbox and tracked repositories,
  * `workers` what the workers last said they're set up with, `theme` the
- * desktop's Omarchy theme, `releases` the Releases page and `timeline` the
- * Activity page.
+ * desktop's Omarchy theme, `releases` the Releases page, `timeline` the
+ * Activity page and `schedules` the schedules on agents' sessions.
  */
 export const Topic = Schema.Literals([
   "runs",
@@ -1458,6 +1565,7 @@ export const Topic = Schema.Literals([
   "theme",
   "releases",
   "timeline",
+  "schedules",
 ]);
 
 export type Topic = typeof Topic.Type;

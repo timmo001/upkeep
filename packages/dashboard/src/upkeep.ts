@@ -79,6 +79,8 @@ const releasesKey = ["releases"];
 
 const timelineKey = ["timeline"];
 
+const schedulesKey = ["schedules"];
+
 /** Requests that couldn't be made or understood are defects, as in queries. */
 const asDefects = <A, E, R>(
   effect: Effect.Effect<
@@ -463,6 +465,38 @@ export const run = Atom.family((id: string) =>
   }),
 );
 
+/** The schedules on the agent's session a run worked in. */
+export const runSchedules = Atom.family((id: string) =>
+  UpkeepApi.query("runs", "schedules", {
+    params: { id },
+    reactivityKeys: schedulesKey,
+  }),
+);
+
+/**
+ * Change a schedule on an agent's session, or add one, through a command
+ * run on the worker the session is on. The list updates once the worker
+ * reports back.
+ */
+export const scheduleCommand = UpkeepApi.runtime.fn(
+  (
+    payload: Extract<
+      Domain.Command,
+      {
+        readonly kind:
+          | "schedule-pause"
+          | "schedule-resume"
+          | "schedule-delete"
+          | "schedule-add";
+      }
+    >,
+  ) =>
+    UpkeepApi.use((client) => client.attention.command({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(Reactivity.invalidate(runsKey)),
+    ),
+);
+
 const ended = (state: Domain.RunState) =>
   state !== "queued" && state !== "running";
 
@@ -487,6 +521,8 @@ const touched = (change: Domain.StateChange) => {
       return releasesKey;
     case "timeline":
       return timelineKey;
+    case "schedules":
+      return schedulesKey;
   }
 };
 

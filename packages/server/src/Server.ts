@@ -1000,6 +1000,10 @@ const RunsHandlers = HttpApiBuilder.group(
 
         return dismissed;
       }),
+      schedules: ({ params }) =>
+        store
+          .runSchedules(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
     });
   }),
 );
@@ -1569,6 +1573,18 @@ const WorkHandlers = HttpApiBuilder.group(
 
         yield* store
           .putPrompts(worker.name, payload.prompts)
+          .pipe(Effect.orDie);
+      }),
+      sessions: Effect.fn(function* () {
+        const worker = yield* Api.CurrentWorker;
+
+        return yield* store.workerSessions(worker.name).pipe(Effect.orDie);
+      }),
+      putSchedules: Effect.fn(function* ({ payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        yield* store
+          .putSchedules(worker.name, payload.schedules)
           .pipe(Effect.orDie);
       }),
     });

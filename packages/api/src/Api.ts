@@ -54,6 +54,8 @@ import {
   RepoName,
   Run,
   RunState,
+  RunSchedules,
+  SessionSchedules,
   SkillChange,
   SkillChangeState,
   SkillsPage,
@@ -65,6 +67,7 @@ import {
   TimelineWho,
   TrackedRepo,
   WorkerAgents,
+  WorkerSession,
 } from "./Domain";
 
 /** The admin a request was authenticated as. */
@@ -678,6 +681,15 @@ export class RunsGroup extends HttpApiGroup.make("runs")
     HttpApiEndpoint.post("dismiss", "/:id/dismiss", {
       params: { id: Schema.String },
       success: Run,
+      error: RunNotFound,
+    }),
+    /**
+     * The schedules on the agent's session a run worked in, as its worker
+     * last reported them, with the worker, to change them through commands.
+     */
+    HttpApiEndpoint.get("schedules", "/:id/schedules", {
+      params: { id: Schema.String },
+      success: RunSchedules,
       error: RunNotFound,
     }),
   )
@@ -1303,6 +1315,21 @@ export class WorkGroup extends HttpApiGroup.make("work")
      */
     HttpApiEndpoint.put("putPrompts", "/prompts", {
       payload: PermissionPrompts,
+      success: HttpApiSchema.NoContent,
+    }),
+    /**
+     * The sessions this worker's agents ran in lately, for it to report
+     * what's scheduled on them.
+     */
+    HttpApiEndpoint.get("sessions", "/sessions", {
+      success: Schema.Array(WorkerSession),
+    }),
+    /**
+     * Keep the schedules on this worker's agents' sessions, replacing the
+     * last set it sent.
+     */
+    HttpApiEndpoint.put("putSchedules", "/schedules", {
+      payload: SessionSchedules,
       success: HttpApiSchema.NoContent,
     }),
   )

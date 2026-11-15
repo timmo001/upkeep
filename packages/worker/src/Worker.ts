@@ -43,6 +43,7 @@ import * as Prompts from "./Prompts";
 import * as RateLimits from "./RateLimits";
 import { narrowTo, Reporter } from "./Reporter";
 import { RunLog } from "./RunLog";
+import * as Schedules from "./Schedules";
 import * as Settings from "./settings";
 import * as Status from "./Status";
 import * as Theme from "./Theme";
@@ -772,7 +773,7 @@ export const work = Effect.fn("Worker.work")(function* (
 
   return yield* Effect.raceFirst(
     Effect.raceFirst(working, cutOff),
-    Effect.all([notify, Theme.follow, Prompts.follow], {
+    Effect.all([notify, Theme.follow, Prompts.follow, Schedules.follow], {
       concurrency: "unbounded",
       discard: true,
     }),

@@ -51,6 +51,7 @@ import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-list.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "./upkeep-schedules.ts";
 
 const going = (state: Domain.RunState) =>
   state === "queued" || state === "running";
@@ -508,6 +509,11 @@ export class UpkeepRun extends LitElement {
             : html`<gw-alert class="message" tone="danger"
                 >${current.error}</gw-alert
               >`
+        }
+        ${
+          current.heal?.session == null
+            ? null
+            : html`<upkeep-schedules run-id=${current.id}></upkeep-schedules>`
         }
         <gw-section heading="Log" storage-key="upkeep.run.section.log">
           ${view(this.#log.value, (lines) =>
