@@ -49,15 +49,34 @@ const actions = {
   ask: "It isn't clear what went wrong or what to do, so a person should look",
 } satisfies Record<Domain.HealDecision, string>;
 
-const Action = Decision.make({
-  input: Failure,
-  decisions: {
-    action: Decision.classify({
-      instructions: "What should be done about `failed`, a failed job run?",
-      criteria: actions,
-    }),
-  },
-});
+const withoutRetry = {
+  fix: actions.fix,
+  park: actions.park,
+  ask: actions.ask,
+};
+
+/**
+ * The choices for a failed run. One a heal queued by retrying has already had
+ * its run again, so retrying it once more would only loop.
+ */
+export const choices = (trigger: Domain.Trigger) =>
+  trigger === "heal" ? withoutRetry : actions;
+
+const asking = <Label extends string>(criteria: {
+  readonly [L in Label]: string;
+}) =>
+  Decision.make({
+    input: Failure,
+    decisions: {
+      action: Decision.classify({
+        instructions: "What should be done about `failed`, a failed job run?",
+        criteria,
+      }),
+    },
+  });
+
+const Action = asking(actions);
+const ActionWithoutRetry = asking(withoutRetry);
 
 interface Chosen {
   readonly decision: Domain.HealDecision;
@@ -128,12 +147,15 @@ export const describe = (
   },
 });
 
-/** What to do without a decision model: retry a lost run, ask about the rest. */
+/**
+ * What to do without a decision model: retry a lost run, ask about the rest.
+ * A run a heal already queued isn't retried again.
+ */
 export const fallback = (
   run: Domain.Run,
   why = "there's no decision model",
 ): Chosen =>
-  run.error?.startsWith("Lost") === true
+  run.error?.startsWith("Lost") === true && run.trigger !== "heal"
     ? {
         decision: "retry",
         reason: `The worker was lost, and ${why}`,
@@ -194,9 +216,23 @@ const decide = Effect.fnUntraced(function* (
   model: Settings.DecisionModel,
 ) {
   const decisions = yield* DecisionModel.DecisionModel;
-  const { answers } = yield* decisions.decide(Action, { input: failure });
-  const { label: decision, probabilities } = answers.action;
-  const sure = Math.round(probabilities[decision] * 100);
+
+  const { label: decision, sure: confidence } =
+    failure.failed.trigger === "heal"
+      ? yield* decisions.decide(ActionWithoutRetry, { input: failure }).pipe(
+          Effect.map(({ answers: { action } }) => ({
+            label: action.label,
+            sure: action.probabilities[action.label],
+          })),
+        )
+      : yield* decisions.decide(Action, { input: failure }).pipe(
+          Effect.map(({ answers: { action } }) => ({
+            label: action.label,
+            sure: action.probabilities[action.label],
+          })),
+        );
+
+  const sure = Math.round(confidence * 100);
   const reason = `${actions[decision]} (${sure}% sure, ${Decisions.by(model)})`;
 
   if (decision !== "fix" || agents.length < 2) {
@@ -251,7 +287,9 @@ const decideByAgent = Effect.fnUntraced(function* (
     'A job run failed. Choose what to do about it. Don\'t use any tools: reply with only one line of JSON, `{"action": ..., "agent": ...}`, and nothing else.',
     "",
     "Actions:",
-    ...Object.entries(actions).map(([name, when]) => `- ${name}: ${when}`),
+    ...Object.entries(choices(failure.failed.trigger)).map(
+      ([name, when]) => `- ${name}: ${when}`,
+    ),
     "",
     "Agents, for a fix (name one, or null for any other action):",
     ...agents.map((agent) => `- ${label(agent)}: ${agent.for}`),
