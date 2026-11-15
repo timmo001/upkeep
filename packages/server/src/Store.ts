@@ -911,6 +911,12 @@ const migrations = SqliteMigrator.fromRecord({
       `;
     }
   }),
+  // A heal run carries what settled the failure it healed
+  "0043_settle_heals": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* settleHealRuns(sql);
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -937,6 +943,24 @@ const decodeLanded = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+/**
+ * Give the heal runs of failures that have been settled what settled them,
+ * so a heal whose work is done can leave the lists of what needs you.
+ */
+const settleHealRuns = (sql: SqlClient.SqlClient) =>
+  sql`
+    UPDATE runs
+    SET settled_by = (
+      SELECT failed.settled_by FROM runs AS failed WHERE failed.id = runs.heal_of
+    )
+    WHERE heal_of IS NOT NULL
+      AND settled_by IS NULL
+      AND EXISTS (
+        SELECT 1 FROM runs AS failed
+        WHERE failed.id = runs.heal_of AND failed.settled_by IS NOT NULL
+      )
+  `;
 
 /**
  * What each run that landed a skill change was about, by its ID, of the runs
@@ -2300,6 +2324,7 @@ export class Store extends Context.Service<
             settled_by = ${self.id}
           WHERE ${sql.in("id", ids)}
         `;
+        yield* settleHealRuns(sql);
       }).pipe(Effect.catchTag("SchemaError", Effect.die));
 
     /**
@@ -2325,6 +2350,7 @@ export class Store extends Context.Service<
           AND heal_of IS NULL
           AND ${sql.in("state", Domain.openStates)}
       `;
+      yield* settleHealRuns(sql);
     }, Effect.mapError(storeError));
 
     /**

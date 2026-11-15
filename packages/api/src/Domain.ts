@@ -1175,7 +1175,8 @@ export const Run = Schema.Struct({
   retryOf: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /**
    * For a failure that's `healed` or `recovered`: the later run that passed.
-   * Missing from older servers.
+   * For a heal run: the run that settled the failure it healed. Missing from
+   * older servers.
    */
   settledBy: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** What the run did, in a line or a short paragraph. */

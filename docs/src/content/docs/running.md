@@ -857,7 +857,8 @@ others; the run fails at the end, naming them. A release nothing uses ends
 `skipped`. The dashboard's runs lists show only the runs waiting, going or
 failed until the State filter is changed, so skipped runs are left out. The
 presets beside Filters switch it to Everything, Failures, Waiting on you or
-Running, and back to Default.
+Running, and back to Default. Default, Failures and Waiting on you leave out
+heal runs whose failure has since been settled; Everything shows them.
 
 A package is only bumped once its version is on npm, waiting up to 20
 minutes for the publish.

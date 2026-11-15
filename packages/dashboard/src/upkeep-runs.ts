@@ -8,7 +8,9 @@
  * open keeps only the failures nothing has settled yet. Every filter offers
  * each value it can take, not only those the runs shown have. Until the State
  * filter is changed, only the runs waiting, going or failed show; presets
- * beside Filters pick the State filter in one press. The filters
+ * beside Filters pick the State filter in one press. The default and the
+ * presets for failures leave out heal runs whose failure has been settled,
+ * since nothing about them waits on you. The filters
  * are kept in the page's query, so a link keeps them; the table's own view
  * state stays in groundwork's shared store.
  * Older runs load a page at a time as the table scrolls to its end.
@@ -230,13 +232,15 @@ const shownByDefault: ReadonlySet<string> = new Set<Domain.RunState>([
 
 /**
  * A quick pick of the State filter beside Filters, by the states it shows:
- * none for the default, which takes the filter off.
+ * none for the default, which takes the filter off. `settledHeals` keeps the
+ * heal runs whose failure has been settled.
  */
 interface Preset {
   readonly value: string;
   readonly label: string;
   readonly hint: string;
   readonly states: ReadonlyArray<Domain.RunState> | null;
+  readonly settledHeals: boolean;
 }
 
 const presets: ReadonlyArray<Preset> = [
@@ -245,30 +249,35 @@ const presets: ReadonlyArray<Preset> = [
     label: "Default",
     hint: "Queued, running and failures nothing has settled",
     states: null,
+    settledHeals: false,
   },
   {
     value: "everything",
     label: "Everything",
     hint: "Every run, whatever its state",
     states: Domain.RunState.literals,
+    settledHeals: true,
   },
   {
     value: "failures",
     label: "Failures",
     hint: "Failures nothing has settled, healing or not",
     states: Domain.openStates,
+    settledHeals: false,
   },
   {
     value: "waiting",
     label: "Waiting on you",
     hint: "Needs you and parked",
     states: ["needs-you", "parked"],
+    settledHeals: false,
   },
   {
     value: "running",
     label: "Running",
     hint: "Queued and running",
     states: ["queued", "running"],
+    settledHeals: true,
   },
 ];
 
@@ -822,10 +831,12 @@ export class UpkeepRuns extends LitElement {
 
     // Older pages come from the server in only the states shown
     const states = this.#serverStates(listedAt("state"));
+    const settledHeals = presetOf(listedAt("state"))?.settledHeals ?? true;
 
     const list = all.filter(
       (run) =>
         (!this.#open || Domain.isStillOpen(run)) &&
+        (settledHeals || run.heal === null || run.settledBy == null) &&
         filters.every(({ filter, value }) => {
           const of = filter.of(run);
 
