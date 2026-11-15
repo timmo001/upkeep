@@ -634,7 +634,8 @@ export class UpkeepRuns extends LitElement {
 
   /**
    * The Still open filter: only the failures nothing has settled yet, as a
-   * later run of the same job and scope passing is what settles one.
+   * later run of the same job and scope passing is what settles one. A
+   * command's failure was seen as it happened, so it's never still open.
    */
   #openFilter() {
     return html`<div class="field">
@@ -824,7 +825,7 @@ export class UpkeepRuns extends LitElement {
 
     const list = all.filter(
       (run) =>
-        (!this.#open || Domain.isOpen(run)) &&
+        (!this.#open || Domain.isStillOpen(run)) &&
         filters.every(({ filter, value }) => {
           const of = filter.of(run);
 

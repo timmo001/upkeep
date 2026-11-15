@@ -331,6 +331,20 @@ export const isOpen = (run: {
   readonly heal: unknown;
 }) => run.heal === null && open.has(run.state);
 
+/**
+ * The jobs whose runs someone asked for and watched, such as the dashboard's
+ * commands: a failure of one was seen as it happened, and nothing later runs
+ * the same again, so it keeps its state but is never still open.
+ */
+export const seenJobs: ReadonlyArray<string> = ["command"];
+
+/** Whether a run is a failure still waiting to be settled, as Still open lists. */
+export const isStillOpen = (run: {
+  readonly job: string;
+  readonly state: RunState;
+  readonly heal: unknown;
+}) => isOpen(run) && !seenJobs.includes(run.job);
+
 /** How a run can end. `github-down` is a failure GitHub caused. */
 export const Outcome = Schema.Literals([
   "succeeded",

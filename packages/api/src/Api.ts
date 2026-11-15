@@ -619,7 +619,8 @@ export class RunsGroup extends HttpApiGroup.make("runs")
      * runs queued before it, for loading older runs as a list scrolls. With
      * `states`, a comma-separated list, only runs in one of them, so a list
      * filtered by state pages through only what it shows. `open` keeps only
-     * failures nothing has settled yet, leaving out heal runs. `since` and
+     * failures nothing has settled yet, leaving out heal runs and commands,
+     * whose failures were seen as they happened. `since` and
      * `until`, in milliseconds, keep the runs queued from one up to the
      * other, such as a single day's.
      */

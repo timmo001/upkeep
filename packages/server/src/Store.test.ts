@@ -1339,6 +1339,75 @@ test("a failure joining a heal under way follows it, and stays open until a run 
     }),
   ));
 
+test("a skill change settles on a later review of its skills, and a command is never open", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const review = (skills: ReadonlyArray<string>, reason: string) =>
+        Effect.gen(function* () {
+          const queued = yield* store.queueRun({
+            job: "skill-change",
+            trigger: "manual",
+            release: null,
+            command: {
+              kind: "skill-start",
+              repo: "timmo001/skills",
+              title: skills.join(", "),
+              skills,
+              work: "review",
+              reason,
+            },
+          });
+
+          yield* store.claim(["skill-change"], "desktop");
+
+          return queued;
+        });
+
+      const failed = yield* review(["testing"], "Upstream moved");
+
+      yield* store.finish(failed.id, "desktop", "failed", "No opencode2");
+
+      const command = yield* store.queueRun({
+        job: "command",
+        trigger: "manual",
+        release: null,
+        command: {
+          kind: "start-agent",
+          worker: "desktop",
+          url: "https://github.com/owner/repo/pull/1",
+          group: null,
+          prompt: null,
+        },
+      });
+
+      yield* store.claim(["command"], "desktop");
+      yield* store.finish(command.id, "desktop", "failed", "No herdr");
+
+      expect(
+        (yield* store.runs({ open: true, limit: 10 })).map(({ id }) => id),
+      ).toEqual([failed.id]);
+      expect((yield* store.run(command.id)).state).toBe("failed");
+
+      const other = yield* review(["plan"], "Upstream moved");
+
+      yield* store.finish(other.id, "desktop", "succeeded", null);
+
+      expect((yield* store.run(failed.id)).state).toBe("failed");
+
+      const passed = yield* review(["plan", "testing"], "A weekly review");
+
+      yield* store.finish(passed.id, "desktop", "succeeded", null);
+
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "recovered",
+        settledBy: passed.id,
+      });
+      expect(yield* store.runs({ open: true, limit: 10 })).toEqual([]);
+    }),
+  ));
+
 test("a failure with no heal recovers once a run covering its repository passes", () =>
   run(
     Effect.gen(function* () {

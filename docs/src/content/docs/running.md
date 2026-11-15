@@ -526,7 +526,9 @@ it.
 A later run settles a failure when it succeeds, or finds nothing to do, for the
 same job and command,
 for the same released repository and covering its repository: a run narrowed
-to another repository doesn't. A run that reaches the consumers a heal was for,
+to another repository doesn't. A skill change instead settles on a later
+review of the same skills in the same repository, whatever started it, or on
+the change to them landing. A run that reaches the consumers a heal was for,
 or whose heal was held for, settles their failures too. Each failed run links
 to its heals, its retry and the run that settled it, and a retry links back to
 the run it retries.
@@ -537,9 +539,12 @@ broke. Its failure follows, back to `failed` when the heal found nothing to
 fix or broke. A retry that fails puts the failure it was retrying back to
 `failed`, while its own failure is healed.
 
-`upkeep runs --open` lists the failures nothing has settled yet, and leaves
-heals out. The activity counts every run that failed, whether or not it's been
-healed since, and a heal that didn't break as one that succeeded.
+`upkeep runs --open` and the runs page's Still open list the failures nothing
+has settled yet, and leave heals out. They leave out commands too: you watched
+those fail, and nothing runs the same command again to settle one, so a failed
+command stays `failed` without staying open. The activity counts every run
+that failed, whether or not it's been healed since, and a heal that didn't
+break as one that succeeded.
 
 ## Heals
 
@@ -833,7 +838,9 @@ and CI checks it. After the push the job waits for the commit's CI runs, and
 a failed run fails that consumer. One consumer failing doesn't stop the
 others; the run fails at the end, naming them. A release nothing uses ends
 `skipped`. The dashboard's runs lists show only the runs waiting, going or
-failed until the State filter is changed, so skipped runs are left out.
+failed until the State filter is changed, so skipped runs are left out. The
+presets beside Filters switch it to Everything, Failures, Waiting on you or
+Running, and back to Default.
 
 A package is only bumped once its version is on npm, waiting up to 20
 minutes for the publish.

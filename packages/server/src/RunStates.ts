@@ -3,7 +3,8 @@
  * run ends as. The store applies these as runs finish; the backfill applies
  * them once to the runs from before there were such states.
  */
-import { Domain } from "@upkeep/api";
+import { Catalogue, Domain } from "@upkeep/api";
+import { Option, Schema } from "effect";
 
 export type HealResult = (typeof Domain.healResults)[number];
 
@@ -124,19 +125,68 @@ export interface Filled {
 
 const lower = (value: string | null) => value?.toLowerCase() ?? null;
 
+/** The repository and skills a skill change is about. */
+export interface SkillScope {
+  readonly repo: string;
+  readonly skills: ReadonlyArray<string>;
+}
+
+const SkillStart = Schema.fromJsonString(
+  Schema.Struct({
+    kind: Schema.Literal("skill-start"),
+    repo: Schema.String,
+    skills: Schema.Array(Schema.String),
+  }),
+);
+
+const decodeSkillStart = Schema.decodeUnknownOption(SkillStart);
+
+/**
+ * What a skill change's run reviews, for one that starts a change: each
+ * one's command carries why it started, so no two match on it alone.
+ */
+export const skillScope = (
+  run: Pick<Row, "job" | "command">,
+): SkillScope | null => {
+  if (run.job !== Catalogue.skillChange.id || run.command === null) return null;
+
+  const start = decodeSkillStart(run.command);
+
+  return Option.isSome(start)
+    ? { repo: start.value.repo, skills: start.value.skills }
+    : null;
+};
+
+/** Whether `later` reviewed every skill `failed` was about, in its repository. */
+const covers = (later: SkillScope, failed: SkillScope) =>
+  lower(later.repo) === lower(failed.repo) &&
+  failed.skills.every((skill) => later.skills.includes(skill));
+
 /**
  * Whether `later`, a run that passed, settles `failed`: the same job and
- * command, for the same released repository, covering its repository.
+ * command, for the same released repository, covering its repository. A skill
+ * change instead settles on a later one, started or landed, about the same
+ * skills in the same repository, whatever its reason or title; `scope` is
+ * what `later` was about, for one that lands a change, whose command only
+ * names the change.
  */
 export const settles = (
   later: Pick<Row, "job" | "scopeRepo" | "releaseRepo" | "command">,
   failed: Pick<Row, "job" | "scopeRepo" | "releaseRepo" | "command">,
-) =>
-  later.job === failed.job &&
-  later.command === failed.command &&
-  lower(later.releaseRepo) === lower(failed.releaseRepo) &&
-  (later.scopeRepo === null ||
-    lower(later.scopeRepo) === lower(failed.scopeRepo));
+  scope: SkillScope | null = skillScope(later),
+) => {
+  const failedScope = skillScope(failed);
+
+  return (
+    later.job === failed.job &&
+    (scope !== null && failedScope !== null
+      ? covers(scope, failedScope)
+      : later.command === failed.command) &&
+    lower(later.releaseRepo) === lower(failed.releaseRepo) &&
+    (later.scopeRepo === null ||
+      lower(later.scopeRepo) === lower(failed.scopeRepo))
+  );
+};
 
 const before = (
   a: Pick<Row, "id" | "queuedAt">,
@@ -277,10 +327,12 @@ const open: ReadonlySet<Domain.RunState> = new Set(Domain.openStates);
 
 /**
  * The open failures a later run already settles, each with the first run
- * after it that passed and settles it.
+ * after it that passed and settles it. `landed` has what each run that landed
+ * a skill change was about, by its ID.
  */
 export const settledLater = (
   rows: ReadonlyArray<Settling>,
+  landed: ReadonlyMap<string, SkillScope> = new Map(),
 ): ReadonlyArray<{ readonly id: string; readonly settledBy: string }> => {
   const ordered = rows.toSorted((a, b) => (before(a, b) ? -1 : 1));
 
@@ -289,7 +341,11 @@ export const settledLater = (
 
     const by = ordered
       .slice(index + 1)
-      .find((later) => passing.includes(later.state) && settles(later, row));
+      .find(
+        (later) =>
+          passing.includes(later.state) &&
+          settles(later, row, landed.get(later.id) ?? skillScope(later)),
+      );
 
     return by === undefined ? [] : [{ id: row.id, settledBy: by.id }];
   });

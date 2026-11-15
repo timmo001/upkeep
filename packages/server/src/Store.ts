@@ -888,6 +888,29 @@ const migrations = SqliteMigrator.fromRecord({
       `;
     }
   }),
+  // A skill change now settles on a later one about the same skills, started
+  // or landed, rather than on the same command, which carries why it started
+  "0042_settle_skill_changes": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    const rows = yield* sql`
+      SELECT id, job, state, scope_repo, release_repo, command, queued_at
+      FROM runs
+      WHERE job = ${Catalogue.skillChange.id} AND heal_of IS NULL
+        AND ${sql.in("state", [...Domain.openStates, ...RunStates.passing])}
+    `.pipe(Effect.flatMap(decodeSettling));
+
+    const landed = yield* landedSkills(sql, sql`1 = 1`);
+
+    for (const { id, settledBy } of RunStates.settledLater(rows, landed)) {
+      yield* sql`
+        UPDATE runs
+        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+          settled_by = ${settledBy}
+        WHERE id = ${id}
+      `;
+    }
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -904,6 +927,40 @@ const decodeSettling = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+const decodeLanded = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      repo: Schema.String,
+      skills: Schema.fromJsonString(Schema.Array(Schema.String)),
+    }),
+  ),
+);
+
+/**
+ * What each run that landed a skill change was about, by its ID, of the runs
+ * `condition` picks. Its command only names the change.
+ */
+const landedSkills = (
+  sql: SqlClient.SqlClient,
+  condition: Statement.Fragment,
+) =>
+  sql`
+    SELECT runs.id, skill_changes.repo, skill_changes.skills
+    FROM runs JOIN skill_changes
+      ON skill_changes.id = json_extract(runs.command, '$.change')
+    WHERE runs.job = ${Catalogue.skillChange.id}
+      AND json_extract(runs.command, '$.kind') = 'skill-approve'
+      AND skill_changes.state = 'landed'
+      AND ${condition}
+  `.pipe(
+    Effect.flatMap(decodeLanded),
+    Effect.map(
+      (rows): ReadonlyMap<string, RunStates.SkillScope> =>
+        new Map(rows.map(({ id, repo, skills }) => [id, { repo, skills }])),
+    ),
+  );
 
 /** A run's columns as they were when run states came in, for their backfill. */
 const decodeBackfill = Schema.decodeUnknownEffect(
@@ -2203,25 +2260,47 @@ export class Store extends Context.Service<
     /**
      * Settle the failures a run that passed shows are over: earlier runs of
      * the same job and command, for the same released repository, that it
-     * covers. One a heal was involved in is `healed`, any other `recovered`.
+     * covers, or of a skill change, those about the same skills. One a heal
+     * was involved in is `healed`, any other `recovered`.
      */
     const settleBy = (passed: Domain.Run) =>
-      sql`
-        UPDATE runs
-        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
-          settled_by = ${passed.id}
-        WHERE ${sql.and([
-          sql`job = ${passed.job}`,
-          sql`heal_of IS NULL`,
-          sql.in("state", Domain.openStates),
-          sql`(queued_at, id) < (SELECT queued_at, id FROM runs WHERE id = ${passed.id})`,
-          sql`coalesce(command, '') = (SELECT coalesce(command, '') FROM runs WHERE id = ${passed.id})`,
-          sql`coalesce(lower(release_repo), '') = ${passed.release?.repo.toLowerCase() ?? ""}`,
-          ...(passed.repo == null
-            ? []
-            : [sql`lower(scope_repo) = ${passed.repo.toLowerCase()}`]),
-        ])}
-      `;
+      Effect.gen(function* () {
+        const [self] = yield* sql`
+          SELECT id, job, state, scope_repo, release_repo, command, queued_at
+          FROM runs WHERE id = ${passed.id}
+        `.pipe(Effect.flatMap(decodeSettling));
+
+        if (self === undefined) return;
+
+        const earlier = yield* sql`
+          SELECT id, job, state, scope_repo, release_repo, command, queued_at
+          FROM runs
+          WHERE job = ${self.job} AND heal_of IS NULL
+            AND ${sql.in("state", Domain.openStates)}
+            AND (queued_at, id) < (${self.queuedAt}, ${self.id})
+        `.pipe(Effect.flatMap(decodeSettling));
+
+        const landed = yield* landedSkills(sql, sql`runs.id = ${self.id}`);
+
+        const ids = earlier
+          .filter((row) =>
+            RunStates.settles(
+              self,
+              row,
+              landed.get(self.id) ?? RunStates.skillScope(self),
+            ),
+          )
+          .map(({ id }) => id);
+
+        if (ids.length === 0) return;
+
+        yield* sql`
+          UPDATE runs
+          SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+            settled_by = ${self.id}
+          WHERE ${sql.in("id", ids)}
+        `;
+      }).pipe(Effect.catchTag("SchemaError", Effect.die));
 
     /**
      * Settle failed runs a later run got through for, by its consumers rather
@@ -2290,7 +2369,7 @@ export class Store extends Context.Service<
       readonly job?: string | undefined;
       readonly state?: Domain.RunState | undefined;
       readonly states?: ReadonlyArray<Domain.RunState> | undefined;
-      /** Only failures nothing has settled yet. */
+      /** Only failures nothing has settled yet, other than commands'. */
       readonly open?: boolean | undefined;
       readonly limit: number;
       readonly before?: string | undefined;
@@ -2310,7 +2389,11 @@ export class Store extends Context.Service<
           ? []
           : [sql.in("state", filter.states)]),
         ...(filter.open === true
-          ? [sql.in("state", Domain.openStates), sql`heal_of IS NULL`]
+          ? [
+              sql.in("state", Domain.openStates),
+              sql`heal_of IS NULL`,
+              sql`NOT ${sql.in("job", Domain.seenJobs)}`,
+            ]
           : []),
         // In the list's own order, so runs queued in the same millisecond
         // aren't skipped or repeated between pages
