@@ -122,8 +122,9 @@ export class UpkeepApp extends LitElement {
         display: inline-grid;
       }
 
+      /* The bottom gap matches gw-page's gap at the sides */
       main {
-        padding: var(--gw-space-6) 0 var(--gw-space-12);
+        padding: var(--gw-space-6) 0 var(--gw-space-3);
       }
     `,
   ];

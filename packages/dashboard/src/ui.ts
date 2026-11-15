@@ -167,10 +167,10 @@ export const shared = css`
 
 /**
  * Lets a contained table's scroll window reach down to the bottom of the
- * window from where it starts, less the page's bottom padding, rather than
- * stopping at half the screen with space left under it. One starting low on
- * the page gets most of a window instead. It's measured again whenever the
- * page or the window changes size.
+ * window from where it starts, leaving the same gap under it as beside it,
+ * rather than stopping at half the screen with space left under it. One
+ * starting low on the page gets most of a window instead. It's measured again
+ * whenever the page or the window changes size.
  */
 class FillWindow extends AsyncDirective {
   #element: HTMLElement | undefined;
@@ -186,10 +186,11 @@ class FillWindow extends AsyncDirective {
 
     const top = frame.getBoundingClientRect().top + window.scrollY;
 
+    // The page's own bottom padding, the same gap as beside it, is under it
     element.style.setProperty(
       "--gw-table-max-height",
       top < window.innerHeight / 2
-        ? `calc(100dvh - ${Math.round(top)}px - var(--gw-space-12))`
+        ? `calc(100dvh - ${Math.round(top)}px - var(--gw-space-3))`
         : "70dvh",
     );
   };
