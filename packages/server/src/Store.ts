@@ -956,6 +956,40 @@ const migrations = SqliteMigrator.fromRecord({
     `;
     yield* sql`CREATE INDEX schedules_session ON schedules (session)`;
   }),
+  // A repository's drift heal waiting on you settles once a later one for it
+  // finds nothing to fix or pushes a fix
+  "0046_settle_drift_heals": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    const later = sql`
+      SELECT later.id FROM runs AS later
+      WHERE later.heal_job = runs.heal_job
+        AND lower(later.heal_target) = lower(runs.heal_target)
+        AND later.state IN ('nothing-to-fix', 'fix-pushed')
+        AND later.queued_at > runs.queued_at
+      ORDER BY later.queued_at LIMIT 1
+    `;
+
+    yield* sql`
+      UPDATE runs
+      SET attention = 0, settled_by = coalesce(settled_by, (${later}))
+      WHERE heal_job = ${Catalogue.driftReview.id} AND attention = 1
+        AND instr(heal_target, ',') = 0 AND heal_target != 'upkeep'
+        AND coalesce(heal_decision, 'ask') != 'park'
+        AND EXISTS (${later})
+    `;
+
+    yield* sql`
+      UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+      WHERE kind = 'needs' AND dismissed_at IS NULL
+        AND key LIKE ${`needs:heal:${Catalogue.driftReview.id}:%`}
+        AND NOT EXISTS (
+          SELECT 1 FROM runs
+          WHERE runs.attention = 1
+            AND 'needs:heal:' || runs.heal_job || ':' || coalesce(runs.heal_decision, 'ask') = entries.key
+        )
+    `;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1921,11 +1955,13 @@ export class Store extends Context.Service<
     /**
      * Settle heals of `job` a later run showed aren't needed any more: they
      * stop needing attention, and each of the job's heal entries with no heal
-     * left needing a person is dismissed.
+     * left needing a person is dismissed. Given `by`, the run that showed it,
+     * they're settled by it too, for heals whose failure nothing else settles.
      */
     settleHeals(
       job: string,
       ids: ReadonlyArray<string>,
+      by?: string,
     ): Effect.Effect<void, StoreError>;
     /**
      * The heals of `job` that are queued or running, oldest first, besides
@@ -5070,11 +5106,12 @@ export class Store extends Context.Service<
     }, Effect.mapError(storeError));
 
     const settleHeals = Effect.fn("Store.settleHeals")(
-      function* (job: string, ids: ReadonlyArray<string>) {
+      function* (job: string, ids: ReadonlyArray<string>, by?: string) {
         if (ids.length === 0) return;
 
         yield* sql`
-          UPDATE runs SET attention = 0
+          UPDATE runs
+          SET attention = 0, settled_by = coalesce(settled_by, ${by ?? null})
           WHERE heal_job = ${job} AND ${sql.in("id", ids)}
         `;
 

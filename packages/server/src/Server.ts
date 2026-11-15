@@ -655,6 +655,46 @@ const settleHeals = Effect.fn("settleHeals")(function* (
 });
 
 /**
+ * Settle a repository's older drift heals still waiting on you once a later
+ * one for it ends with nothing to fix or a fix pushed: a drift review looks at
+ * all of a repository's drift as it stands, so what they asked is done or out
+ * of date.
+ */
+const settleDriftHeals = Effect.fn("settleDriftHeals")(function* (
+  run: Domain.Run,
+) {
+  if (
+    run.heal === null ||
+    run.heal.job !== Catalogue.driftReview.id ||
+    run.heal.target.kind !== "consumer" ||
+    (run.state !== "nothing-to-fix" && run.state !== "fix-pushed")
+  )
+    return;
+
+  const store = yield* Store;
+  const repo = run.heal.target.repo.toLowerCase();
+
+  const stale = (yield* store.healsNeeding(run.heal.job)).filter(
+    ({ id, heal, queuedAt }) =>
+      id !== run.id &&
+      queuedAt < run.queuedAt &&
+      heal?.target.kind === "consumer" &&
+      heal.target.repo.toLowerCase() === repo,
+  );
+
+  if (stale.length === 0) return;
+
+  yield* store.settleHeals(
+    run.heal.job,
+    stale.map(({ id }) => id),
+    run.id,
+  );
+  yield* Effect.logInfo(
+    `Settled ${stale.length} older drift heal${stale.length === 1 ? "" : "s"} of ${repo}: a later one found it done`,
+  ).pipe(Effect.annotateLogs({ run: run.id }));
+});
+
+/**
  * Queue each waiting heal once its consumer's heals in the last 24 hours drop
  * under the limit, once a minute. One whose failed run has been pruned is
  * dropped.
@@ -1332,6 +1372,11 @@ const WorkHandlers = HttpApiBuilder.group(
         );
 
         yield* settleHeals(ended, payload.consumers ?? []).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchCause(Effect.logError),
+        );
+
+        yield* settleDriftHeals(ended).pipe(
           Effect.provideService(Store, store),
           Effect.catchCause(Effect.logError),
         );
