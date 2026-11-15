@@ -25,6 +25,13 @@ import { run, usesMise } from "./bump";
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
 
+/**
+ * The rule every agent is given: nothing needing Docker or root. Agents have
+ * suggested joining the `docker` group as a fix, which no run may do.
+ */
+export const containers =
+  "Never run Docker or Podman, and never use sudo or pkexec or change groups or system settings, nor suggest any of those as a fix, such as adding the user to the `docker` group. When a check needs a container, leave it to CI or find a way without one, and say which.";
+
 /** A repository the agent works in, and where it's checked out. */
 export interface Checkout {
   readonly repo: string;
@@ -176,6 +183,7 @@ const prompt = (
       : []),
     ...reach,
     watching,
+    containers,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
     `You have ${minutes} minutes. End with a short summary of what you found and did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");

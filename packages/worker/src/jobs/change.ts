@@ -10,7 +10,7 @@ import { attention, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { skipped } from "../Worker";
-import { across, type Checkout } from "./fix";
+import { across, containers, type Checkout } from "./fix";
 
 type Change = Extract<Domain.Command, { readonly kind: "change" }>;
 
@@ -43,6 +43,7 @@ const prompt = (
           `Make it in this checkout of ${checkouts[0]?.repo ?? ""}, run its checks and push it to the default branch once they pass.`,
         ]),
     "Never open a pull request. Anything you aren't sure of is for a person: stop and say what you found and what you'd do.",
+    containers,
     watching,
     `You have ${minutes} minutes. End with a short summary of what you did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: done\`, \`Outcome: nothing to do\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
