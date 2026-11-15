@@ -5,7 +5,9 @@
  * App's rate limit and shows as the App, and their commits credit the App's
  * bot as co-author. Heals, agents and the jobs that read what involves you
  * keep the machine's login, as do bump's code search and ci's notifications,
- * which an installation token can't read.
+ * which an installation token can't read. The App's limits are its own, so
+ * its jobs still start while the machine's login is down to its reserve, and
+ * use the machine's login while the App's are.
  * Without an App on the server, or with a server too old to have one, every
  * job uses the machine's login.
  */
@@ -26,6 +28,7 @@ import {
   SynchronizedRef,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as RateLimits from "./RateLimits";
 
 /** The jobs that run as the App. */
 const appJobs: ReadonlySet<string> = new Set(
@@ -39,8 +42,14 @@ const appJobs: ReadonlySet<string> = new Set(
     Catalogue.deps,
     Catalogue.watch,
     Catalogue.skillConsumers,
+    Catalogue.skillUpdates,
+    Catalogue.releases,
+    Catalogue.unreleased,
   ].map(({ id }) => id),
 );
+
+/** Whether a job runs as the App, when the server has one. */
+export const isAppJob = (job: string) => appJobs.has(job);
 
 /** How long before it expires a token is replaced. */
 const refreshMs = 10 * 60_000;
@@ -197,12 +206,50 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const appGh = yield* Gh.pipe(
+    Effect.provide(
+      ghLayer().pipe(
+        Layer.provide(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, asApp),
+        ),
+      ),
+    ),
+  );
+
+  // The App's own limits, read as often as the machine login's
+  const appLow = yield* Effect.cachedWithTTL(
+    RateLimits.low().pipe(Effect.provideService(Gh, appGh)),
+    "30 seconds",
+  );
+
+  /**
+   * Whether a run that acts as the App can start now: the server has a token
+   * and the App's limits aren't down to their reserve.
+   */
+  const ready = Effect.gen(function* () {
+    if (Option.isNone(yield* current)) return false;
+
+    return Option.isNone(yield* appLow);
+  });
+
+  // A job that runs as the App keeps the machine's login while the App's
+  // limits are low, so it spends whichever has room
   const forRun = Effect.fnUntraced(function* (job: string) {
     if (!appJobs.has(job)) return Layer.empty;
 
     const token = yield* current;
 
     if (Option.isNone(token)) return Layer.empty;
+
+    const low = yield* appLow;
+
+    if (Option.isSome(low)) {
+      yield* Effect.logInfo(
+        `The App's ${low.value.resource === "core" ? "REST" : "GraphQL"} rate limit is down to ${low.value.remaining} of ${low.value.limit}, so ${job} uses the machine's login`,
+      );
+
+      return Layer.empty;
+    }
 
     const spawning = Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
@@ -211,14 +258,14 @@ export const make = Effect.gen(function* () {
 
     return Layer.mergeAll(
       spawning,
-      ghLayer().pipe(Layer.provide(spawning)),
+      Layer.succeed(Gh, appGh),
       Layer.succeed(Account, Option.some(token.value.account)),
       Layer.succeed(CoAuthor, Option.fromUndefinedOr(token.value.coAuthor)),
       Layer.succeed(MachineGh, Option.some(machine)),
     );
   });
 
-  return { forRun };
+  return { forRun, ready };
 });
 
 /** The worker's App tokens, as {@link make} gives them. */

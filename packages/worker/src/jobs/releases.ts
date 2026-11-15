@@ -1,18 +1,20 @@
 /**
- * The releases job: read the latest release of each repository I own through
- * `gh`, and report the ones tracked for it so the server queues the jobs that
- * run on a new one. Forks, archived repositories and ones without a release
- * are skipped.
+ * The releases job: read the latest release of each repository I own, and
+ * report the ones tracked for it so the server queues the jobs that run on a
+ * new one. Forks, archived repositories and ones without a release are
+ * skipped. It runs as the App, which reads the same repositories as my login,
+ * so it's asked about my account by name rather than as the viewer.
  */
 import { Graphql } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import { Effect, Schema } from "effect";
+import * as GitHubApp from "../GitHubApp";
 import * as RunLog from "../RunLog";
 import { Reporter, summary, trackedFor } from "../Reporter";
 
 const document = `
-  query ($after: String) {
-    viewer {
+  query ($login: String!, $after: String) {
+    user(login: $login) {
       repositories(
         first: 100
         after: $after
@@ -32,7 +34,7 @@ const document = `
 `;
 
 const Page = Schema.Struct({
-  viewer: Schema.Struct({
+  user: Schema.Struct({
     repositories: Schema.Struct({
       pageInfo: Schema.Struct({
         hasNextPage: Schema.Boolean,
@@ -53,17 +55,18 @@ const Page = Schema.Struct({
 
 /** The latest release of each repository I own, by name. */
 const latestReleases = Effect.fnUntraced(function* () {
+  const login = yield* GitHubApp.login;
   const releases: Array<Domain.Release> = [];
   let after: string | null = null;
 
   do {
     const page: typeof Page.Type = yield* Graphql.query(
       document,
-      { after },
+      { login, after },
       Page,
     );
 
-    const { nodes, pageInfo } = page.viewer.repositories;
+    const { nodes, pageInfo } = page.user.repositories;
 
     for (const node of nodes) {
       if (node.isArchived || node.latestRelease === null) continue;

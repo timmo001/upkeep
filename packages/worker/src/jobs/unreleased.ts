@@ -5,9 +5,12 @@
  * Releases page, where you review it and hand it to an agent to publish. A
  * repository that can't be read is sent with why, so the page keeps its last
  * comparison as stale.
- * Each one is read from a bare clone in the cache, without a checkout.
+ * Each one is read from a bare clone in the cache, without a checkout. Their
+ * default branches and releases are read together through GraphQL, a query
+ * for many repositories, falling back to REST reads for each while the
+ * GraphQL limit is low.
  */
-import { Api, Repository } from "@timmo001/effect-gh";
+import { Api, Graphql, Repository } from "@timmo001/effect-gh";
 import { Catalogue, type Domain } from "@upkeep/api";
 import { highestImpact } from "@upkeep/api/releases";
 import {
@@ -28,6 +31,7 @@ import {
   type Settings,
 } from "../releases/Policy";
 import { Reporter, summary } from "../Reporter";
+import * as RateLimits from "../RateLimits";
 import * as RunLog from "../RunLog";
 import * as SettingsFile from "../settings";
 import { skipped } from "../Worker";
@@ -80,21 +84,39 @@ const ReleaseList = Schema.Array(
 );
 
 /**
+ * What one GraphQL query read of a repository for {@link latestStable} and
+ * its default branch, so most repositories need no REST reads at all.
+ */
+interface Known {
+  readonly branch: string | null;
+  readonly latest: typeof StableRelease.Type | null;
+  /** Whether it has a stable release, or null when the query can't tell. */
+  readonly stable: boolean | null;
+}
+
+/**
  * A repository's latest stable release, or null when it has never had one.
  * GitHub answers 404 both when there's none and when no stable release is
- * marked latest, so the list tells them apart.
+ * marked latest, so the list tells them apart. What the batched query read
+ * stands in for the REST reads when it's there.
  */
-const latestStable = Effect.fnUntraced(function* (repo: string) {
-  const latest = yield* Api.json(
-    { endpoint: `repos/${repo}/releases/latest`, method: "GET" },
-    StableRelease,
-  ).pipe(
-    Effect.map(Option.some),
-    Effect.catchIf(
-      (error) => /\b404\b|Not Found/.test(why(error)),
-      () => Effect.succeed(Option.none()),
-    ),
-  );
+const latestStable = Effect.fnUntraced(function* (
+  repo: string,
+  known: Known | undefined,
+) {
+  const latest =
+    known === undefined
+      ? yield* Api.json(
+          { endpoint: `repos/${repo}/releases/latest`, method: "GET" },
+          StableRelease,
+        ).pipe(
+          Effect.map(Option.some),
+          Effect.catchIf(
+            (error) => /\b404\b|Not Found/.test(why(error)),
+            () => Effect.succeed(Option.none()),
+          ),
+        )
+      : Option.fromNullishOr(known.latest);
 
   if (Option.isSome(latest)) {
     if (
@@ -109,16 +131,20 @@ const latestStable = Effect.fnUntraced(function* (repo: string) {
     return latest.value;
   }
 
-  const pages = yield* Api.pages(
-    {
-      endpoint: `repos/${repo}/releases`,
-      method: "GET",
-      query: { per_page: 100 },
-    },
-    ReleaseList,
-  );
+  const stable =
+    known?.stable ??
+    (yield* Api.pages(
+      {
+        endpoint: `repos/${repo}/releases`,
+        method: "GET",
+        query: { per_page: 100 },
+      },
+      ReleaseList,
+    ))
+      .flat()
+      .some((release) => !release.draft && !release.prerelease);
 
-  if (pages.flat().some((release) => !release.draft && !release.prerelease))
+  if (stable)
     return yield* new ReleaseError({
       message: "GitHub has stable releases, but none is marked as the latest",
     });
@@ -127,6 +153,115 @@ const latestStable = Effect.fnUntraced(function* (repo: string) {
 });
 
 const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
+
+const Node = Schema.NullOr(
+  Schema.Struct({
+    defaultBranchRef: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+    latestRelease: Schema.NullOr(
+      Schema.Struct({
+        tagName: Schema.String,
+        isDraft: Schema.Boolean,
+        isPrerelease: Schema.Boolean,
+        publishedAt: Schema.NullOr(Schema.String),
+      }),
+    ),
+    releases: Schema.Struct({
+      totalCount: Schema.Number,
+      nodes: Schema.Array(
+        Schema.Struct({
+          isDraft: Schema.Boolean,
+          isPrerelease: Schema.Boolean,
+        }),
+      ),
+    }),
+  }),
+);
+
+const Batch = Schema.Record(Schema.String, Node);
+
+/** How many repositories one query reads. */
+const batchSize = 50;
+
+/**
+ * Read each repository's default branch and releases in GraphQL queries of
+ * {@link batchSize}, in place of two or three REST reads each, by its name in
+ * lower case. Uses REST instead, reading nothing here, while the GraphQL
+ * limit is the low one; a query that fails leaves its repositories to REST.
+ */
+const readAll = Effect.fnUntraced(function* (repos: ReadonlyArray<string>) {
+  const known = new Map<string, Known>();
+  const low = yield* RateLimits.low();
+
+  if (Option.isSome(low) && low.value.resource === "graphql") {
+    yield* RunLog.info(
+      "GitHub's GraphQL rate limit is low, so reading each repository through REST",
+    );
+
+    return known;
+  }
+
+  for (let start = 0; start < repos.length; start += batchSize) {
+    const chunk = repos.slice(start, start + batchSize);
+
+    const fields = chunk.map((repo, index) => {
+      const [owner = "", name = ""] = repo.split("/");
+
+      return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
+        defaultBranchRef { name }
+        latestRelease { tagName isDraft isPrerelease publishedAt }
+        releases(first: 100, orderBy: { field: CREATED_AT, direction: DESC }) {
+          totalCount
+          nodes { isDraft isPrerelease }
+        }
+      }`;
+    });
+
+    const read = yield* Graphql.query(
+      `query { ${fields.join("\n")} }`,
+      {},
+      Batch,
+    ).pipe(Effect.result);
+
+    if (Result.isFailure(read)) {
+      yield* RunLog.warn(
+        `Couldn't read ${chunk.length} repositories through GraphQL, so reading them through REST: ${why(read.failure)}`,
+      );
+
+      continue;
+    }
+
+    for (const [index, repo] of chunk.entries()) {
+      const node = read.success[`r${index}`];
+
+      if (node === undefined || node === null) continue;
+
+      const latest = node.latestRelease;
+
+      const listed = node.releases.nodes.some(
+        (release) => !release.isDraft && !release.isPrerelease,
+      );
+
+      known.set(repo.toLowerCase(), {
+        branch: node.defaultBranchRef?.name ?? null,
+        latest:
+          latest === null
+            ? null
+            : {
+                tag_name: latest.tagName,
+                draft: latest.isDraft,
+                prerelease: latest.isPrerelease,
+                published_at: latest.publishedAt,
+              },
+        stable:
+          listed || node.releases.totalCount <= node.releases.nodes.length
+            ? listed
+            : null,
+      });
+    }
+  }
+
+  return known;
+});
 
 const UpstreamTags = Schema.Array(Schema.Struct({ name: Schema.String }));
 
@@ -236,10 +371,11 @@ const compare = Effect.fnUntraced(function* (
   branch: string,
   config: SettingsFile.ReleaseRepo | undefined,
   root: string,
+  known: Known | undefined,
 ) {
   const path = yield* Path.Path;
   const settings = settingsOf(config);
-  const release = yield* latestStable(repo);
+  const release = yield* latestStable(repo, known);
   const clone = yield* bareClone(repo, root);
 
   if (release !== null)
@@ -352,12 +488,14 @@ const scan = Effect.fnUntraced(function* (
   repo: string,
   config: SettingsFile.ReleaseRepo | undefined,
   root: string,
+  known: Known | undefined,
 ) {
   const settings = settingsOf(config);
   const attemptedAt = yield* Clock.currentTimeMillis;
 
   const branch =
     config?.branch ??
+    known?.branch ??
     (yield* Api.json(
       { endpoint: `repos/${repo}`, method: "GET" },
       RepositoryInfo,
@@ -366,7 +504,7 @@ const scan = Effect.fnUntraced(function* (
       Effect.orElseSucceed(() => "main"),
     ));
 
-  const read = yield* compare(repo, branch, config, root).pipe(
+  const read = yield* compare(repo, branch, config, root, known).pipe(
     Effect.timeout("10 minutes"),
     Effect.result,
   );
@@ -400,12 +538,18 @@ export const unreleased = Effect.fnUntraced(function* () {
 
   const settings = yield* SettingsFile.load();
   const root = yield* cacheRoot;
+  const known = yield* readAll(repos);
 
   const scans = yield* Effect.forEach(
     repos,
     (repo) =>
       Effect.gen(function* () {
-        const found = yield* scan(repo, settingsFor(settings, repo), root);
+        const found = yield* scan(
+          repo,
+          settingsFor(settings, repo),
+          root,
+          known.get(repo.toLowerCase()),
+        );
 
         yield* reporter.putRelease(found);
 

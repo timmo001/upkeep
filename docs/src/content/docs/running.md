@@ -330,10 +330,14 @@ A worker shares GitHub's rate limit with everything else signed in as the same
 account, such as workflows that publish with a personal token, so it keeps a
 tenth of each limit for them. While the core or GraphQL limit of its `gh`
 login is down to that tenth, it takes no new runs, except what the dashboard
-asks for, until the limit resets. It reads the limits at most every 30
+asks for and the jobs that run as the App while the App has room, until the
+limit resets. It reads the limits at most every 30
 seconds, which costs none of them, and its status reads `Paused for GitHub's
 rate limit until` the reset. A run that hits a spent limit anyway waits for
-the reset and carries on, rather than failing.
+the reset and carries on, rather than failing. The REST and GraphQL limits are
+separate, so `unreleased` reads every repository's default branch and releases
+in a few GraphQL queries, and reads each through REST instead while the
+GraphQL limit is the low one.
 
 ### GitHub outages
 

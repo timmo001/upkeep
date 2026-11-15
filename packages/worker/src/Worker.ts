@@ -499,7 +499,9 @@ export const work = Effect.fn("Worker.work")(function* (
   const budget = yield* Effect.cachedWithTTL(RateLimits.low(), "30 seconds");
   const pausedUntil = yield* Ref.make(0);
 
-  const holdOff = (command: boolean) =>
+  // While the machine login's limits hold new runs off, the jobs that run as
+  // the App still start when the App has its own limits to spend
+  const holdOff = (command: boolean, laneJobs: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       if (!command && (yield* Ref.get(apiDown))) yield* waitForApi;
 
@@ -527,7 +529,11 @@ export const work = Effect.fn("Worker.work")(function* (
 
       const now = yield* Clock.currentTimeMillis;
 
-      if (until <= now) return;
+      if (until <= now) return laneJobs;
+
+      const asApp = laneJobs.filter(GitHubApp.isAppJob);
+
+      if (asApp.length > 0 && (yield* app.ready)) return asApp;
 
       yield* status.update({ limited: until });
       yield* Effect.logInfo(
@@ -535,6 +541,8 @@ export const work = Effect.fn("Worker.work")(function* (
       );
       yield* Effect.sleep(RateLimits.waitUntil(until, now));
       yield* status.update({ limited: null });
+
+      return laneJobs;
     });
 
   // Every lane hears it's outdated at once, so only the first in each window
@@ -620,7 +628,7 @@ export const work = Effect.fn("Worker.work")(function* (
     const frees = command || name === "agent";
 
     const next = Effect.gen(function* () {
-      yield* holdOff(command);
+      const claimable = yield* holdOff(command, laneJobs);
 
       const setup = command ? {} : yield* agents;
       const resting = command ? false : yield* quiet;
@@ -628,7 +636,7 @@ export const work = Effect.fn("Worker.work")(function* (
 
       const { run } = yield* client.work.claim({
         payload: {
-          jobs: resting ? [] : laneJobs,
+          jobs: resting ? [] : claimable,
           protocol: Api.protocol,
           wait: Math.round(Duration.toSeconds(pollInterval)),
           ...setup,

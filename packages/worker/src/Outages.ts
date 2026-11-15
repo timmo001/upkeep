@@ -54,6 +54,7 @@ export const checkEvery = Duration.minutes(2);
 /** The parts each job uses, past the REST API every job does. */
 const extra = new Map<string, ReadonlyArray<Part>>([
   [Catalogue.releases.id, ["graphql"]],
+  [Catalogue.unreleased.id, ["git"]],
   [Catalogue.labels.id, ["graphql", "issues"]],
   [Catalogue.bump.id, ["git", "pulls", "actions"]],
   [Catalogue.stalledUpdates.id, ["pulls"]],
