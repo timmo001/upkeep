@@ -1,5 +1,5 @@
 /**
- * `upkeep-summary`: the foot of the inbox's summary card. The sentences above
+ * `upkeep-summary`: the foot of the inbox's summary. The sentences above
  * it are written by plain code; this asks an agent for a longer write-up, on
  * request, through the summary job, then shows the latest one, folded away
  * until it's opened, or that it's being written, while the run goes.
@@ -32,17 +32,15 @@ export class UpkeepSummary extends LitElement {
       .ask {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--gw-space-3);
+        gap: var(--gw-space-2);
         align-items: center;
         justify-content: space-between;
-        padding-top: var(--gw-space-3);
-        margin-top: var(--gw-space-4);
+        margin-top: var(--gw-space-2);
         font-size: var(--gw-font-size-s);
-        border-top: var(--gw-border-width) solid var(--gw-color-border-quiet);
       }
 
       .written {
-        margin-top: var(--gw-space-3);
+        margin-top: var(--gw-space-2);
       }
 
       .status {
@@ -115,7 +113,7 @@ export class UpkeepSummary extends LitElement {
           }</span
         >
         <gw-button
-          size="small"
+          size="xs"
           appearance="outlined"
           variant="neutral"
           icon=${phNotePencil}

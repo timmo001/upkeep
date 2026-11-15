@@ -35,7 +35,6 @@ import {
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
-import "@timmo001/groundwork-ui/define/gw-card.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
@@ -50,12 +49,11 @@ export class UpkeepInbox extends LitElement {
     css`
       .tldr p {
         margin: 0;
-        font-size: var(--gw-font-size-l);
-        line-height: 1.6;
+        line-height: 1.5;
       }
 
       .tldr gw-row {
-        margin-top: var(--gw-space-3);
+        margin-top: var(--gw-space-2);
       }
 
       .when {
@@ -216,7 +214,7 @@ export class UpkeepInbox extends LitElement {
           }
         </gw-page-header>
 
-        <gw-card class="tldr">
+        <div class="tldr">
           <p>
             ${
               fresh.length === 0 && needs.length === 0
@@ -237,7 +235,7 @@ export class UpkeepInbox extends LitElement {
             >
           </gw-row>
           <upkeep-summary></upkeep-summary>
-        </gw-card>
+        </div>
 
         ${
           needs.length === 0
