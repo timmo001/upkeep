@@ -40,9 +40,14 @@ export class StageFailed extends Schema.TaggedError<StageFailed>()(
   }
 }
 
+/** What Graphviz's `dot` prints when it's given a command it doesn't know. */
+const notDotfiles = /Usage: dot \[|graphviz|Error: dot: option/i;
+
 /** Run `dot up <stage> --json`, logging stderr, and decode what it prints. */
 const stage = Effect.fnUntraced(function* (name: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  const errors: Array<string> = [];
 
   const [stdout, code] = yield* Effect.scoped(
     Effect.gen(function* () {
@@ -60,9 +65,11 @@ const stage = Effect.fnUntraced(function* (name: string) {
           handle.stderr.pipe(
             Stream.decodeText(),
             Stream.splitLines,
-            Stream.runForEach((line) =>
-              line.trim() === "" ? Effect.void : RunLog.info(line),
-            ),
+            Stream.runForEach((line) => {
+              errors.push(line);
+
+              return line.trim() === "" ? Effect.void : RunLog.info(line);
+            }),
           ),
           handle.exitCode,
         ],
@@ -80,7 +87,9 @@ const stage = Effect.fnUntraced(function* (name: string) {
       () =>
         new StageFailed({
           stage: name,
-          error: `exited with ${code} without a result`,
+          error: notDotfiles.test(errors.join("\n"))
+            ? `${Bun.which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`
+            : `exited with ${code} without a result`,
         }),
     ),
   );

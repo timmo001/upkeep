@@ -31,6 +31,7 @@ import {
 import type { FileSystem, Path } from "effect";
 import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
+import { logResolved } from "./Environment";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
 import * as Lane from "./Lane";
@@ -335,6 +336,7 @@ export const work = Effect.fn("Worker.work")(function* (
   const heartbeatInterval = options.heartbeatInterval ?? "1 minute";
 
   const status = yield* Status.make;
+  yield* logResolved;
   const app = yield* GitHubApp.make;
 
   // Once asked to drain, each lane stops taking runs after the one it has,

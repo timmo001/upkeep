@@ -718,6 +718,10 @@ when it comes back, and running a job by hand queues it on every live worker.
 A dotfiles pull is applied by `dot up stow` and `dot up herdr` straight after
 it. When a stage changed skills or agent plugins, the job runs `dot up agents`
 after it, which reloads running agents. A worker without `dot` skips them. A
+worker puts `~/.local/bin` first on its `PATH` when it's missing, as under a
+user service that starts before the session's `PATH` is set, and logs which
+`dot` and `opencode2` it found. A `dot` that isn't the dotfiles CLI, such as
+Graphviz's, fails the stage and names the binary found. A
 failed stage fails its run, which shows on the dashboard and is never healed.
 The Jobs table shows each worker's latest run of each one.
 
