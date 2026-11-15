@@ -31,6 +31,7 @@ import {
 import { HttpApiBuilder } from "effect/http-api";
 import { Events } from "./Events";
 import { GitHubApp } from "./GitHubApp";
+import { takePwaFiles, versionGuard } from "./Pwa";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -1965,7 +1966,9 @@ const contentTypes = new Map([
   ["svg", "image/svg+xml"],
 ]);
 
-const { "index.html": indexHtml = "", ...assets } = bundleDashboard();
+const { "index.html": indexHtml = "", ...bundled } = bundleDashboard();
+
+const { assets, files: pwaFiles } = takePwaFiles(bundled);
 
 /** Assets at least this big are also kept gzipped, for browsers that take it. */
 const compressFrom = 1024;
@@ -2037,6 +2040,9 @@ const dashboard = (options: { readonly ingress: boolean }) =>
   HttpRouter.add("GET", "/*", (request) => {
     const path = new URL(request.url, "http://upkeep").pathname.slice(1);
     const file = dashboardFiles.get(path);
+    const pwaFile = pwaFiles.get(path);
+
+    if (pwaFile !== undefined) return Effect.succeed(pwaFile);
 
     if (file !== undefined) {
       return Effect.succeed(acceptsGzip(request) ? file.gzipped : file.plain);
@@ -2426,7 +2432,9 @@ const gracefulShutdownTimeout = Duration.seconds(3);
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
-    HttpRouter.serve(Layer.merge(routes, dashboard({ ingress: false }))).pipe(
+    HttpRouter.serve(Layer.merge(routes, dashboard({ ingress: false })), {
+      middleware: versionGuard,
+    }).pipe(
       Layer.provide(
         BunHttpServer.layer({
           hostname: options.hostname,
@@ -2443,7 +2451,10 @@ export const layer = (options: ServeOptions) =>
             apiRoutes(IngressAdminAuthorizationLayer),
             dashboard({ ingress: true }),
           ),
-          { middleware: ingressGuard(options.ingressFrom) },
+          {
+            middleware: (effect) =>
+              ingressGuard(options.ingressFrom)(versionGuard(effect)),
+          },
         ).pipe(
           Layer.provide(
             BunHttpServer.layer({
