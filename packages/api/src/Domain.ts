@@ -250,6 +250,16 @@ export type Trigger = typeof Trigger.Type;
  * consumers, is `skipped`. One that found work only an agent can do, such as
  * a drift review, and handed it to a heal without anything failing, is
  * `handed-off`.
+ *
+ * A run that fails moves on from there as it's healed: `heal-waiting` while
+ * the daily heal limit holds its heal, `healing` while a heal is queued or
+ * deciding, then `retrying`, `with-agent`, `fix-pushed`, `needs-you` or
+ * `parked` as the heal goes. A later run of the same job and scope passing
+ * settles it as `healed` after a heal, or `recovered` without one. `failed`
+ * is left for a failure nothing is healing.
+ *
+ * A heal run ends as what it did: `retried`, `fix-pushed`, `nothing-to-fix`,
+ * `needs-you` or `parked`, or `failed` when the heal itself broke.
  */
 export const RunState = Schema.Literals([
   "queued",
@@ -258,10 +268,64 @@ export const RunState = Schema.Literals([
   "skipped",
   "handed-off",
   "failed",
+  "heal-waiting",
+  "healing",
+  "retrying",
+  "with-agent",
+  "fix-pushed",
+  "needs-you",
+  "parked",
+  "healed",
+  "recovered",
+  "retried",
+  "nothing-to-fix",
   "cancelled",
 ]);
 
 export type RunState = typeof RunState.Type;
+
+/**
+ * The states of a failure nothing has settled yet: red, being healed, or
+ * waiting on you.
+ */
+export const openStates = [
+  "failed",
+  "heal-waiting",
+  "healing",
+  "retrying",
+  "with-agent",
+  "fix-pushed",
+  "needs-you",
+  "parked",
+] as const satisfies ReadonlyArray<RunState>;
+
+/** The states of a run that failed, whether it's been settled or not. */
+export const failedStates = [
+  ...openStates,
+  "healed",
+  "recovered",
+] as const satisfies ReadonlyArray<RunState>;
+
+/** What a heal run can end as. */
+export const healResults = [
+  "retried",
+  "fix-pushed",
+  "nothing-to-fix",
+  "needs-you",
+  "parked",
+  "failed",
+] as const satisfies ReadonlyArray<RunState>;
+
+const open: ReadonlySet<RunState> = new Set(openStates);
+
+/**
+ * Whether a run is a failure nothing has settled yet. A heal run's result is
+ * about the run it healed, so it never is.
+ */
+export const isOpen = (run: {
+  readonly state: RunState;
+  readonly heal: unknown;
+}) => run.heal === null && open.has(run.state);
 
 /** How a run can end. */
 export const Outcome = Schema.Literals([
@@ -1077,6 +1141,24 @@ export const Run = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   /** What a heal run is healing and what it did, or null for other jobs. */
   heal: Schema.NullOr(Heal),
+  /**
+   * For a run that failed: its heals, oldest first, including one it joined
+   * because a heal for the same job and target was already under way.
+   * Missing from older servers.
+   */
+  heals: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * The run a heal queued again: on the failed run, and on the heal that
+   * queued it. Missing from older servers.
+   */
+  retry: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** For a retry: the failed run it retries. Missing from older servers. */
+  retryOf: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * For a failure that's `healed` or `recovered`: the later run that passed.
+   * Missing from older servers.
+   */
+  settledBy: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** What the run did, in a line or a short paragraph. */
   summary: Schema.NullOr(Schema.String),
   /** The commits it pushed, oldest first. */
@@ -1112,6 +1194,7 @@ export const Activity = Schema.Struct({
     skipped: Schema.Int,
     /** Missing from older servers. */
     handedOff: Schema.optionalKey(Schema.Int),
+    /** Runs that failed, whether or not they've been healed since. */
     failed: Schema.Int,
     cancelled: Schema.Int,
     heals: Schema.Int,

@@ -618,7 +618,8 @@ export class RunsGroup extends HttpApiGroup.make("runs")
      * The latest runs, newest first. With `before`, a run's id, the page of
      * runs queued before it, for loading older runs as a list scrolls. With
      * `states`, a comma-separated list, only runs in one of them, so a list
-     * filtered by state pages through only what it shows. `since` and
+     * filtered by state pages through only what it shows. `open` keeps only
+     * failures nothing has settled yet, leaving out heal runs. `since` and
      * `until`, in milliseconds, keep the runs queued from one up to the
      * other, such as a single day's.
      */
@@ -627,6 +628,7 @@ export class RunsGroup extends HttpApiGroup.make("runs")
         job: Schema.optional(Schema.String),
         state: Schema.optional(RunState),
         states: Schema.optional(Schema.String),
+        open: Schema.optional(Schema.Literals(["true", "false"])),
         limit: Schema.optional(Schema.Int),
         before: Schema.optional(Schema.String),
         since: Schema.optional(Schema.Int),
@@ -1096,8 +1098,8 @@ export class WorkGroup extends HttpApiGroup.make("work")
       success: Schema.Array(Schema.Struct({ job: JobId, ...Parked.fields })),
     }),
     /**
-     * Queue the failed job again for a heal, for the same release. Nothing is
-     * queued while the job is parked.
+     * Queue the failed job again for a heal, for the same release, linked to
+     * the failed run as its retry. Nothing is queued while the job is parked.
      */
     HttpApiEndpoint.post("retry", "/runs/:id/retry", {
       params: { id: Schema.String },
