@@ -114,14 +114,19 @@ sum up what's new since you last read it: first-party releases and where they
 went, your own commits, updates that needed a code change, how many routine
 updates there were, and whether anything needs you. Plain code writes them,
 with no agent; **Summarise in more detail** runs the `summary` job, which asks
-an agent for a longer write-up of what's unread and shows it in the same card.
-Below that:
+an agent for a longer write-up of what's unread and shows it folded away
+beneath. Below that:
 
 - **Needs you** holds only what won't settle without you: a parked job, a
-  heal that asked for you or left a fix unfinished, or an OpenCode agent
-  that's waited a minute on a permission prompt. Each comes once however
-  often it happened, with the button that settles it, and goes once it's
-  settled or dismissed.
+  heal that asked for you or left a fix unfinished, any other run that left
+  something for you, or an OpenCode agent that's waited a minute on a
+  permission prompt. Each comes once however often it happened, with the
+  button that settles it, and stays until it's settled or dismissed, however
+  long ago it came up or whether you've read it. When several heals of a job
+  share one, dismissing or retrying the latest moves it to the next still
+  waiting. One left by an agent has **Ask me in the Inbox**, which has the
+  agent's session ask you what it needs in the Plannotator Inbox, without
+  opening the run.
 - **What changed** is one entry per change, by day. A change that reached
   many repositories, such as a release rolled out by `bump`, a tool moved by
   `drift` or the same Renovate update, is one entry that opens to each
@@ -1410,8 +1415,9 @@ in the XDG cache directory and reads every net change from Git objects alone,
 without a checkout: each file, the dependencies and metadata behind a
 `package.json`, Bun lockfile or `go.mod` change, and the commits since.
 
-A policy gives each change an impact, from `none` for docs, tests and tooling
-to `patch` for anything that ships. `application` covers most repositories;
+A policy gives each change an impact, from `none` for docs, tests and tooling,
+including agent and editor config such as `.claude/`, `opencode.json` and git
+hooks such as `hk.pkl`, to `patch` for anything that ships. `application` covers most repositories;
 `oxlint-rules` and `system-bridge` know those projects' shipped content,
 including the upstream changes behind `oxlint-rules`' vendored submodule. A
 repository's `overrides` come first, the first match winning, and
