@@ -424,6 +424,7 @@ upkeep run releases
 upkeep run releases --local
 upkeep run drift --repo timmo001/upkeep
 upkeep runs --job releases --state failed
+upkeep runs --open
 upkeep log <run> --follow
 upkeep cancel <run>
 upkeep retry <run>
@@ -467,6 +468,43 @@ Once an hour the server deletes finished runs older than `UPKEEP_KEEP_DAYS`
 and their logs, keeping the latest `UPKEEP_KEEP_RUNS` of each job. Queued and
 running runs are never pruned.
 
+### Run states
+
+A run is `queued`, then `running`, and ends `succeeded`, `skipped`,
+`handed-off`, `failed` or `cancelled`. A failed run doesn't stay `failed` while
+something is healing it: its state follows its heals until a later run settles
+it.
+
+| State          | The failure                                                            |
+| -------------- | ---------------------------------------------------------------------- |
+| `failed`       | Has nothing healing it, such as a failed command, or a heal that broke |
+| `heal-waiting` | Has its heal held until the job's heals for the repository free up     |
+| `healing`      | Has a heal queued or deciding what to do                               |
+| `with-agent`   | Is with the heal's agent, in an OpenCode session                       |
+| `retrying`     | Has been queued again, by its heal or by hand                          |
+| `fix-pushed`   | Has a fix pushed by its heal, and waits for a run to show it worked    |
+| `needs-you`    | Was left for you, by its heal or because it said it needs a person     |
+| `parked`       | Got its job parked, by its heal or for having too many heals           |
+| `healed`       | Is over: a later run passed, after a heal                              |
+| `recovered`    | Is over: a later run passed, with no heal involved                     |
+
+A later run settles a failure when it succeeds for the same job and command,
+for the same released repository and covering its repository: a run narrowed
+to another repository doesn't. A run that reaches the consumers a heal was for,
+or whose heal was held for, settles their failures too. Each failed run links
+to its heals, its retry and the run that settled it, and a retry links back to
+the run it retries.
+
+A heal ends as what it did rather than `succeeded`: `retried`, `fix-pushed`,
+`nothing-to-fix`, `needs-you` or `parked`, or `failed` when the heal itself
+broke. Its failure follows, back to `failed` when the heal found nothing to
+fix or broke. A retry that fails puts the failure it was retrying back to
+`failed`, while its own failure is healed.
+
+`upkeep runs --open` lists the failures nothing has settled yet, and leaves
+heals out. The activity counts every run that failed, whether or not it's been
+healed since, and a heal that didn't break as one that succeeded.
+
 ## Heals
 
 When a run fails or is lost, the server queues a `heal` run for it. A failed
@@ -475,7 +513,9 @@ run of a job over repositories, such as `bump`, `stalled-updates`, `drift` or
 target; several are fixed together, so a release that breaks the same way in
 several consumers is fixed once in one agent session rather than again in
 each. Any other failure gets one heal with Upkeep itself as the target. A
-failed heal never queues another.
+failed heal never queues another, and a failure of the same job and target
+while its heal is still queued or running joins that heal instead of starting
+another, so one fault gets one heal however many runs hit it.
 
 A run that found work only an agent can do, with nothing failing, such as a
 `drift-review`, ends `handed-off` instead of `failed`. It gets a heal for each

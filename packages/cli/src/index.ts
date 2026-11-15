@@ -184,6 +184,19 @@ export class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
 const time = (at: number | null) =>
   at === null ? "-" : new Date(at).toISOString();
 
+/** The runs a run links to: its heals, its retry and what settled it. */
+const runLinks = (run: Domain.Run) =>
+  [
+    run.heal !== null || (run.heals ?? []).length === 0
+      ? ""
+      : `heal runs ${(run.heals ?? []).join(", ")}`,
+    run.retry == null ? "" : `retried as ${run.retry}`,
+    run.retryOf == null ? "" : `retries ${run.retryOf}`,
+    run.settledBy == null ? "" : `settled by ${run.settledBy}`,
+  ]
+    .filter((part) => part !== "")
+    .join(", ");
+
 const runLine = (run: Domain.Run) =>
   [
     run.id,
@@ -196,6 +209,7 @@ const runLine = (run: Domain.Run) =>
     run.heal === null
       ? ""
       : `heals ${run.heal.job} ${run.heal.of} (${run.heal.target.kind === "upkeep" ? "upkeep" : Domain.targetRepos(run.heal.target).join(", ")})${run.heal.decision === null ? "" : `: ${run.heal.decision}`}`,
+    runLinks(run),
   ]
     .join("  ")
     .trimEnd();
@@ -412,6 +426,12 @@ const runs = Command.make(
       Flag.withDescription("Only runs in this state"),
       Flag.optional,
     ),
+    open: Flag.Boolean("open").pipe(
+      Flag.withDescription(
+        "Only failures nothing has settled yet, whether or not they're being healed",
+      ),
+      Flag.withDefault(false),
+    ),
     limit: Flag.Int("limit").pipe(
       Flag.withDescription(`How many, up to ${Api.maxRuns}`),
       Flag.withDefault(20),
@@ -427,6 +447,7 @@ const runs = Command.make(
         query: {
           job: Option.getOrUndefined(input.job),
           state: Option.getOrUndefined(input.state),
+          open: input.open ? "true" : undefined,
           limit: input.limit,
         },
       });
