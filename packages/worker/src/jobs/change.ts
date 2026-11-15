@@ -10,7 +10,7 @@ import { attention, summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { skipped } from "../Worker";
-import { across, containers, type Checkout } from "./fix";
+import { across, containers, later, type Checkout } from "./fix";
 
 type Change = Extract<Domain.Command, { readonly kind: "change" }>;
 
@@ -44,6 +44,7 @@ const prompt = (
         ]),
     "Never open a pull request. Anything you aren't sure of is for a person: stop and say what you found and what you'd do.",
     containers,
+    later,
     watching,
     `You have ${minutes} minutes. End with a short summary of what you did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: done\`, \`Outcome: nothing to do\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");

@@ -12,4 +12,6 @@ export { openSession } from "./jobs/launch";
 
 export { selfUpdate } from "./jobs/machine";
 
+export * as Outages from "./Outages";
+
 export * as Worker from "./Worker";

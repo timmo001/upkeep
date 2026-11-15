@@ -143,7 +143,7 @@ const git = Effect.scoped(
 );
 
 /** Whether a part of GitHub answers, as the run's login. */
-const probe = (
+export const probe = (
   part: Part,
 ): Effect.Effect<
   boolean,

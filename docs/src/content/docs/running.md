@@ -373,6 +373,19 @@ The server runs a `github-down` run again 30 minutes after it ended, or you can
 from its page. It never gets a heal, and a later run passing settles it like a
 failure.
 
+An agent's session, a heal's or a change's, that stops while a part of GitHub
+it needs (Git, either API, pull requests or Actions) is down is woken by
+itself once it's back. The worker adds an OpenCode schedule to the session
+that runs `upkeep github check <part>` every 5 minutes and prompts it to
+carry on once the part answers, giving up after 2 hours. Schedules need
+`experimental.schedules` in the worker's OpenCode config; without it the
+session is left for you as before. Agents are also told they can schedule
+their own wake-up, with `/schedule`, when they have to wait for something
+slower than their time, such as CI or a release upstream.
+
+`upkeep github check <part>...` runs the same check by hand, failing when a
+part doesn't answer.
+
 When a job pushes and watches CI, it goes by how long that repository's CI
 usually takes on a push, kept per repository in
 `$XDG_CACHE_HOME/upkeep/ci-timings/` from the last ten passing runs of each

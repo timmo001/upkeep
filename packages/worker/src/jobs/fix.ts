@@ -18,6 +18,7 @@ import * as Lane from "../Lane";
 import * as Regression from "../Regression";
 import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
+import * as Schedules from "../Schedules";
 import * as Settings from "../settings";
 import * as Worktrees from "../Worktrees";
 import { createSession, lastWords, recordCommits } from "./agent";
@@ -31,6 +32,13 @@ const RepositoryInfo = Schema.Struct({ default_branch: Schema.String });
  */
 export const containers =
   "Never run Docker or Podman, and never use sudo or pkexec or change groups or system settings, nor suggest any of those as a fix, such as adding the user to the `docker` group. When a check needs a container, leave it to CI or find a way without one, and say which.";
+
+/**
+ * The rule for waiting on something past the session's time. GitHub being
+ * down isn't one: the worker schedules that wake-up itself.
+ */
+export const later =
+  "When the work has to wait for something that won't be ready within your time, such as a slow CI run or a release upstream, don't wait it out: schedule a prompt that wakes this session once it's ready, with OpenCode's schedule tool (`/schedule`) and a check that tells, then stop and say what it's waiting for, which is `Outcome: needs you`. When GitHub itself is down, just stop and say so: this session is woken once it's back.";
 
 /** A repository the agent works in, and where it's checked out. */
 export interface Checkout {
@@ -184,6 +192,7 @@ const prompt = (
     ...reach,
     watching,
     containers,
+    later,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
     `You have ${minutes} minutes. End with a short summary of what you found and did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: fixed\`, \`Outcome: nothing to fix\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
@@ -348,6 +357,16 @@ export const across = Effect.fnUntraced(function* (
       outcome !== "done" ||
       verdict === "needs you" ||
       (verdict === undefined && pushed.length === 0);
+
+    // One that stopped because GitHub went down carries on by itself once
+    // it's back, rather than waiting for you
+    if (attention)
+      yield* Schedules.wakeWhenBack(
+        opencode,
+        session,
+        Schedules.agentParts,
+        options,
+      );
 
     switch (outcome) {
       case "done":

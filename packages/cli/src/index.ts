@@ -6,6 +6,7 @@ import {
   ghLayer,
   handlers,
   openSession,
+  Outages,
   RunLog,
   selfUpdate,
   Worker,
@@ -183,6 +184,47 @@ export class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
 
 const time = (at: number | null) =>
   at === null ? "-" : new Date(at).toISOString();
+
+export class GitHubPartDown extends Schema.TaggedError<GitHubPartDown>()(
+  "GitHubPartDown",
+  { message: Schema.String },
+) {}
+
+/**
+ * Check the parts of GitHub given with the same small read a run does,
+ * failing when one doesn't answer, so a shell check, such as the one the
+ * worker puts on a session's wake-up schedule, can wait on it.
+ */
+const githubCheck = Command.make(
+  "check",
+  {
+    parts: Argument.Literals("part", Outages.parts).pipe(
+      Argument.withDescription("A part of GitHub to check"),
+      Argument.atLeast(1),
+    ),
+  },
+  Effect.fn("githubCheck")(function* ({ parts }) {
+    const down = yield* Outages.down(parts);
+
+    if (Option.isSome(down))
+      return yield* new GitHubPartDown({
+        message: `GitHub's ${Outages.names[down.value]} isn't answering`,
+      });
+
+    yield* Console.log(
+      `GitHub's ${parts.map((part) => Outages.names[part]).join(", ")} answered`,
+    );
+  }),
+).pipe(
+  Command.withDescription(
+    "Check parts of GitHub answer, exiting with an error when one doesn't",
+  ),
+);
+
+const github = Command.make("github").pipe(
+  Command.withDescription("GitHub as the worker sees it"),
+  Command.withSubcommands([githubCheck]),
+);
 
 /** The runs a run links to: its heals, its retry and what settled it. */
 const runLinks = (run: Domain.Run) =>
@@ -1146,6 +1188,7 @@ const upkeep = Command.make("upkeep").pipe(
     open,
     serve,
     worker,
+    github,
     admins,
     workers,
     agent,
