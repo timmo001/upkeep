@@ -10,7 +10,7 @@ import { evidenceId, highestImpact } from "@upkeep/api/releases";
 import type { ReleaseRepo, ReleaseRule } from "../settings";
 
 /** Bump when a policy classifies differently, so old comparisons go stale. */
-export const policyVersion = 15;
+export const policyVersion = 16;
 
 export type Policy = NonNullable<ReleaseRepo["policy"]>;
 
@@ -38,10 +38,19 @@ const quietPaths = [
   "**/.agents/**",
   "**/skills-lock.json",
   "**/.opencode/**",
+  "**/opencode.json",
+  "**/opencode.jsonc",
+  "**/.claude/**",
   "**/.cursor/**",
   "**/.vscode/**",
   "**/.scripts/**",
   "**/.github/**",
+  "**/hk.pkl",
+  "**/hk.local.pkl",
+  "**/.husky/**",
+  "**/lefthook.yml",
+  "**/lefthook.yaml",
+  "**/.pre-commit-config.yaml",
   "**/tsconfig*.json",
   "**/oxlint.config.*",
   "**/.oxlint*",
