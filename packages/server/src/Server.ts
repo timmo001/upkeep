@@ -1097,6 +1097,16 @@ export const status = Effect.fn("status")(function* () {
       at: entry.lastAt,
     }));
 
+  // A note an agent flagged as out of date waits for you to keep or drop it
+  const staleNotes: ReadonlyArray<Domain.NeedsYou> = (yield* store.notes(true))
+    .filter((note) => note.stale !== null)
+    .map((note) => ({
+      kind: "needs",
+      title: `Note for ${Domain.noteScopeName(note.scope)} may be out of date: ${note.stale?.reason ?? ""}`,
+      path: Domain.noteScopePath(note.scope),
+      at: note.stale?.at ?? note.updatedAt,
+    }));
+
   const changes: ReadonlyArray<Domain.NeedsYou> = (yield* store.skillChanges())
     .filter((change) => change.state === "waiting")
     .map((change) => ({
@@ -1127,7 +1137,7 @@ export const status = Effect.fn("status")(function* () {
           ],
     );
 
-  const needs = [...entries, ...changes, ...releases].toSorted(
+  const needs = [...entries, ...staleNotes, ...changes, ...releases].toSorted(
     (a, b) => b.at - a.at,
   );
 
@@ -1135,7 +1145,7 @@ export const status = Effect.fn("status")(function* () {
   const health: Domain.Health =
     workers.length === 0
       ? "degraded"
-      : entries.length + changes.length > 0
+      : entries.length + changes.length + staleNotes.length > 0
         ? "warning"
         : "ok";
 
@@ -1148,6 +1158,9 @@ export const status = Effect.fn("status")(function* () {
           entries.length === 0
             ? null
             : `${entries.length} ${entries.length === 1 ? "thing needs" : "things need"} you`,
+          staleNotes.length === 0
+            ? null
+            : `${staleNotes.length} ${staleNotes.length === 1 ? "note" : "notes"} to check`,
           changes.length === 0
             ? null
             : `${changes.length} skill ${changes.length === 1 ? "change" : "changes"} waiting`,
@@ -1460,6 +1473,28 @@ const WorkHandlers = HttpApiBuilder.group(
         );
       }),
       heals: ({ query }) => store.heals(query.since).pipe(Effect.orDie),
+      notes: () => store.notes(true).pipe(Effect.orDie),
+      addNote: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        return yield* Effect.gen(function* () {
+          yield* store.claimed(params.id, worker.name);
+
+          return yield* store.addNote({ ...payload, run: params.id });
+        }).pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
+      staleNote: Effect.fn(function* ({ params, payload }) {
+        const worker = yield* Api.CurrentWorker;
+
+        return yield* Effect.gen(function* () {
+          yield* store.claimed(params.id, worker.name);
+
+          return yield* store.staleNote(params.note, {
+            reason: payload.reason,
+            run: params.id,
+          });
+        }).pipe(Effect.catchTag("StoreError", Effect.die));
+      }),
       regressionDecision: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
 
@@ -1752,9 +1787,6 @@ const AttentionHandlers = HttpApiBuilder.group(
 
         return comment;
       }),
-      addRule: ({ payload }) => store.addRule(payload.text).pipe(Effect.orDie),
-      removeRule: ({ params }) =>
-        store.removeRule(params.id).pipe(Effect.orDie),
     });
   }),
 );
@@ -1974,6 +2006,38 @@ const ReleasesHandlers = HttpApiBuilder.group(
   }),
 );
 
+const NotesHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "notes",
+  Effect.fn(function* (handlers) {
+    const store = yield* Store;
+
+    return handlers.handleAll({
+      list: () => store.notes().pipe(Effect.orDie),
+      add: ({ payload }) => store.addNote(payload).pipe(Effect.orDie),
+      edit: ({ params, payload }) =>
+        store
+          .editNote(params.id, payload)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      remove: ({ params }) =>
+        store
+          .removeNote(params.id)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      stale: ({ params, payload }) =>
+        store
+          .staleNote(params.id, {
+            reason: payload.reason,
+            run: payload.run ?? null,
+          })
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+      keep: ({ params }) =>
+        store
+          .staleNote(params.id, null)
+          .pipe(Effect.catchTag("StoreError", Effect.die)),
+    });
+  }),
+);
+
 const SessionsHandlers = HttpApiBuilder.group(
   Api.Api,
   "sessions",
@@ -2045,6 +2109,7 @@ const apiRoutes = (
       SkillsHandlers,
       ReleasesHandlers,
       SessionsHandlers,
+      NotesHandlers,
       ThemeHandlers,
       TokensHandlers,
       SystemHandlers,

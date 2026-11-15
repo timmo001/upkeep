@@ -30,6 +30,7 @@ import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
 import "./upkeep-feed.ts";
 import "./upkeep-filters.ts";
+import "./upkeep-notes.ts";
 
 export class UpkeepRepo extends LitElement {
   static override properties = {
@@ -202,6 +203,16 @@ export class UpkeepRepo extends LitElement {
                   )
             }
           </gw-row>
+        </gw-card>
+
+        <gw-card
+          heading="Notes for agents"
+          description="What every agent working on it reads first"
+        >
+          <upkeep-notes
+            scope=${found?.repo ?? this.repo}
+            empty="None yet. Agents add what they learn here, and so can you."
+          ></upkeep-notes>
         </gw-card>
 
         <gw-section

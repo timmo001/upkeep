@@ -990,6 +990,36 @@ const migrations = SqliteMigrator.fromRecord({
         )
     `;
   }),
+  // Standing notes for agents, each for a repository, Upkeep or the
+  // attention agent, whose rules move in as notes of their own
+  "0047_notes": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        text TEXT NOT NULL,
+        run TEXT,
+        comment_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        stale_reason TEXT,
+        stale_run TEXT,
+        stale_at INTEGER
+      )
+    `;
+    yield* sql`CREATE INDEX notes_scope ON notes (scope)`;
+
+    yield* sql`
+      INSERT INTO notes (id, scope, text, comment_id, created_at, updated_at)
+      SELECT id, 'attention', text, comment_id, created_at, created_at
+      FROM attention_rules
+    `;
+
+    yield* sql`DROP TABLE attention_rules`;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1426,16 +1456,37 @@ const decodeAttentionComments = Schema.decodeUnknownEffect(
   ),
 );
 
-const decodeAttentionRules = Schema.decodeUnknownEffect(
-  Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      text: Schema.String,
-      commentId: Schema.NullOr(Schema.String),
-      createdAt: Schema.Finite,
-    }),
-  ),
-);
+const NoteRow = Schema.Struct({
+  id: Schema.String,
+  scope: Schema.String,
+  text: Schema.String,
+  run: Schema.NullOr(Schema.String),
+  commentId: Schema.NullOr(Schema.String),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  expiresAt: Schema.NullOr(Schema.Finite),
+  staleReason: Schema.NullOr(Schema.String),
+  staleRun: Schema.NullOr(Schema.String),
+  staleAt: Schema.NullOr(Schema.Finite),
+});
+
+const decodeNotes = Schema.decodeUnknownEffect(Schema.Array(NoteRow));
+
+/** A kept note as the API has it. */
+const toNote = ({
+  commentId,
+  staleReason,
+  staleRun,
+  staleAt,
+  ...note
+}: typeof NoteRow.Type): Domain.Note => ({
+  ...note,
+  comment: commentId,
+  stale:
+    staleReason === null || staleAt === null
+      ? null
+      : { reason: staleReason, run: staleRun, at: staleAt },
+});
 
 /** How many of your comments to the agent the page keeps showing. */
 const attentionCommentLimit = 500;
@@ -1834,8 +1885,27 @@ export class Store extends Context.Service<
         | { readonly url: string; readonly text: string }
         | { readonly group: string; readonly text: string },
     ): Effect.Effect<Domain.AttentionComment, Api.GroupNotFound | StoreError>;
-    addRule(text: string): Effect.Effect<Domain.AttentionRule, StoreError>;
-    removeRule(id: string): Effect.Effect<void, StoreError>;
+    /** Every note, oldest first; only those agents still read with `current`. */
+    notes(
+      current?: boolean,
+    ): Effect.Effect<ReadonlyArray<Domain.Note>, StoreError>;
+    addNote(note: {
+      readonly scope: string;
+      readonly text: string;
+      readonly expiresAt?: number | null;
+      readonly run?: string | null;
+    }): Effect.Effect<Domain.Note, StoreError>;
+    /** Change a note's text or expiry, clearing its out-of-date flag. */
+    editNote(
+      id: string,
+      edit: { readonly text?: string; readonly expiresAt?: number | null },
+    ): Effect.Effect<Domain.Note, Api.NoteNotFound | StoreError>;
+    removeNote(id: string): Effect.Effect<void, Api.NoteNotFound | StoreError>;
+    /** Flag a note as out of date, or clear the flag with null to keep it. */
+    staleNote(
+      id: string,
+      stale: { readonly reason: string; readonly run: string | null } | null,
+    ): Effect.Effect<Domain.Note, Api.NoteNotFound | StoreError>;
     /**
      * Keep what the context agent made of the items and groups it was given.
      * Answers about a group or comment that's gone since are skipped.
@@ -3900,11 +3970,16 @@ export class Store extends Context.Service<
       );
 
       const rules = (yield* sql`
-        SELECT * FROM attention_rules ORDER BY created_at
-      `.pipe(Effect.flatMap(decodeAttentionRules))).map(
-        ({ commentId, ...rule }): Domain.AttentionRule => ({
-          ...rule,
+        SELECT * FROM notes
+        WHERE scope = 'attention'
+          AND (expires_at IS NULL OR expires_at > ${now})
+        ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeNotes))).map(
+        ({ id, text, commentId, createdAt }): Domain.AttentionRule => ({
+          id,
+          text,
           comment: commentId,
+          createdAt,
         }),
       );
 
@@ -4206,28 +4281,107 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
-    const addRule = Effect.fn("Store.addRule")(function* (text: string) {
-      const rule = {
-        id: yield* random.ulid,
-        text,
-        comment: null,
-        createdAt: yield* Clock.currentTimeMillis,
-      } satisfies Domain.AttentionRule;
+    const notes = Effect.fn("Store.notes")(function* (current = false) {
+      const now = yield* Clock.currentTimeMillis;
+
+      return (yield* sql`
+        SELECT * FROM notes
+        WHERE ${current ? sql`expires_at IS NULL OR expires_at > ${now}` : sql`1 = 1`}
+        ORDER BY created_at
+      `.pipe(Effect.flatMap(decodeNotes))).map(toNote);
+    }, Effect.mapError(storeError));
+
+    const note = Effect.fnUntraced(function* (id: string) {
+      const [row] = yield* sql`SELECT * FROM notes WHERE id = ${id}`.pipe(
+        Effect.flatMap(decodeNotes),
+      );
+
+      if (row === undefined) return yield* new Api.NoteNotFound({ id });
+
+      return toNote(row);
+    });
+
+    const addNote = Effect.fn("Store.addNote")(function* (added: {
+      readonly scope: string;
+      readonly text: string;
+      readonly expiresAt?: number | null;
+      readonly run?: string | null;
+    }) {
+      const now = yield* Clock.currentTimeMillis;
+      const id = yield* random.ulid;
 
       yield* sql`
-        INSERT INTO attention_rules ${sql.insert({
-          id: rule.id,
-          text,
-          createdAt: rule.createdAt,
+        INSERT INTO notes ${sql.insert({
+          id,
+          scope: added.scope,
+          text: added.text,
+          run: added.run ?? null,
+          createdAt: now,
+          updatedAt: now,
+          expiresAt: added.expiresAt ?? null,
         })}
       `;
 
-      return rule;
+      return yield* note(id);
     }, Effect.mapError(storeError));
 
-    const removeRule = Effect.fn("Store.removeRule")(function* (id: string) {
-      yield* sql`DELETE FROM attention_rules WHERE id = ${id}`;
-    }, Effect.mapError(storeError));
+    const editNote = Effect.fn("Store.editNote")(
+      function* (
+        id: string,
+        edit: { readonly text?: string; readonly expiresAt?: number | null },
+      ) {
+        const before = yield* note(id);
+
+        yield* sql`
+          UPDATE notes SET
+            text = ${edit.text ?? before.text},
+            expires_at = ${edit.expiresAt === undefined ? before.expiresAt : edit.expiresAt},
+            updated_at = ${yield* Clock.currentTimeMillis},
+            stale_reason = NULL, stale_run = NULL, stale_at = NULL
+          WHERE id = ${id}
+        `;
+
+        return yield* note(id);
+      },
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+      Effect.catchTag("SchemaError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const removeNote = Effect.fn("Store.removeNote")(
+      function* (id: string) {
+        yield* note(id);
+        yield* sql`DELETE FROM notes WHERE id = ${id}`;
+      },
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+      Effect.catchTag("SchemaError", (cause) => Effect.fail(storeError(cause))),
+    );
+
+    const staleNote = Effect.fn("Store.staleNote")(
+      function* (
+        id: string,
+        stale: { readonly reason: string; readonly run: string | null } | null,
+      ) {
+        yield* note(id);
+
+        yield* stale === null
+          ? sql`
+              UPDATE notes
+              SET stale_reason = NULL, stale_run = NULL, stale_at = NULL
+              WHERE id = ${id}
+            `
+          : sql`
+              UPDATE notes SET
+                stale_reason = ${stale.reason},
+                stale_run = ${stale.run},
+                stale_at = ${yield* Clock.currentTimeMillis}
+              WHERE id = ${id}
+            `;
+
+        return yield* note(id);
+      },
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+      Effect.catchTag("SchemaError", (cause) => Effect.fail(storeError(cause))),
+    );
 
     const recordContext = Effect.fn("Store.recordContext")(
       function* (context: Api.AttentionContext) {
@@ -4277,11 +4431,13 @@ export class Store extends Context.Service<
 
           if (answer.rule !== null) {
             yield* sql`
-              INSERT INTO attention_rules ${sql.insert({
+              INSERT INTO notes ${sql.insert({
                 id: yield* random.ulid,
+                scope: "attention",
                 text: answer.rule,
                 commentId: answer.id,
                 createdAt: now,
+                updatedAt: now,
               })}
             `;
           }
@@ -5728,8 +5884,11 @@ export class Store extends Context.Service<
       addWait: announce(touches("attention"), addWait),
       removeWait: announce(touches("attention"), removeWait),
       commentAttention: announce(touches("attention"), commentAttention),
-      addRule: announce(touches("attention"), addRule),
-      removeRule: announce(touches("attention"), removeRule),
+      notes,
+      addNote: announce(touches("inbox", "attention"), addNote),
+      editNote: announce(touches("inbox", "attention"), editNote),
+      removeNote: announce(touches("inbox", "attention"), removeNote),
+      staleNote: announce(touches("inbox", "attention"), staleNote),
       recordContext: announce(touches("attention"), recordContext),
       cancel: announce(touchesRun("runs"), cancel),
       log,

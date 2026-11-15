@@ -36,6 +36,12 @@ export const access = {
   inbox_move: "write",
   inbox_rules: "read",
   inbox_rule: "write",
+  notes: "read",
+  note_add: "write",
+  note_edit: "write",
+  note_delete: "ask",
+  note_stale: "write",
+  note_keep: "write",
 } satisfies { readonly [Name in ToolName]: Access };
 
 /** An operation's access class. */

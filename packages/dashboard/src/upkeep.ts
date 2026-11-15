@@ -445,17 +445,53 @@ export const commentAttention = UpkeepApi.runtime.fn(
     ),
 );
 
-/** Give the context agent a standing instruction. */
-export const addRule = UpkeepApi.runtime.fn((text: string) =>
-  UpkeepApi.use((client) =>
-    client.attention.addRule({ payload: { text } }),
-  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+/** Every note the agents read, for each repository, Upkeep and attention. */
+export const notes = UpkeepApi.query("notes", "list", {
+  reactivityKeys: attentionKey,
+});
+
+const notesChanged = Reactivity.invalidate([...attentionKey, ...inboxKey]);
+
+/** Keep a note for the agents working on a repository, Upkeep or attention. */
+export const addNote = UpkeepApi.runtime.fn(
+  (payload: {
+    readonly scope: string;
+    readonly text: string;
+    readonly expiresAt: number | null;
+  }) =>
+    UpkeepApi.use((client) => client.notes.add({ payload })).pipe(
+      asDefects,
+      Effect.ensuring(notesChanged),
+    ),
 );
 
-export const removeRule = UpkeepApi.runtime.fn((id: string) =>
-  UpkeepApi.use((client) =>
-    client.attention.removeRule({ params: { id } }),
-  ).pipe(asDefects, Effect.ensuring(Reactivity.invalidate(attentionKey))),
+export const editNote = UpkeepApi.runtime.fn(
+  ({
+    id,
+    ...payload
+  }: {
+    readonly id: string;
+    readonly text: string;
+    readonly expiresAt: number | null;
+  }) =>
+    UpkeepApi.use((client) =>
+      client.notes.edit({ params: { id }, payload }),
+    ).pipe(asDefects, Effect.ensuring(notesChanged)),
+);
+
+export const removeNote = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.notes.remove({ params: { id } })).pipe(
+    asDefects,
+    Effect.ensuring(notesChanged),
+  ),
+);
+
+/** Keep a note an agent said is out of date. */
+export const keepNote = UpkeepApi.runtime.fn((id: string) =>
+  UpkeepApi.use((client) => client.notes.keep({ params: { id } })).pipe(
+    asDefects,
+    Effect.ensuring(notesChanged),
+  ),
 );
 
 export const run = Atom.family((id: string) =>

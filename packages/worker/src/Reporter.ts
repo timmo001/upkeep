@@ -143,6 +143,18 @@ export class Reporter extends Context.Service<
     readonly release: (
       repo: string,
     ) => Effect.Effect<Domain.ReleaseEntry, unknown>;
+    /** The notes agents read now, for every scope. */
+    readonly notes: () => Effect.Effect<ReadonlyArray<Domain.Note>, unknown>;
+    /** Keep a note an agent in this run wrote. */
+    readonly addNote: (
+      scope: string,
+      text: string,
+    ) => Effect.Effect<void, unknown>;
+    /** Flag a note as out of date, as an agent in this run found. */
+    readonly staleNote: (
+      id: string,
+      reason: string,
+    ) => Effect.Effect<void, unknown>;
   }
 >()("@upkeep/worker/Reporter") {
   /**
@@ -287,6 +299,15 @@ export class Reporter extends Context.Service<
 
             return client.work.release({ params: { owner, name } });
           },
+          notes: () => client.work.notes(),
+          addNote: (scope, text) =>
+            client.work
+              .addNote({ params, payload: { scope, text } })
+              .pipe(Effect.asVoid),
+          staleNote: (note, reason) =>
+            client.work
+              .staleNote({ params: { ...params, note }, payload: { reason } })
+              .pipe(Effect.asVoid),
         });
       }),
     );
@@ -372,6 +393,15 @@ export class Reporter extends Context.Service<
           ).pipe(Effect.provide(RunLog.RunLog.console)),
         release: () =>
           Effect.fail("Release comparisons are kept on the server"),
+        notes: () => Effect.succeed([]),
+        addNote: (scope, text) =>
+          RunLog.info(`Would keep a note for ${scope}: ${text}`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+          ),
+        staleNote: (id, reason) =>
+          RunLog.info(`Would flag note ${id} as out of date: ${reason}`).pipe(
+            Effect.provide(RunLog.RunLog.console),
+          ),
       }),
     );
 }

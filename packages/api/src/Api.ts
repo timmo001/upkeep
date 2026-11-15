@@ -25,7 +25,6 @@ import {
   // The HTTP group below already takes the name
   AttentionGroup as AttentionGroupSchema,
   AttentionRelation,
-  AttentionRule,
   AttentionWait,
   Change,
   Command,
@@ -40,6 +39,8 @@ import {
   JobStatus,
   LogEntry,
   LogLine,
+  Note,
+  NoteScope,
   OmarchyTheme,
   Outcome,
   Parked,
@@ -159,6 +160,16 @@ export class GroupNotFound extends Schema.TaggedError<GroupNotFound>()(
 ) {
   override get message() {
     return `There's no attention group ${this.id}`;
+  }
+}
+
+export class NoteNotFound extends Schema.TaggedError<NoteNotFound>()(
+  "NoteNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {
+  override get message() {
+    return `There's no note ${this.id}`;
   }
 }
 
@@ -944,16 +955,6 @@ export class AttentionGroup extends HttpApiGroup.make("attention")
       success: AttentionComment,
       error: GroupNotFound,
     }),
-    /** Give the agent a standing instruction. */
-    HttpApiEndpoint.post("addRule", "/rules", {
-      payload: Schema.Struct({ text: Schema.String }),
-      success: AttentionRule,
-    }),
-    /** Remove a standing instruction. */
-    HttpApiEndpoint.delete("removeRule", "/rules/:id", {
-      params: { id: Schema.String },
-      success: HttpApiSchema.NoContent,
-    }),
   )
   .middleware(AdminAuthorization)
   .prefix("/api/attention")
@@ -1088,6 +1089,29 @@ export class WorkGroup extends HttpApiGroup.make("work")
     HttpApiEndpoint.get("heals", "/heals", {
       query: { since: Schema.FiniteFromString },
       success: Schema.Array(Run),
+    }),
+    /** The notes agents read now: every one not past its expiry. */
+    HttpApiEndpoint.get("notes", "/notes", {
+      success: Schema.Array(Note),
+    }),
+    /** Keep a note an agent in the run wrote, marked as that run's. */
+    HttpApiEndpoint.post("addNote", "/runs/:id/notes", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        scope: NoteScope,
+        text: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+      }),
+      success: Note,
+      error: [RunNotFound, RunNotClaimed],
+    }),
+    /** Flag a note as out of date, as an agent in the run found it. */
+    HttpApiEndpoint.post("staleNote", "/runs/:id/notes/:note/stale", {
+      params: { id: Schema.String, note: Schema.String },
+      payload: Schema.Struct({
+        reason: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+      }),
+      success: Note,
+      error: [RunNotFound, RunNotClaimed, NoteNotFound],
     }),
     /** Record a decision the decision model made on a regression check. */
     HttpApiEndpoint.post(
@@ -1506,6 +1530,72 @@ export class ReleasesGroup extends HttpApiGroup.make("releases")
     }),
   ) {}
 
+export class NotesGroup extends HttpApiGroup.make("notes")
+  .add(
+    /** Every note, those past their expiry too, oldest first. */
+    HttpApiEndpoint.get("list", "/", {
+      success: Schema.Array(Note),
+    }),
+    /**
+     * Keep a note. An agent passes its run, which marks the note as its own;
+     * without one it's yours.
+     */
+    HttpApiEndpoint.post("add", "/", {
+      payload: Schema.Struct({
+        scope: NoteScope,
+        text: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+        expiresAt: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+        run: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+      success: Note,
+    }),
+    /** Change a note's text or expiry, which also clears its out-of-date flag. */
+    HttpApiEndpoint.patch("edit", "/:id", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        text: Schema.optionalKey(
+          Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+        ),
+        expiresAt: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+      }),
+      success: Note,
+      error: NoteNotFound,
+    }),
+    HttpApiEndpoint.delete("remove", "/:id", {
+      params: { id: Schema.String },
+      success: HttpApiSchema.NoContent,
+      error: NoteNotFound,
+    }),
+    /**
+     * Say a note no longer holds, and why. It asks you whether to drop it,
+     * and agents keep reading it, with why, until you do.
+     */
+    HttpApiEndpoint.post("stale", "/:id/stale", {
+      params: { id: Schema.String },
+      payload: Schema.Struct({
+        reason: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+        run: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+      success: Note,
+      error: NoteNotFound,
+    }),
+    /** Keep a note an agent said is out of date, clearing the flag. */
+    HttpApiEndpoint.delete("keep", "/:id/stale", {
+      params: { id: Schema.String },
+      success: Note,
+      error: NoteNotFound,
+    }),
+  )
+  .middleware(AdminAuthorization)
+  .prefix("/api/notes")
+  .annotateMerge(
+    OpenApi.annotations({
+      title: "Notes",
+      description:
+        "Standing notes the agents read, for a repository, Upkeep itself or the attention agent",
+    }),
+  ) {}
+
 export class SessionsGroup extends HttpApiGroup.make("sessions")
   .add(
     /** A session a worker shared, for `upkeep open` to import and open. */
@@ -1593,6 +1683,7 @@ export class Api extends HttpApi.make("upkeep")
   .add(SkillsGroup)
   .add(ReleasesGroup)
   .add(SessionsGroup)
+  .add(NotesGroup)
   .add(ThemeGroup)
   .add(TokensGroup)
   .add(SystemGroup)

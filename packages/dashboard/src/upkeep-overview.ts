@@ -19,6 +19,7 @@ import { always, AtomController, registry } from "./AtomController.ts";
 import { phPause, phPlay, phPlayPause } from "./icons.ts";
 import {
   agentLabel,
+  fillWindow,
   formatTime,
   shared,
   stateBadge,
@@ -37,9 +38,11 @@ import {
   unparkJob,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-card.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "./upkeep-notes.ts";
 
 /** Each lane's heading: a lane runs one run at a time, so a job waits only behind its own lane. */
 const laneLabels = new Map<string, string>([
@@ -244,6 +247,7 @@ export class UpkeepOverview extends LitElement {
       group="lane"
       groups-collapsed
       contained
+      ${fillWindow()}
       row-key="id"
       search="never"
       .columns=${columns}
@@ -304,6 +308,7 @@ export class UpkeepOverview extends LitElement {
       group="worker"
       groups-collapsed
       contained
+      ${fillWindow()}
       row-key="id"
       search="never"
       .columns=${columns}
@@ -322,12 +327,26 @@ export class UpkeepOverview extends LitElement {
         AsyncResult.isFailure(this.#jobs.value)
           ? null
           : html`<gw-section
-              class="section"
-              heading="Agents"
-              storage-key="upkeep.jobs.section.agents"
-            >
-              ${view(this.#workers.value, (list) => this.#agents(list))}
-            </gw-section>`
+                class="section"
+                heading="Agents"
+                storage-key="upkeep.jobs.section.agents"
+              >
+                ${view(this.#workers.value, (list) => this.#agents(list))}
+              </gw-section>
+              <gw-section
+                class="section"
+                heading="Notes for agents"
+                storage-key="upkeep.jobs.section.notes"
+              >
+                <gw-card
+                  description="What the agents working on Upkeep itself read first"
+                >
+                  <upkeep-notes
+                    scope="upkeep"
+                    empty="None yet. Agents add what they learn about Upkeep here, and so can you."
+                  ></upkeep-notes>
+                </gw-card>
+              </gw-section>`
       }
     `;
   }

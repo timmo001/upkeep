@@ -775,6 +775,33 @@ The same change can be asked for through the API, as the `change` command:
 `POST /api/attention/commands` with `{ "kind": "change", "repos": [...],
 "prompt": "..." }`.
 
+## Notes
+
+Notes are what the agents working on a repository should know before they
+start, such as a check that needs something running first. Each is for one
+repository, for `upkeep` (agents working on Upkeep itself) or for
+`attention` (the attention agent's rules). Every heal and change agent reads
+the notes for the repositories it works on, and is told how to keep new ones.
+
+An agent keeps a note with a line of `Note for <owner/name>: <the note>` in
+what it says last, and the worker keeps it, marked as that run's. When a note
+no longer holds, the agent says `Note out of date: <its id>: <why>`: the note
+is flagged and asks you, under what needs you, whether to keep or drop it.
+Agents keep reading a flagged note, with why, until you decide.
+
+You and the agents' notes show on each repository's page, on the Jobs page for
+Upkeep's and under **Agent rules** on the Attention page, where you add, edit
+or delete them. A note can have an expiry date, after which it's kept but no
+agent reads it.
+
+```bash
+upkeep notes list [scope]
+upkeep notes add timmo001/kestrel "Its end-to-end tests need the mock camera server" --expires 2026-12-31
+upkeep notes edit <note> --text "..." --expires never
+upkeep notes delete <note>
+upkeep notes keep <note>
+```
+
 ## Jobs
 
 | Job                 | Runs             | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -1161,7 +1188,8 @@ on the group, such as an issue to close now. It may suggest a group for an
 item, which you accept or dismiss. Each item's and group's **Comment** tells
 the agent something, which queues a run; its answer shows under your comment,
 and a standing instruction becomes one of the **Agent rules**, which every
-run follows.
+run follows. The rules are [notes](#notes) for the attention agent, so you
+add, edit or delete them there too.
 
 **Start agent** on an item or a group opens an agent on it, with an optional
 prompt, in a repository you pick: the ones its items are on are suggested

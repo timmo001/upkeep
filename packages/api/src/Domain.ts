@@ -1912,6 +1912,68 @@ export interface AttentionRule extends Schema.Schema.Type<
   typeof AttentionRule
 > {}
 
+/**
+ * What a note is for: `upkeep` for Upkeep itself, `attention` for the
+ * attention agent, or a repository as `owner/name`.
+ */
+export const NoteScope = Schema.String.pipe(
+  Schema.check(Schema.isMinLength(1)),
+);
+
+/** Why an agent thinks a note no longer holds, for you to keep or drop it. */
+export const NoteStale = Schema.Struct({
+  reason: Schema.String,
+  /** The run of the agent that said so, or null when you did. */
+  run: Schema.NullOr(Schema.String),
+  at: Schema.Finite,
+});
+
+export interface NoteStale extends Schema.Schema.Type<typeof NoteStale> {}
+
+/**
+ * A standing note for the agents working on a repository, on Upkeep or on
+ * the Attention page, such as "its end-to-end tests need X running first".
+ * The attention agent's rules are notes scoped to `attention`. One past its
+ * expiry is kept, but no agent reads it.
+ */
+export const Note = Schema.Struct({
+  id: Schema.String,
+  scope: NoteScope,
+  text: Schema.String,
+  /** The run of the agent that wrote it, or null when you did. */
+  run: Schema.NullOr(Schema.String),
+  /** The attention comment it came from, for a rule the agent took from one. */
+  comment: Schema.NullOr(Schema.String),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  expiresAt: Schema.NullOr(Schema.Finite),
+  stale: Schema.NullOr(NoteStale),
+});
+
+export interface Note extends Schema.Schema.Type<typeof Note> {}
+
+/** Whether agents still read a note: it has no expiry, or it's still ahead. */
+export const noteCurrent = (note: Note, now: number) =>
+  note.expiresAt === null || note.expiresAt > now;
+
+/** What a note's scope shows as: Upkeep, the attention agent or the repository. */
+export const noteScopeName = (scope: string) =>
+  Match.value(scope).pipe(
+    Match.when("upkeep", () => "Upkeep"),
+    Match.when("attention", () => "the attention agent"),
+    Match.orElse(() => scope),
+  );
+
+/** The dashboard page a note's scope lives on. */
+export const noteScopePath = (scope: string) =>
+  Match.value(scope).pipe(
+    Match.when("upkeep", () => "jobs"),
+    Match.when("attention", () => "attention"),
+    Match.orElse(
+      () => `repos/${scope.split("/").map(encodeURIComponent).join("/")}`,
+    ),
+  );
+
 /** The Attention page: every item, and what changed since you last looked. */
 export const Attention = Schema.Struct({
   items: Schema.Array(AttentionItem),

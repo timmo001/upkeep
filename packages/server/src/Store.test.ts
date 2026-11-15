@@ -351,6 +351,63 @@ test("the context agent's notes, answers and links land, and a gone item keeps i
     }),
   ));
 
+test("notes keep who wrote them, expire for agents and clear a stale flag on edit", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const yours = yield* store.addNote({
+        scope: "timmo001/a",
+        text: "Start the mock server first",
+      });
+
+      const agents = yield* store.addNote({
+        scope: "timmo001/a",
+        text: "Its tests need a database running",
+        run: "run-1",
+      });
+
+      yield* store.addNote({
+        scope: "attention",
+        text: "Skip bots",
+        expiresAt: 1,
+      });
+
+      expect([yours.run, agents.run]).toEqual([null, "run-1"]);
+      expect((yield* store.notes()).length).toBe(3);
+      expect((yield* store.notes(true)).map((note) => note.text)).toEqual([
+        "Start the mock server first",
+        "Its tests need a database running",
+      ]);
+      expect((yield* store.attention()).rules).toEqual([]);
+
+      const stale = yield* store.staleNote(agents.id, {
+        reason: "CI runs them without it now",
+        run: "run-2",
+      });
+
+      expect(stale.stale?.reason).toBe("CI runs them without it now");
+
+      const edited = yield* store.editNote(agents.id, {
+        text: "Its tests need the mock server",
+      });
+
+      expect([edited.text, edited.stale]).toEqual([
+        "Its tests need the mock server",
+        null,
+      ]);
+
+      yield* store.removeNote(yours.id);
+
+      expect(
+        yield* store.removeNote(yours.id).pipe(
+          Effect.flip,
+          Effect.map((error) => error._tag),
+        ),
+      ).toBe("NoteNotFound");
+    }),
+  ));
+
 test("GitHub's links form groups that keep what you set as they change", () =>
   run(
     Effect.gen(function* () {

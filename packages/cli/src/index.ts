@@ -1106,6 +1106,234 @@ const inbox = Command.make("inbox").pipe(
   Command.withSubcommands([inboxList, inboxMove, inboxRules, inboxRule]),
 );
 
+const noteId = Argument.String("note").pipe(
+  Argument.withDescription("The note's ID, from upkeep notes list"),
+);
+
+const expires = Flag.String("expires").pipe(
+  Flag.withDescription(
+    "The last day agents read it, as YYYY-MM-DD, or never to keep it until it's deleted",
+  ),
+  Flag.optional,
+);
+
+/**
+ * When a note given `--expires` stops being read: the end of that local day,
+ * or null for never.
+ */
+const expiryOf = (day: string) => {
+  if (day === "never") return Effect.succeed(null);
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+
+  if (match === null) {
+    return Effect.fail(
+      new UsageError({ message: "Give --expires as YYYY-MM-DD or never" }),
+    );
+  }
+
+  const [, year = "", month = "", date = ""] = match;
+
+  return Effect.succeed(
+    new Date(Number(year), Number(month) - 1, Number(date) + 1).getTime(),
+  );
+};
+
+/** What `upkeep notes edit` changes: only what it was given. */
+interface NoteEdit {
+  text?: string;
+  expiresAt?: number | null;
+}
+
+const noteLine = (note: Domain.Note) =>
+  [
+    `${note.id}  ${note.scope}  ${note.run === null ? "you" : `agent in ${note.run}`}`,
+    note.expiresAt === null
+      ? ""
+      : `  ${Domain.noteCurrent(note, Date.now()) ? "expires" : "expired"} ${new Date(note.expiresAt).toISOString().slice(0, 10)}`,
+    note.stale === null ? "" : `  OUT OF DATE? ${note.stale.reason}`,
+    `\n  ${note.text.replaceAll("\n", "\n  ")}`,
+  ].join("");
+
+const notesList = Command.make(
+  "list",
+  {
+    scope: Argument.String("scope").pipe(
+      Argument.withDescription(
+        "Only the notes for owner/name, upkeep or attention",
+      ),
+      Argument.optional,
+    ),
+    json,
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const notes = (yield* client.notes.list()).filter((note) =>
+        Option.match(input.scope, {
+          onNone: () => true,
+          onSome: (scope) => note.scope.toLowerCase() === scope.toLowerCase(),
+        }),
+      );
+
+      if (input.json) return yield* Console.log(JSON.stringify(notes, null, 2));
+
+      if (notes.length === 0) return yield* Console.log("No notes.");
+
+      for (const note of notes) yield* Console.log(noteLine(note));
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "List the notes agents read, with their IDs, who wrote them and any an agent says are out of date",
+  ),
+);
+
+const notesAdd = Command.make(
+  "add",
+  {
+    scope: Argument.String("scope").pipe(
+      Argument.withDescription(
+        "owner/name for a repository's agents, upkeep for Upkeep's, or attention for the attention agent",
+      ),
+    ),
+    text: Argument.String("text").pipe(Argument.withDescription("The note")),
+    expires,
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      const expiresAt = yield* Option.match(input.expires, {
+        onNone: () => Effect.succeed(null),
+        onSome: expiryOf,
+      });
+
+      const note = yield* client.notes.add({
+        payload: { scope: input.scope, text: input.text, expiresAt },
+      });
+
+      yield* Console.log(`Kept note ${note.id} for ${note.scope}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("Keep a note for the agents to read"));
+
+const notesEdit = Command.make(
+  "edit",
+  {
+    note: noteId,
+    text: Flag.String("text").pipe(
+      Flag.withDescription("The note's new text"),
+      Flag.optional,
+    ),
+    expires,
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+      const payload: NoteEdit = {};
+
+      if (Option.isSome(input.text)) payload.text = input.text.value;
+
+      if (Option.isSome(input.expires)) {
+        payload.expiresAt = yield* expiryOf(input.expires.value);
+      }
+
+      const note = yield* client.notes.edit({
+        params: { id: input.note },
+        payload,
+      });
+
+      yield* Console.log(noteLine(note));
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Change a note's text or expiry, which also clears an out-of-date flag",
+  ),
+);
+
+const notesDelete = Command.make(
+  "delete",
+  { note: noteId, server },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.notes.remove({ params: { id: input.note } });
+      yield* Console.log(`Deleted note ${input.note}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("Delete a note"));
+
+const notesStale = Command.make(
+  "stale",
+  {
+    note: noteId,
+    reason: Argument.String("reason").pipe(
+      Argument.withDescription("Why it no longer holds"),
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.notes.stale({
+        params: { id: input.note },
+        payload: { reason: input.reason },
+      });
+
+      yield* Console.log(`Flagged note ${input.note} as out of date`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Flag a note as out of date, which asks whether to drop it",
+  ),
+);
+
+const notesKeep = Command.make(
+  "keep",
+  { note: noteId, server },
+  Effect.fn(
+    function* (input) {
+      const client = yield* Client;
+
+      yield* client.notes.keep({ params: { id: input.note } });
+      yield* Console.log(`Kept note ${input.note}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Keep a note flagged as out of date, clearing the flag",
+  ),
+);
+
+const notes = Command.make("notes").pipe(
+  Command.withDescription(
+    "The standing notes agents read for a repository, Upkeep or the attention agent",
+  ),
+  Command.withSubcommands([
+    notesList,
+    notesAdd,
+    notesEdit,
+    notesDelete,
+    notesStale,
+    notesKeep,
+  ]),
+);
+
 const scheduleRun = Argument.String("run").pipe(
   Argument.withDescription("The ID of the run whose agent session it's on"),
 );
@@ -1352,6 +1580,7 @@ const upkeep = Command.make("upkeep").pipe(
     resume,
     repos,
     inbox,
+    notes,
     schedules,
     open,
     serve,

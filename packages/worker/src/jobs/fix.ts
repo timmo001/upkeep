@@ -15,6 +15,7 @@ import { Clock, Effect, Option, Path, Schema } from "effect";
 import { reason } from "../Failure";
 import * as CiTimings from "../CiTimings";
 import * as Lane from "../Lane";
+import * as Notes from "../Notes";
 import * as Regression from "../Regression";
 import { Reporter } from "../Reporter";
 import * as RunLog from "../RunLog";
@@ -89,6 +90,7 @@ const prompt = (
   checkouts: ReadonlyArray<Checkout>,
   minutes: number,
   watching: string,
+  notes: string,
 ) => {
   const several = checkouts.length > 1;
   const repo = several ? "each repository" : (checkouts[0]?.repo ?? "");
@@ -191,6 +193,7 @@ const prompt = (
       : []),
     ...reach,
     watching,
+    notes,
     containers,
     later,
     "Anything else, or anything you aren't sure of, is for a person: stop and say what you found and what you'd do.",
@@ -223,6 +226,7 @@ export const across = Effect.fnUntraced(function* (
     checkouts: ReadonlyArray<Checkout>,
     minutes: number,
     watching: string,
+    notes: string,
   ) => string,
   record: Recorder,
 ) {
@@ -233,6 +237,9 @@ export const across = Effect.fnUntraced(function* (
 
   const targets =
     repos.length === 0 ? [settings.repo ?? "timmo001/upkeep"] : repos;
+
+  // Work on Upkeep itself reads Upkeep's notes as well as its repository's
+  const scopes = repos.length === 0 ? ["upkeep", ...targets] : targets;
 
   const several = targets.length > 1;
   const worktrees = yield* Worktrees.forAgent(kind, several);
@@ -311,6 +318,7 @@ export const across = Effect.fnUntraced(function* (
           checkouts,
           minutes,
           yield* CiTimings.advice(checkouts.map(({ repo }) => repo)),
+          yield* Notes.prompt(scopes),
         ),
       ],
       options,
@@ -345,6 +353,8 @@ export const across = Effect.fnUntraced(function* (
     const said = yield* lastWords(opencode, session, options).pipe(
       Effect.orElseSucceed(() => null),
     );
+
+    yield* Notes.record(said, scopes);
 
     const verdict =
       /Outcome:\s*(fixed|done|nothing to fix|nothing to do|needs you)\s*$/i
@@ -487,7 +497,7 @@ export const fix = (
     Domain.targetRepos(heal.target),
     agent,
     failed.job,
-    (checkouts, minutes, watching) =>
+    (checkouts, minutes, watching, notes) =>
       prompt(
         heal,
         failed,
@@ -497,6 +507,7 @@ export const fix = (
         checkouts,
         minutes,
         watching,
+        notes,
       ),
     record,
   );

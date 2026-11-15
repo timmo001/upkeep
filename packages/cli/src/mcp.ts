@@ -315,6 +315,81 @@ const ScheduleAdd = Tool.make("schedule_add", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false);
 
+const Notes = Tool.make("notes", {
+  description:
+    "The standing notes agents read, each scoped to a repository (owner/name), `upkeep` for Upkeep itself or `attention` for the attention agent. `run` is the agent run that wrote it, or null for the person; `stale` is an agent saying it may be out of date, which asks the person to keep or drop it. One past `expiresAt` is kept but no agent reads it. `scope` narrows the list to one.",
+  parameters: Schema.Struct({ scope: Schema.optionalKey(Schema.String) }),
+  success: Schema.Struct({ notes: Schema.Array(Domain.Note) }),
+  failure: UpkeepError,
+  failureMode: "return",
+}).annotate(Tool.Readonly, true);
+
+const NoteAdd = Tool.make("note_add", {
+  description:
+    "Keep a note for the agents working on a repository (scope owner/name), on Upkeep (upkeep) or the attention agent (attention), such as what its checks need first. `expiresAt`, in milliseconds, is when agents stop reading it.",
+  parameters: Schema.Struct({
+    scope: Domain.NoteScope,
+    text: Schema.String,
+    expiresAt: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  }),
+  success: Domain.Note,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false);
+
+const NoteEdit = Tool.make("note_edit", {
+  description:
+    "Change a note's text or expiry (null for never), which also clears an out-of-date flag",
+  parameters: Schema.Struct({
+    note: Schema.String,
+    text: Schema.optionalKey(Schema.String),
+    expiresAt: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  }),
+  success: Domain.Note,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const NoteDelete = Tool.make("note_delete", {
+  description: "Delete a note, so no agent reads it",
+  parameters: Schema.Struct({ note: Schema.String }),
+  success: Schema.Struct({ note: Schema.String }),
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false);
+
+const NoteStale = Tool.make("note_stale", {
+  description:
+    "Flag a note as out of date, and why, which asks the person whether to drop it. Agents keep reading it, with why, until they do.",
+  parameters: Schema.Struct({ note: Schema.String, reason: Schema.String }),
+  success: Domain.Note,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const NoteKeep = Tool.make("note_keep", {
+  description: "Keep a note flagged as out of date, clearing the flag",
+  parameters: Schema.Struct({ note: Schema.String }),
+  success: Domain.Note,
+  failure: UpkeepError,
+  failureMode: "return",
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 /** Every operation an agent can call, shared by MCP and Code Mode. */
 export const Tools = Toolkit.make(
   Status,
@@ -340,6 +415,12 @@ export const Tools = Toolkit.make(
   InboxMove,
   InboxRules,
   InboxRule,
+  Notes,
+  NoteAdd,
+  NoteEdit,
+  NoteDelete,
+  NoteStale,
+  NoteKeep,
 );
 
 /** A repository's path parameters from `owner/name`. */
@@ -591,6 +672,61 @@ export const toolsLayer = Tools.toLayer(
         onServer(
           Client.use((client) =>
             client.inbox.rule({ payload: input }).pipe(Effect.as(input)),
+          ),
+        ),
+      notes: (input: { readonly scope?: string | undefined }) =>
+        onServer(
+          Client.use((client) =>
+            client.notes.list().pipe(
+              Effect.map((all) => ({
+                notes: all.filter(
+                  (note) =>
+                    input.scope === undefined ||
+                    note.scope.toLowerCase() === input.scope.toLowerCase(),
+                ),
+              })),
+            ),
+          ),
+        ),
+      note_add: (payload: {
+        readonly scope: string;
+        readonly text: string;
+        readonly expiresAt?: number | null;
+      }) => onServer(Client.use((client) => client.notes.add({ payload }))),
+      note_edit: ({
+        note,
+        ...payload
+      }: {
+        readonly note: string;
+        readonly text?: string;
+        readonly expiresAt?: number | null;
+      }) =>
+        onServer(
+          Client.use((client) =>
+            client.notes.edit({ params: { id: note }, payload }),
+          ),
+        ),
+      note_delete: (input: { readonly note: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.notes
+              .remove({ params: { id: input.note } })
+              .pipe(Effect.as(input)),
+          ),
+        ),
+      note_stale: (input: { readonly note: string; readonly reason: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.notes.stale({
+              params: { id: input.note },
+              payload: { reason: input.reason },
+            }),
+          ),
+        ),
+      note_keep: (input: { readonly note: string }) =>
+        onServer(
+          Client.use((client) =>
+            client.notes.keep({ params: { id: input.note } }),
           ),
         ),
     };

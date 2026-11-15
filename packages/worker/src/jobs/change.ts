@@ -20,6 +20,7 @@ const prompt = (
   checkouts: ReadonlyArray<Checkout>,
   minutes: number,
   watching: string,
+  notes: string,
 ) => {
   const several = checkouts.length > 1;
 
@@ -46,6 +47,7 @@ const prompt = (
     containers,
     later,
     watching,
+    notes,
     `You have ${minutes} minutes. End with a short summary of what you did${several ? " in each repository" : ""}, for a person reading it cold, then a last line of exactly one of \`Outcome: done\`, \`Outcome: nothing to do\` or \`Outcome: needs you\`${several ? ", which is `needs you` when any of them is left for a person" : ""}.`,
   ].join("\n");
 };
@@ -75,8 +77,8 @@ export const change = Effect.fnUntraced(function* (
     command.repos,
     agent,
     "change",
-    (checkouts, minutes, watching) =>
-      prompt(command, checkouts, minutes, watching),
+    (checkouts, minutes, watching, notes) =>
+      prompt(command, checkouts, minutes, watching, notes),
     () => Effect.void,
   );
 

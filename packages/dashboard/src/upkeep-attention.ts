@@ -49,7 +49,6 @@ import {
   phFolderPlus,
   phGitPullRequest,
   phPencilSimple,
-  phPlus,
   phPushPin,
   phRecord,
   phRobot,
@@ -72,7 +71,6 @@ import {
 } from "./ui.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
-  addRule,
   addWait,
   agents,
   attention,
@@ -87,7 +85,6 @@ import {
   releaseHref,
   releasesHref,
   releasesPage,
-  removeRule,
   removeWait,
   repos,
   runHref,
@@ -105,6 +102,7 @@ import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
 import "@timmo001/groundwork-ui/define/layout.ts";
+import "./upkeep-notes.ts";
 
 type Scope = "work" | "personal" | "all";
 
@@ -1265,55 +1263,14 @@ export class UpkeepAttention extends LitElement {
         <p class="description">
           Standing instructions the context agent follows on every run
         </p>
-        <gw-card>${this.#rulesBody(page)}</gw-card>
+        <gw-card
+          ><upkeep-notes
+            scope="attention"
+            empty="None yet. A comment that's a standing instruction becomes one."
+          ></upkeep-notes
+        ></gw-card>
       </gw-stack>
     </gw-section>`;
-  }
-
-  #rulesBody(page: Domain.Attention) {
-    return html`<gw-stack gap="s">
-      ${
-        page.rules.length === 0
-          ? html`<p class="description">
-              None yet. A comment that's a standing instruction becomes one.
-            </p>`
-          : html`<ul class="waits">
-              ${page.rules.map(
-                (rule) =>
-                  html`<li>
-                    ${icon(phRobot)}
-                    <span>${rule.text}</span>
-                    <gw-button
-                      size="xs"
-                      appearance="plain"
-                      variant="neutral"
-                      labels="hide"
-                      icon=${phX}
-                      label="Remove"
-                      @click=${() => registry.set(removeRule, rule.id)}
-                    ></gw-button>
-                  </li>`,
-              )}
-            </ul>`
-      }
-      <div class="actions">
-        <gw-button
-          size="xs"
-          appearance="outlined"
-          variant="neutral"
-          icon=${phPlus}
-          @click=${(event: Event) =>
-            this.#ask(
-              event,
-              "New rule",
-              "Such as: skip threads I'm only subscribed to",
-              "",
-              (text) => registry.set(addRule, text),
-            )}
-          >Add a rule</gw-button
-        >
-      </div>
-    </gw-stack>`;
   }
 
   /** Its status and type labels, then what GitHub says about it. */

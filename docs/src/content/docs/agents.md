@@ -36,8 +36,14 @@ runs one with its input as JSON on stdin and prints its result as JSON.
 | `inbox_move`   | Write  | Moves an entry to the version bumps or worth reading    |
 | `inbox_rules`  | Read   | Lists the inbox's repository rules                      |
 | `inbox_rule`   | Write  | Sets which inbox tab a repository's entries go to       |
+| `notes`        | Read   | Lists the notes agents read, and any flagged stale      |
+| `note_add`     | Write  | Keeps a note for a repository, Upkeep or attention      |
+| `note_edit`    | Write  | Changes a note's text or expiry                         |
+| `note_delete`  | Ask    | Deletes a note                                          |
+| `note_stale`   | Write  | Flags a note as out of date, asking you about it        |
+| `note_keep`    | Write  | Keeps a flagged note, clearing the flag                 |
 
-`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause`, `resume` and the `schedule` and `inbox` operations talk to the server in `UPKEEP_SERVER` as the admin in
+`status`, `runs`, `log`, `run`, `cancel`, `retry`, `dismiss`, `unpark`, `pause`, `resume` and the `schedule`, `inbox` and `note` operations talk to the server in `UPKEEP_SERVER` as the admin in
 `UPKEEP_ADMIN_TOKEN`, from the environment or `~/.config/upkeep/admin.env`.
 Managing tokens stays a CLI command for people, since it
 hands out secrets.
