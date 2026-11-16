@@ -21,5 +21,5 @@
       }
     ]
   },
-  "include": ["src", "oxlint.config.ts"]
+  "include": ["src", "alchemy.run.ts", "oxlint.config.ts"]
 }

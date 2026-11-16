@@ -9,5 +9,5 @@ export default defineConfig({
     typeCheck: true,
     maxWarnings: 0,
   },
-  ignorePatterns: [".agents/**", ".opencode/**", ".wrangler/**", "dist/**"],
+  ignorePatterns: [".agents/**", ".alchemy/**", ".opencode/**", "dist/**"],
 });

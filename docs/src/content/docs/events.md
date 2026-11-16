@@ -65,20 +65,22 @@ release's workflow pins don't wait at all.
    bunx wrangler queues consumer http add upkeep-events
    ```
 
-2. Deploy the Worker with `bun run deploy` in `packages/events`. It answers
-   at `events.upkeep.timmo.dev`. To deploy it from `main` instead, connect it
-   to Workers Builds like the docs site, with `packages/events` as its root
-   and `bunx wrangler deploy` as its deploy command.
+2. Deploy the Worker with `mise run events:deploy`, with the GitHub App's
+   webhook secret in `WEBHOOK_SECRET` (step 4). It answers at
+   `events.upkeep.timmo.dev`. The stack in `packages/events/alchemy.run.ts`
+   holds the Worker and the queue, and the Deploy events workflow deploys it
+   from `main` with the `WEBHOOK_SECRET` repository secret.
 3. Create the GitHub App under your account: its webhook URL is the Worker's,
    with a long random webhook secret, such as from `openssl rand -hex 32`.
    Give it read access to Contents and Actions, subscribe it to Release, Push
    and Workflow run, and install it on all your repositories.
-4. Give the Worker the same secret. With it kept in 1Password, pipe it in so
-   it never shows on screen:
+4. Give the Worker and the Deploy events workflow the same secret. With it
+   kept in 1Password, pipe it into the repository secret so it never shows on
+   screen, then deploy the Worker again:
 
    ```bash
    op item get "Upkeep GitHub App webhook secret" --fields password --reveal \
-     | tr -d '\n' | bunx wrangler secret put WEBHOOK_SECRET
+     | tr -d '\n' | gh secret set WEBHOOK_SECRET
    ```
 
 5. Create a Cloudflare API token limited to your account, with only Queues

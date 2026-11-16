@@ -1,0 +1,42 @@
+---
+# Deploys the prod stage of the events Worker's Alchemy stack in
+# packages/events/alchemy.run.ts from main: the upkeep-events Worker at
+# events.upkeep.timmo.dev and the Queue it produces to. The Cloudflare token
+# comes from docs/stacks/github.ts.
+name: Deploy events
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy-events.yml
+      - bun.lock
+      - mise.toml
+      - package.json
+      - packages/api/**
+      - packages/events/**
+  workflow_dispatch: {}
+
+# Deploys queue rather than cancel, so a stack update never stops halfway
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: timmo001/workflows/.github/workflows/deploy-alchemy.yml@36ba6651f1296cce685ede8ac38b9574c9291028 # master
+    with:
+      task: events:deploy
+      fetch-depth: 1
+      # The webhook only takes POST, so a GET answering 405 means it's up
+      smoke-check: https://events.upkeep.timmo.dev/ 405
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SECRET_ENV: |
+        WEBHOOK_SECRET=${{ secrets.WEBHOOK_SECRET }}

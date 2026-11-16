@@ -1,6 +1,6 @@
 /**
- * The credentials CI deploys the docs with, as code: a Cloudflare token scoped
- * to what the docs stack touches, written into the repository's Actions
+ * The credentials CI deploys with, as code: a Cloudflare token scoped to what
+ * the docs and events stacks touch, written into the repository's Actions
  * secrets. Deploy it once, and again to rotate: `mise run docs:deploy:github`.
  */
 import * as Cloudflare from "@alchemy.run/cloudflare";
@@ -31,6 +31,7 @@ export default Alchemy.Stack(
             "Workers Scripts Write",
             "Account Settings Read",
             "Secrets Store Write",
+            "Queues Write",
           ],
           resources: { [account]: "*" },
         },

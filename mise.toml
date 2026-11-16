@@ -63,6 +63,18 @@ depends = ["install"]
 dir = "docs"
 run = "bun run deploy:github"
 
+[tasks."events:plan"]
+description = "Show what deploying the events Worker's prod stage would change"
+depends = ["install"]
+dir = "packages/events"
+run = "bun run plan"
+
+[tasks."events:deploy"]
+description = "Deploy the events Worker's prod stage with Alchemy"
+depends = ["install"]
+dir = "packages/events"
+run = "bun run deploy"
+
 [tasks."serve:docs"]
 description = "Start the docs dev server in the background through Pitchfork"
 run = "pitchfork start docs"
