@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: timmo001/workflows/.github/workflows/build-container-image.yml@5451f6867a5cb2b9b6318a82e00f7dd9f9fc279a # 20261116.0
+    uses: timmo001/workflows/.github/workflows/build-container-image.yml@db6f3692a31de24d2bee17e505dfd2bf3fd5a076 # 20261116.1
     with:
       image: ghcr.io/timmo001/upkeep-app
       version: ${{ github.event.release.tag_name }}
@@ -59,7 +59,7 @@ jobs:
   home-assistant-apps:
     name: Home Assistant apps repository
     needs: image
-    uses: timmo001/workflows/.github/workflows/home-assistant-app-dispatch.yml@5451f6867a5cb2b9b6318a82e00f7dd9f9fc279a # 20261116.0
+    uses: timmo001/workflows/.github/workflows/home-assistant-app-dispatch.yml@db6f3692a31de24d2bee17e505dfd2bf3fd5a076 # 20261116.1
     with:
       repository: timmo001/home-assistant-apps
     secrets:
