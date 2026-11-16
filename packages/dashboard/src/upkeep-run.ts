@@ -175,7 +175,8 @@ const runLinks = (current: Domain.Run) => {
         : fact("Retry", html`<a href=${runHref(current.retry)}>The new run</a>`)
     }
     ${
-      current.settledBy == null
+      // A handoff's heal that did its work settles itself
+      current.settledBy == null || current.settledBy === current.id
         ? null
         : fact(
             "Settled by",
