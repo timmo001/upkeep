@@ -960,7 +960,9 @@ checks pass and before the push:
 
 The notes are read once per run, and the model is asked once per run for each
 version change, so consumers moving between the same versions share its
-answer. A check runs the commands, and one that fails fails that consumer as
+answer. Its answer on the same version change in the last week, from any run
+on any worker, is reused rather than asking again, judged against the current
+threshold. A check runs the commands, and one that fails fails that consumer as
 a failed check does. A repository opted in with
 nothing to run, `"regression": {}` and no task, has the update held instead:
 nothing is pushed, the run logs what needs checking with links to the release
@@ -1114,8 +1116,8 @@ needs a check, and a patch, digest, pin or lockfile-only update doesn't. Only
 for the rest are the release notes read, from the GitHub releases of the
 package's source, and they decide as on bumps, with the decision model
 settling what they don't, under the same threshold and daily cap. It's asked
-once per run for each update, so repositories moving a dependency between the
-same versions share its answer. Notes that can't be read leave it unclear, so
+once for each update, and its answer reused for a week, so repositories moving
+a dependency between the same versions share it, whichever run moves them. Notes that can't be read leave it unclear, so
 it's checked, as a replacement always is. The update needing
 it most decides for the group. A check runs the commands, and the group fails
 if they do. With none, the group is held: nothing is pushed, Renovate's pull

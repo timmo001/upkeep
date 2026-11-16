@@ -4,7 +4,7 @@
  * or nowhere for one run by hand with `upkeep run --local`.
  */
 import { Api, Client, Domain } from "@upkeep/api";
-import { Array as Arr, Clock, Context, Effect, Layer } from "effect";
+import { Array as Arr, Clock, Context, Effect, Layer, Option } from "effect";
 import * as RunLog from "./RunLog";
 
 export class Reporter extends Context.Service<
@@ -53,6 +53,17 @@ export class Reporter extends Context.Service<
       since: number,
       model: string,
     ) => Effect.Effect<number, unknown>;
+    /**
+     * How likely `model` last thought an update is to change an app, when it
+     * decided since `since` on any worker.
+     */
+    readonly regressionDecided: (query: {
+      readonly package: string;
+      readonly from: string;
+      readonly to: string;
+      readonly model: string;
+      readonly since: number;
+    }) => Effect.Effect<Option.Option<number>, unknown>;
     /**
      * The repositories the server tracks for a job, the only ones it works
      * on, or every tracked repository without one.
@@ -206,6 +217,14 @@ export class Reporter extends Context.Service<
             client.work
               .regressionDecisions({ query: { since, model } })
               .pipe(Effect.map(({ count }) => count)),
+          regressionDecided: (query) =>
+            client.work
+              .regressionDecided({ query })
+              .pipe(
+                Effect.map(({ probability }) =>
+                  Option.fromNullishOr(probability),
+                ),
+              ),
           repos: narrowTo(repo, (job) =>
             client.work.repos({ query: job === undefined ? {} : { job } }),
           ),
@@ -338,6 +357,7 @@ export class Reporter extends Context.Service<
         heals: () => Effect.succeed([]),
         regressionDecision: () => Effect.void,
         regressionDecisions: () => Effect.succeed(0),
+        regressionDecided: () => Effect.succeed(Option.none()),
         repos,
         inbox: () => Effect.fail("The summary reads the inbox on a worker"),
         known: () => Effect.succeed([]),

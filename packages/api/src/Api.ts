@@ -1132,6 +1132,21 @@ export class WorkGroup extends HttpApiGroup.make("work")
       query: { since: Schema.FiniteFromString, model: Schema.String },
       success: Schema.Struct({ count: Schema.Int }),
     }),
+    /**
+     * How likely `model` last thought an update is to change an app, when it
+     * decided since `since` on any worker, so a run narrowed to one
+     * repository reuses what another run asked rather than asking again.
+     */
+    HttpApiEndpoint.get("regressionDecided", "/regression-decisions/latest", {
+      query: {
+        package: Schema.String,
+        from: Schema.String,
+        to: Schema.String,
+        model: Schema.String,
+        since: Schema.FiniteFromString,
+      },
+      success: Schema.Struct({ probability: Schema.NullOr(Schema.Number) }),
+    }),
     /** The parked jobs, for a worker's own status. */
     HttpApiEndpoint.get("parked", "/parked", {
       success: Schema.Array(Schema.Struct({ job: JobId, ...Parked.fields })),

@@ -2161,6 +2161,17 @@ export class Store extends Context.Service<
       since: number,
       model: string,
     ): Effect.Effect<number, StoreError>;
+    /**
+     * How likely `model` last thought the update from `from` to `to` of
+     * `package` is to change an app, when it decided since `since`.
+     */
+    regressionDecided(query: {
+      readonly package: string;
+      readonly from: string;
+      readonly to: string;
+      readonly model: string;
+      readonly since: number;
+    }): Effect.Effect<Option.Option<number>, StoreError>;
     /** Delete the regression decisions made before `before`. Returns how many went. */
     pruneRegressionDecisions(before: number): Effect.Effect<number, StoreError>;
     /** Every tracked repository, by name. */
@@ -5611,6 +5622,29 @@ export class Store extends Context.Service<
       Effect.mapError(storeError),
     );
 
+    const regressionDecided = Effect.fn("Store.regressionDecided")(
+      function* (query: {
+        readonly package: string;
+        readonly from: string;
+        readonly to: string;
+        readonly model: string;
+        readonly since: number;
+      }) {
+        const rows = yield* sql<{ probability: number }>`
+          SELECT probability FROM regression_decisions
+          WHERE package = ${query.package}
+            AND from_version = ${query.from}
+            AND to_version = ${query.to}
+            AND model = ${query.model}
+            AND at >= ${query.since}
+          ORDER BY at DESC LIMIT 1
+        `;
+
+        return Option.fromNullishOr(rows[0]?.probability);
+      },
+      Effect.mapError(storeError),
+    );
+
     const pruneRegressionDecisions = Effect.fn(
       "Store.pruneRegressionDecisions",
     )(function* (before: number) {
@@ -5968,6 +6002,7 @@ export class Store extends Context.Service<
       ),
       recordRegressionDecision,
       regressionDecisions,
+      regressionDecided,
       pruneRegressionDecisions,
       repos,
       track: announce(touches("inbox"), track),

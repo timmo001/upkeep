@@ -268,11 +268,17 @@ const likelihood = Effect.fnUntraced(function* (
   return probability;
 });
 
+/** How long a decision on an update is reused before the model is asked again. */
+const reuseFor = Duration.days(7);
+
 /**
  * Ask the decision model whether an update the rules can't settle needs a
  * check, logging its answer once with the model's name and recording it for
- * the daily limit. None when there's no model, its decisions for today can't
- * be counted or are used up, or it fails, so the rules' verdict stands.
+ * the daily limit. The same model's decision on the same update in the last
+ * week, by any run on any worker, is reused instead, so each repository
+ * moving it doesn't ask again. None when there's no model, its decisions for
+ * today can't be counted or are used up, or it fails, so the rules' verdict
+ * stands.
  */
 export const ask = Effect.fnUntraced(function* (
   update: Update,
@@ -283,6 +289,44 @@ export const ask = Effect.fnUntraced(function* (
   if (model === undefined) return Option.none<Decided>();
 
   const about = `${update.package} ${update.from} to ${update.to}`;
+  const threshold = settings.regression?.threshold ?? defaultThreshold;
+  const limit = Math.round(threshold * 100);
+
+  const decided = (probability: number) => {
+    const verdict = verdictOf(probability, threshold);
+    const percent = Math.round(probability * 100);
+
+    return {
+      verdict,
+      percent,
+      why: `the decision model gives it a ${percent}% chance of changing how the app looks or behaves, ${verdict === "check" ? "at or over" : "under"} the ${limit}% threshold`,
+    };
+  };
+
+  // A server that can't say asks again, as before
+  const earlier = yield* Reporter.use((reporter) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        reporter.regressionDecided({
+          package: update.package,
+          from: update.from,
+          to: update.to,
+          model: Settings.deciderName(model),
+          since: now - Duration.toMillis(reuseFor),
+        }),
+      ),
+    ),
+  ).pipe(Effect.orElseSucceed(() => Option.none<number>()));
+
+  if (Option.isSome(earlier)) {
+    const { verdict, percent, why } = decided(earlier.value);
+
+    yield* RunLog.info(
+      `Decided earlier ${about} ${verdict === "check" ? "needs" : "doesn't need"} a regression check: ${percent}% likely to change how an app looks or behaves, against a ${limit}% threshold (${Decisions.by(model)})`,
+    );
+
+    return Option.some<Decided>({ verdict, why });
+  }
 
   // Without a count there's no knowing the limit, so the rules stand
   const room = yield* decisionsLeft(model, settings).pipe(
@@ -319,10 +363,7 @@ export const ask = Effect.fnUntraced(function* (
 
   if (Option.isNone(answer)) return Option.none<Decided>();
 
-  const threshold = settings.regression?.threshold ?? defaultThreshold;
-  const verdict = verdictOf(answer.value, threshold);
-  const percent = Math.round(answer.value * 100);
-  const limit = Math.round(threshold * 100);
+  const { verdict, percent, why } = decided(answer.value);
 
   yield* RunLog.info(
     `Decided ${about} ${verdict === "check" ? "needs" : "doesn't need"} a regression check: ${percent}% likely to change how an app looks or behaves, against a ${limit}% threshold (${Decisions.by(model)})`,
@@ -346,10 +387,7 @@ export const ask = Effect.fnUntraced(function* (
     ),
   );
 
-  return Option.some<Decided>({
-    verdict,
-    why: `the decision model gives it a ${percent}% chance of changing how the app looks or behaves, ${verdict === "check" ? "at or over" : "under"} the ${limit}% threshold`,
-  });
+  return Option.some<Decided>({ verdict, why });
 });
 
 /**

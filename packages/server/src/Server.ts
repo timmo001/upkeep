@@ -1507,6 +1507,13 @@ const WorkHandlers = HttpApiBuilder.group(
           Effect.map((count) => ({ count })),
           Effect.orDie,
         ),
+      regressionDecided: ({ query }) =>
+        store.regressionDecided(query).pipe(
+          Effect.map((probability) => ({
+            probability: Option.getOrNull(probability),
+          })),
+          Effect.orDie,
+        ),
       parked: () =>
         store.parked().pipe(
           Effect.map((parked) =>

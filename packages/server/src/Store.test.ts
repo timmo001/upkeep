@@ -566,6 +566,12 @@ test("a regression decision counts for its model, and is pruned once old", () =>
       });
 
       expect(yield* store.regressionDecisions(0, decision.model)).toBe(1);
+      expect(yield* store.regressionDecided({ ...decision, since: 0 })).toEqual(
+        Option.some(0.6),
+      );
+      expect(
+        yield* store.regressionDecided({ ...decision, to: "1.4.0", since: 0 }),
+      ).toEqual(Option.none());
       expect(
         yield* store.regressionDecisions(
           Number.MAX_SAFE_INTEGER,
