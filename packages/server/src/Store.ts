@@ -4749,6 +4749,15 @@ export class Store extends Context.Service<
             Effect.mapError(storeError),
           );
 
+          // A failure waiting on a retry that's dropped has nothing retrying
+          // it any more
+          yield* sql`
+            UPDATE runs
+            SET retry = NULL,
+              state = CASE WHEN state = 'retrying' THEN 'failed' ELSE state END
+            WHERE retry = ${id}
+          `.pipe(Effect.mapError(storeError));
+
           // A heal dropped before it started was never one
           if (found.heal !== null) {
             yield* leaveHeal(id, "failed");

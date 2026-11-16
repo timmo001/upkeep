@@ -1063,6 +1063,30 @@ test("cancelling drops a queued run and stops a running one", () =>
     }),
   ));
 
+test("dropping a queued retry leaves its failure failed, with no retry", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const failed = yield* finished("labels", "failed");
+
+      const retry = yield* store.queueRun({
+        job: "labels",
+        trigger: "manual",
+        release: null,
+        repo: null,
+      });
+
+      yield* store.retried(failed.id, retry.id);
+      yield* store.cancel(retry.id, "aidan");
+
+      expect(yield* store.run(failed.id)).toMatchObject({
+        state: "failed",
+        retry: null,
+      });
+    }),
+  ));
+
 test("a heal's record fills in as its worker reports", () =>
   run(
     Effect.gen(function* () {
