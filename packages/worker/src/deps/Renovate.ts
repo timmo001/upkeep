@@ -258,7 +258,8 @@ const parseConfig = (text: string, file: string) =>
     Effect.flatMap((value) =>
       Schema.decodeUnknownEffect(Schema.JsonObject)(value).pipe(
         Effect.mapError(
-          () => new DepsError({ message: `${file} isn't an object` }),
+          (cause) =>
+            new DepsError({ message: `${file} isn't an object`, cause }),
         ),
       ),
     ),

@@ -278,4 +278,5 @@ export interface Repository {
 /** Reading or planning a repository's dependencies failed. */
 export class DepsError extends Schema.TaggedError<DepsError>()("DepsError", {
   message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
 }) {}

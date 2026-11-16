@@ -301,20 +301,24 @@ const release = Flag.String("release").pipe(
   Flag.mapEffect((value) => {
     const at = value.lastIndexOf("@");
 
-    return Schema.decodeUnknownEffect(Domain.Release)({
-      repo: value.slice(0, at),
-      tag: value.slice(at + 1),
-      url: `https://github.com/${value.slice(0, at)}/releases/tag/${value.slice(at + 1)}`,
-    }).pipe(
-      Effect.mapError(
-        () =>
-          new CliError.InvalidValue({
-            option: "release",
-            value,
-            expected: "an owner/name@tag release",
-            kind: "flag",
-          }),
-      ),
+    return Option.match(
+      Schema.decodeUnknownOption(Domain.Release)({
+        repo: value.slice(0, at),
+        tag: value.slice(at + 1),
+        url: `https://github.com/${value.slice(0, at)}/releases/tag/${value.slice(at + 1)}`,
+      }),
+      {
+        onNone: () =>
+          Effect.fail(
+            new CliError.InvalidValue({
+              option: "release",
+              value,
+              expected: "an owner/name@tag release",
+              kind: "flag",
+            }),
+          ),
+        onSome: Effect.succeed,
+      },
     );
   }),
   Flag.optional,

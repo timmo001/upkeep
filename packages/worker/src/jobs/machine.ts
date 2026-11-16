@@ -33,7 +33,11 @@ type StageResult = typeof StageResult.Type;
 
 export class StageFailed extends Schema.TaggedError<StageFailed>()(
   "StageFailed",
-  { stage: Schema.String, error: Schema.String },
+  {
+    stage: Schema.String,
+    error: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
 ) {
   override get message() {
     return `dot up ${this.stage} failed: ${this.error}`;
@@ -99,7 +103,8 @@ const stage = Effect.fnUntraced(function* (name: string) {
     Schema.fromJsonString(StageResult),
   )(stdout).pipe(
     Effect.mapError(
-      () => new StageFailed({ stage: name, error: noResult(code, errors) }),
+      (cause) =>
+        new StageFailed({ stage: name, error: noResult(code, errors), cause }),
     ),
   );
 
