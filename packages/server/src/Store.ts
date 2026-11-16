@@ -1028,6 +1028,54 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE runs ADD COLUMN batch TEXT`;
     yield* sql`CREATE INDEX runs_batch ON runs (batch) WHERE batch IS NOT NULL`;
   }),
+  // What handoffs left behind is settled now, and a retry ending sends back
+  // every failure it was retrying. A release job run without a release, as
+  // could happen before that was refused, never could have run, so it's
+  // cancelled, and its heals are settled with it
+  "0049_settle_handoffs": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`
+      UPDATE runs SET state = 'failed'
+      WHERE state = 'retrying'
+        AND EXISTS (
+          SELECT 1 FROM runs AS retry
+          WHERE retry.id = runs.retry
+            AND retry.state NOT IN ('queued', 'running', 'succeeded', 'skipped')
+        )
+    `;
+
+    const releaseJobs = Catalogue.jobs
+      .filter((job) => job.onRelease)
+      .map((job) => job.id);
+
+    const noRelease = yield* sql<{ id: string }>`
+      UPDATE runs SET state = 'cancelled', attention = 0
+      WHERE heal_of IS NULL AND release_repo IS NULL
+        AND ${sql.in("job", releaseJobs)}
+        AND ${sql.in("state", Domain.openStates)}
+      RETURNING id
+    `;
+
+    if (noRelease.length > 0) {
+      const ids = noRelease.map(({ id }) => id);
+
+      yield* sql`
+        UPDATE runs SET settled_by = heal_of, attention = 0
+        WHERE settled_by IS NULL AND ${sql.in("heal_of", ids)}
+      `;
+      yield* sql`
+        UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+        WHERE dismissed_at IS NULL
+          AND ${sql.in(
+            "key",
+            ids.map((id) => runNeedsKey(id)),
+          )}
+      `;
+    }
+
+    yield* settleHandoffs(sql);
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1072,6 +1120,111 @@ const settleHealRuns = (sql: SqlClient.SqlClient) =>
         WHERE failed.id = runs.heal_of AND failed.settled_by IS NOT NULL
       )
   `;
+
+/** The runs that handed work off to heals, one for each repository. */
+const handedOff = (sql: SqlClient.SqlClient) =>
+  sql`SELECT id FROM runs WHERE state = 'handed-off'`;
+
+/**
+ * Settle what handed-off runs left behind, which no later run passing ever
+ * settles, since a handoff isn't a failure:
+ *
+ * - A heal of a handoff is done once it pushed a fix or found nothing to fix,
+ *   or once you dismissed what it asked you.
+ * - One that broke or still asks you is out of date once a later heal of the
+ *   same repository finishes, of the same job or a drift review, which looks
+ *   at all of a repository's drift.
+ * - A failure retried by a run that handed off is over once every heal of
+ *   that handoff is done.
+ */
+const settleHandoffs = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    yield* sql`
+      UPDATE runs SET settled_by = id
+      WHERE heal_of IN (${handedOff(sql)})
+        AND settled_by IS NULL
+        AND (
+          state IN ('fix-pushed', 'nothing-to-fix')
+          OR (state = 'needs-you' AND attention = 0)
+        )
+    `;
+
+    const later = sql`
+      SELECT later.id FROM runs AS later
+      WHERE later.heal_of IN (${handedOff(sql)})
+        AND (
+          later.heal_job = runs.heal_job
+          OR later.heal_job = ${Catalogue.driftReview.id}
+            AND runs.heal_job = ${Catalogue.drift.id}
+        )
+        AND lower(later.heal_target) = lower(runs.heal_target)
+        AND later.state IN ('nothing-to-fix', 'fix-pushed')
+        AND (later.queued_at, later.id) > (runs.queued_at, runs.id)
+      ORDER BY later.queued_at, later.id LIMIT 1
+    `;
+
+    const superseded = yield* sql<{ healJob: string }>`
+      UPDATE runs SET attention = 0, settled_by = (${later})
+      WHERE heal_of IN (${handedOff(sql)})
+        AND settled_by IS NULL
+        AND state IN ('failed', 'needs-you')
+        AND coalesce(heal_decision, 'ask') != 'park'
+        AND EXISTS (${later})
+      RETURNING heal_job
+    `;
+
+    const retried = yield* sql<{ id: string; retry: string }>`
+      SELECT failed.id, failed.retry FROM runs AS failed
+      JOIN runs AS retry ON retry.id = failed.retry
+      WHERE failed.heal_of IS NULL
+        AND ${sql.in("failed.state", Domain.openStates)}
+        AND retry.state = 'handed-off'
+        AND EXISTS (SELECT 1 FROM runs AS heal WHERE heal.heal_of = retry.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM runs AS heal
+          WHERE heal.heal_of = retry.id
+            AND heal.settled_by IS NULL AND heal.state != 'nothing-to-fix'
+        )
+    `;
+
+    for (const { id, retry } of retried) {
+      yield* sql`
+        UPDATE runs
+        SET state = CASE WHEN heals != '[]' THEN 'healed' ELSE 'recovered' END,
+          settled_by = ${retry}, attention = 0
+        WHERE id = ${id}
+      `;
+    }
+
+    if (retried.length > 0) yield* settleHealRuns(sql);
+
+    const now = yield* Clock.currentTimeMillis;
+
+    // What they asked of you goes with them: a run's own entry, and a heal
+    // entry once none of the heals sharing it still asks
+    if (retried.length > 0)
+      yield* sql`
+        UPDATE entries SET dismissed_at = ${now}
+        WHERE dismissed_at IS NULL AND ${sql.in(
+          "key",
+          retried.map(({ id }) => runNeedsKey(id)),
+        )}
+      `;
+
+    const jobs = [...new Set(superseded.map(({ healJob }) => healJob))];
+
+    if (jobs.length > 0)
+      yield* sql`
+        UPDATE entries SET dismissed_at = ${now}
+        WHERE kind = 'needs' AND dismissed_at IS NULL
+          AND ${sql.or(jobs.map((job) => sql`key LIKE ${`needs:heal:${job}:%`}`))}
+          AND NOT EXISTS (
+            SELECT 1 FROM runs
+            WHERE runs.attention = 1
+              AND 'needs:heal:' || runs.heal_job || ':' || coalesce(runs.heal_decision, 'ask') = entries.key
+          )
+      `;
+  });
 
 /**
  * What each run that landed a skill change was about, by its ID, of the runs
@@ -2535,24 +2688,24 @@ export class Store extends Context.Service<
 
     /**
      * Follow a run ending on the runs it's linked to: a heal's failures, the
-     * failures one that passed settles, or the failure a retry that didn't
-     * pass was retrying, which is back to having nothing healing it, or to
-     * waiting on GitHub when GitHub stopped the retry too.
+     * failures one that passed settles, or the failures a retry that didn't
+     * pass was retrying, which are back to having nothing healing them, or to
+     * waiting on GitHub when GitHub stopped the retry too. A heal ending also
+     * settles what the handoff it was for left behind.
      */
     const ended = (done: Domain.Run) => {
-      if (done.heal !== null) return endHeal(done);
+      if (done.heal !== null)
+        return endHeal(done).pipe(Effect.andThen(settleHandoffs(sql)));
 
       if (RunStates.passing.includes(done.state))
         return settleBy(done).pipe(Effect.asVoid);
 
-      return done.retryOf == null
-        ? Effect.void
-        : sql`
-            UPDATE runs
-            SET state = ${done.state === "github-down" ? "github-down" : "failed"}
-            WHERE id = ${done.retryOf} AND state = 'retrying'
-              AND retry = ${done.id}
-          `.pipe(Effect.asVoid);
+      // Every failure it was retrying, as one retry can be several's
+      return sql`
+        UPDATE runs
+        SET state = ${done.state === "github-down" ? "github-down" : "failed"}
+        WHERE retry = ${done.id} AND state = 'retrying' AND heal_of IS NULL
+      `.pipe(Effect.asVoid);
     };
 
     /**
@@ -5356,6 +5509,9 @@ export class Store extends Context.Service<
           UPDATE entries SET dismissed_at = ${now}
           WHERE kind = 'needs' AND dismissed_at IS NULL AND run = ${id}
         `;
+
+        // A handoff's heal you've dealt with is done
+        yield* settleHandoffs(sql);
 
         return dismissed;
       },

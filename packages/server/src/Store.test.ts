@@ -1511,6 +1511,123 @@ test("a failed run follows its heal's retry, and the retry passing heals it", ()
     }),
   ));
 
+test("a handoff's heals settle themselves, and then the failures it retried", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const first = yield* finished("drift-review", "failed");
+      const second = yield* finished("drift-review", "failed");
+
+      const handoff = yield* store.queueRun({
+        job: "drift-review",
+        trigger: "manual",
+        release: null,
+      });
+
+      yield* store.retried(first.id, handoff.id);
+      yield* store.retried(second.id, handoff.id);
+      yield* store.claim(["drift-review"], "desktop");
+      yield* store.finish(handoff.id, "desktop", "handed-off", null);
+
+      // Both go back to failed, not only the one the retry points back to
+      for (const { id } of [first, second])
+        expect((yield* store.run(id)).state).toBe("failed");
+
+      const heals = [];
+
+      for (const repo of ["timmo001/a", "timmo001/b"])
+        heals.push(
+          yield* store.queueRun({
+            job: "heal",
+            trigger: "heal",
+            release: null,
+            heal: {
+              of: handoff.id,
+              job: "drift-review",
+              target: { kind: "consumer", repo },
+            },
+          }),
+        );
+
+      const [fixed, asking] = heals;
+
+      if (fixed === undefined || asking === undefined)
+        throw new Error("Both heals should be queued");
+
+      yield* store.claim(["heal"], "desktop");
+      yield* store.updateHeal(fixed.id, "desktop", { commit: "abc123" });
+      yield* store.finish(fixed.id, "desktop", "succeeded", null);
+
+      yield* store.claim(["heal"], "desktop");
+      yield* store.report(asking.id, "desktop", { attention: true });
+      yield* store.finish(asking.id, "desktop", "succeeded", null);
+
+      expect(yield* store.run(fixed.id)).toMatchObject({
+        state: "fix-pushed",
+        settledBy: fixed.id,
+      });
+      expect(yield* store.run(asking.id)).toMatchObject({
+        state: "needs-you",
+        settledBy: null,
+      });
+
+      for (const { id } of [first, second])
+        expect((yield* store.run(id)).state).toBe("failed");
+
+      yield* store.dismissRun(asking.id);
+
+      expect((yield* store.run(asking.id)).settledBy).toBe(asking.id);
+
+      for (const { id } of [first, second])
+        expect(yield* store.run(id)).toMatchObject({
+          state: "recovered",
+          settledBy: handoff.id,
+        });
+    }),
+  ));
+
+test("a later heal of a repository settles an earlier handoff's that broke", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const healOf = Effect.fnUntraced(function* (outcome: Domain.Outcome) {
+        const handoff = yield* finished("drift", "handed-off");
+
+        const heal = yield* store.queueRun({
+          job: "heal",
+          trigger: "heal",
+          release: null,
+          heal: {
+            of: handoff.id,
+            job: "drift",
+            target: { kind: "consumer", repo: "timmo001/a" },
+          },
+        });
+
+        yield* store.claim(["heal"], "desktop");
+
+        return yield* store.finish(heal.id, "desktop", outcome, null);
+      });
+
+      const broke = yield* healOf("failed");
+
+      expect(yield* store.run(broke.id)).toMatchObject({
+        state: "failed",
+        settledBy: null,
+      });
+
+      const later = yield* healOf("succeeded");
+
+      expect(yield* store.run(later.id)).toMatchObject({
+        state: "nothing-to-fix",
+        settledBy: later.id,
+      });
+      expect((yield* store.run(broke.id)).settledBy).toBe(later.id);
+    }),
+  ));
+
 test("a failure joining a heal under way follows it, and stays open until a run passes", () =>
   run(
     Effect.gen(function* () {
