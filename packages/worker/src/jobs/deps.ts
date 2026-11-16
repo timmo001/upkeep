@@ -4,8 +4,8 @@
  * the groups of updates the updater would open, with who owns each: the
  * updater when it automerges the group, otherwise Upkeep. In the repositories
  * set to apply, Upkeep's groups are applied, checked and pushed one at a time,
- * then its lock file maintenance when it's due, as a dry run unless that's
- * turned off (#5). A group in a repository that opts in to regression checks
+ * then its lock file maintenance when it's due, and the CI on the last push
+ * watched once for them all, as a dry run unless that's turned off (#5). A group in a repository that opts in to regression checks
  * runs them, or is held for an agent, when its updates need one.
  */
 import { Api, Gh, GhCommandError } from "@timmo001/effect-gh";
@@ -379,6 +379,19 @@ interface ApplyContext {
  * run, or is held for a regression check.
  */
 type Applied = boolean | "held";
+
+/** A group or lock file maintenance Upkeep pushed, for its CI to be watched. */
+const Pushed = Schema.TaggedStruct("Pushed", {
+  topic: Schema.String,
+  sha: Schema.String,
+});
+
+interface Pushed extends Schema.Schema.Type<typeof Pushed> {}
+
+const isPushed = Schema.is(Pushed);
+
+/** How landing went: as {@link Applied}, or pushed. */
+type Landed = Applied | Pushed;
 
 /** A group's regression check, run after its checks and before the push. */
 interface Check {
@@ -761,9 +774,9 @@ const applyGroup = Effect.fnUntraced(function* (
 /**
  * Rebuild the repository's generated files, check what a checkout changed,
  * run a group's regression check when it needs one, then push it as one
- * commit, watch its CI and close the updater's pull request on
- * `renovate/<topic>`. Returns true, as something was applied, or would be in
- * a dry run, or `held` when the regression check holds it.
+ * commit. Returns what was pushed, for its CI to be watched with the rest of
+ * the repository's, true when it would be pushed in a dry run, or `held` when
+ * the regression check holds it.
  */
 const land = Effect.fnUntraced(function* (
   repo: string,
@@ -828,21 +841,38 @@ const land = Effect.fnUntraced(function* (
 
   yield* pushed(repo, sha, message);
 
+  yield* RunLog.info(`${repo}: pushed ${sha.slice(0, 7)} "${message}"`);
+
+  return Pushed.make({ topic, sha }) satisfies Landed;
+});
+
+/**
+ * Watch the CI on a repository's last push, once for every group pushed
+ * before it, as a later push cancels or covers the CI of the ones before.
+ * Once it passes, close the updater's pull request on each group's
+ * `renovate/<topic>`.
+ */
+const watchPushed = Effect.fnUntraced(function* (
+  repo: string,
+  pushes: ReadonlyArray<Pushed>,
+) {
+  const last = pushes.at(-1);
+
+  if (last === undefined) return;
+
   yield* RunLog.info(
-    `${repo}: pushed ${sha.slice(0, 7)} "${message}", watching CI`,
+    `${repo}: watching CI on ${last.sha.slice(0, 7)}, for ${pushes.map(({ topic }) => `renovate/${topic}`).join(", ")}`,
   );
 
-  const runs = yield* Bump.watch(repo, sha);
+  const runs = yield* Bump.watch(repo, last.sha);
 
   yield* RunLog.info(
     runs === 0
-      ? `${repo}: no CI ran on ${sha.slice(0, 7)}`
+      ? `${repo}: no CI ran on ${last.sha.slice(0, 7)}`
       : `${repo}: CI passed`,
   );
 
-  yield* closeRenovate(repo, topic, sha);
-
-  return true;
+  for (const { topic, sha } of pushes) yield* closeRenovate(repo, topic, sha);
 });
 
 const day = 24 * 60 * 60 * 1000;
@@ -976,8 +1006,10 @@ const closeRenovate = Effect.fnUntraced(function* (
 /**
  * Apply each group Upkeep owns, in order, then lock file maintenance when
  * it's due, so it starts from the updated manifests. A group that fails is
- * logged and left, and the rest still go. Returns how many applied, which
- * failed and which are held for a regression check.
+ * logged and left, and the rest still go. Each is checked here and pushed as
+ * it lands, and the CI on the last push is watched once for all of them,
+ * rather than after each, which took most of a run. Returns how many
+ * applied, which failed and which are held for a regression check.
  */
 const applyRepository = Effect.fnUntraced(function* (
   repo: string,
@@ -990,12 +1022,18 @@ const applyRepository = Effect.fnUntraced(function* (
   // What failed, as logged, for the run's error
   const failed: Array<string> = [];
   const held: Array<string> = [];
+  const pushes: Array<Pushed> = [];
 
-  const count = (topic: string) => (done: Applied) =>
+  const count = (topic: string) => (done: Landed) =>
     Effect.sync(() => {
       if (done === true) applied += 1;
 
       if (done === "held") held.push(topic);
+
+      if (isPushed(done)) {
+        applied += 1;
+        pushes.push(done);
+      }
     });
 
   const fail = (line: string) =>
@@ -1027,6 +1065,14 @@ const applyRepository = Effect.fnUntraced(function* (
         fail(`${repo}: renovate/${maintenanceBranch}: ${reason(cause)}`),
       ),
     );
+
+  yield* watchPushed(repo, pushes).pipe(
+    Effect.catchCause((cause) =>
+      fail(
+        `${repo}: ${pushes.map(({ topic }) => `renovate/${topic}`).join(", ")}: ${reason(cause)}`,
+      ),
+    ),
+  );
 
   // A tool bump and its tooling.yml review go out together
   if (applied > 0 && !context.dryRun) {

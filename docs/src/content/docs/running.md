@@ -994,9 +994,11 @@ range, installs where a `package.json` changed, runs
 `go mod tidy` where a `go.mod` changed, and runs the
 repository's `generate` commands and checks the result as a bump does (with
 the same per-repository settings). The checked
-commit is pushed to the default branch and its CI watched, and once CI
-passes Renovate's open pull request for the group is closed with a link to
-the commit. Groups Renovate automerges are left to it, and so is a group with
+commit is pushed to the default branch, and the next group starts from it.
+Once a repository's groups are pushed, the CI on its last push is watched
+once for all of them, and once it passes Renovate's open pull request for
+each group is closed with a link to its commit. A CI failure fails every
+group in that batch. Groups Renovate automerges are left to it, and so is a group with
 an update Upkeep can't apply yet, with a
 warning. A group that fails is logged and left while the rest go on. After a
 repository's updates land, its `tooling.yml`, if it has one, is checked as
