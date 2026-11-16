@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: timmo001/workflows/.github/workflows/build-container-image.yml@36ba6651f1296cce685ede8ac38b9574c9291028 # master
+    uses: timmo001/workflows/.github/workflows/build-container-image.yml@5451f6867a5cb2b9b6318a82e00f7dd9f9fc279a # 20261116.0
     with:
       image: ghcr.io/timmo001/upkeep-app
       version: ${{ github.event.release.tag_name }}
