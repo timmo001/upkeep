@@ -1625,6 +1625,10 @@ export class Store extends Context.Service<
       run: NewRun,
       repos: ReadonlyArray<string>,
     ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /** A batch's runs, in the order they were queued. */
+    batchRuns(
+      batch: string,
+    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
      * queued before it. `states` keeps only runs in one of them, `open` only
@@ -2425,6 +2429,12 @@ export class Store extends Context.Service<
       sql.withTransaction,
       Effect.mapError(storeError),
     );
+
+    const batchRuns = Effect.fn("Store.batchRuns")(function* (batch: string) {
+      return yield* selectRuns(sql`
+        SELECT * FROM runs WHERE batch = ${batch} ORDER BY queued_at, id
+      `);
+    }, Effect.mapError(storeError));
 
     /**
      * Join a failure to a heal already under way for the same job and target,
@@ -5913,6 +5923,7 @@ export class Store extends Context.Service<
     return Store.of({
       queueRun: announce(touches("runs"), queueRun),
       queueBatch: announce(touches("runs"), queueBatch),
+      batchRuns,
       runs,
       run,
       latestRuns,

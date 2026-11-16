@@ -26,6 +26,7 @@ import {
   Redacted,
   Schedule,
   Schema,
+  Struct,
 } from "effect";
 import {
   HttpMiddleware,
@@ -540,6 +541,107 @@ const heal = Effect.fn("heal")(function* (
     yield* store.joinHeal(held, queued.value.id);
 });
 
+/** Whether a run is one of a batch, of a job that fans out. */
+const batchOf = (run: Domain.Run) =>
+  run.batch === null ||
+  run.batch === undefined ||
+  Option.getOrNull(findJob(run.job))?.fanOut !== true
+    ? null
+    : run.batch;
+
+/** Whether a run is still to end. */
+const open = (run: Domain.Run) =>
+  run.state === "queued" || run.state === "running";
+
+/** A batch's first failure, with the errors of every one of them. */
+const withErrors = (
+  run: Domain.Run,
+  runs: ReadonlyArray<Domain.Run>,
+): Domain.Run =>
+  Struct.assign(run, {
+    error: runs.map((each) => each.error ?? "").join("\n\n"),
+  });
+
+/**
+ * Every run of the batch whose failures a heal is for, the one it heals
+ * first, each that failed and joined it.
+ */
+const healedBatch = Effect.fnUntraced(function* (
+  heal: string,
+  run: Domain.Run,
+) {
+  const batch = batchOf(run);
+
+  if (batch === null) return [run];
+
+  const joined = (yield* (yield* Store).batchRuns(batch)).filter(
+    (each) => each.id !== run.id && (each.heals ?? []).includes(heal),
+  );
+
+  return [run, ...joined];
+});
+
+/**
+ * Once every run of a batch has ended, queue one heal over the repositories
+ * whose runs failed, as one run of the whole job would have, so a single
+ * agent session makes the same fix everywhere. It's for the first of them,
+ * with every failure's error, and the others join it. Until then a failure
+ * waits for the rest of its batch.
+ */
+const healBatch = Effect.fn("healBatch")(function* (
+  ended: Domain.Run,
+  batch: string,
+) {
+  const store = yield* Store;
+  const runs = yield* store.batchRuns(batch);
+
+  if (runs.some(open)) {
+    if (ended.state === "failed")
+      yield* Effect.logInfo(
+        `Holding the heal of ${ended.job} for ${ended.repo ?? "every repository"} until its batch finishes`,
+      ).pipe(Effect.annotateLogs({ run: ended.id, batch }));
+
+    return;
+  }
+
+  const failed = runs.filter(
+    (each) => each.state === "failed" && (each.heals ?? []).length === 0,
+  );
+
+  const [first, ...rest] = failed;
+
+  if (first === undefined) return;
+
+  const repos = failed.flatMap((each) =>
+    each.repo === null || each.repo === undefined ? [] : [each.repo],
+  );
+
+  yield* heal(withErrors(first, failed), repos);
+
+  const heals = (yield* store.run(first.id)).heals ?? [];
+
+  for (const id of heals)
+    for (const other of rest) yield* store.joinHeal(other.id, id);
+
+  if (heals.length > 0)
+    yield* Effect.logInfo(
+      `Healing ${first.job} for ${repos.length} repositories of its batch together`,
+    ).pipe(Effect.annotateLogs({ run: first.id, batch }));
+});
+
+/**
+ * Heal a run that ended, or for one of a batch, its batch's failures once
+ * the whole batch has ended, however this one ended.
+ */
+export const healEnded = (
+  run: Domain.Run,
+  consumers: ReadonlyArray<string>,
+) => {
+  const batch = batchOf(run);
+
+  return batch === null ? heal(run, consumers) : healBatch(run, batch);
+};
+
 /**
  * Queue the releases a job skipped while it was parked or paused, now it's
  * let go. One it's still held for is held again.
@@ -976,6 +1078,7 @@ const RunsHandlers = HttpApiBuilder.group(
   "runs",
   Effect.fn(function* (handlers) {
     const store = yield* Store;
+    const triage = yield* Triage;
 
     return handlers.handleAll({
       list: ({ query }) =>
@@ -1007,6 +1110,16 @@ const RunsHandlers = HttpApiBuilder.group(
         yield* Effect.logInfo(
           `${cancelled.dropped ? "Dropped" : "Cancelled"} ${cancelled.run.job}`,
         ).pipe(Effect.annotateLogs({ run: params.id, admin: admin.name }));
+
+        // The last of a batch to end heals the failures the batch held
+        const batch = batchOf(cancelled.run);
+
+        if (batch !== null)
+          yield* healBatch(cancelled.run, batch).pipe(
+            Effect.provideService(Store, store),
+            Effect.provideService(Triage, triage),
+            Effect.catchCause(Effect.logError),
+          );
 
         return cancelled;
       }),
@@ -1430,7 +1543,7 @@ const WorkHandlers = HttpApiBuilder.group(
           Effect.catchCause(Effect.logError),
         );
 
-        yield* heal(ended, payload.consumers ?? []).pipe(
+        yield* healEnded(ended, payload.consumers ?? []).pipe(
           Effect.provideService(Store, store),
           Effect.provideService(Triage, triage),
           Effect.catchCause(Effect.logError),
@@ -1490,10 +1603,22 @@ const WorkHandlers = HttpApiBuilder.group(
 
           const { heal, run } = yield* healedRun(params.id);
 
+          // A batch's heal reads every failure it's for, sharing the log's room
+          const runs = yield* healedBatch(params.id, run);
+
+          const lines = Math.max(
+            40,
+            Math.floor(Api.healLogLines / runs.length),
+          );
+
+          const logs = yield* Effect.forEach(runs, (each) =>
+            store.logTail(each.id, lines),
+          );
+
           return {
             heal,
-            run,
-            log: yield* store.logTail(run.id, Api.healLogLines),
+            run: runs.length === 1 ? run : withErrors(run, runs),
+            log: logs.flat(),
             precedents:
               heal.issue === null ? [] : yield* triage.precedents(heal.issue),
             earlier: yield* store.earlierHeals(
@@ -1570,16 +1695,30 @@ const WorkHandlers = HttpApiBuilder.group(
 
           const { run } = yield* healedRun(params.id);
 
-          const queued = yield* queue({
-            job: run.job,
-            trigger: "heal",
-            release: run.release,
-            repo: run.repo ?? null,
-            command: run.command,
-          });
+          // A batch's heal runs each repository it was for again, each failure
+          // linked to its own retry
+          const [healed = run, ...others] = yield* healedBatch(params.id, run);
+
+          const retry = (each: Domain.Run) =>
+            queue({
+              job: each.job,
+              trigger: "heal",
+              release: each.release,
+              repo: each.repo ?? null,
+              command: each.command,
+            });
+
+          const queued = yield* retry(healed);
 
           if (Option.isSome(queued))
             yield* store.retried(params.id, queued.value.id);
+
+          for (const other of others) {
+            const again = yield* retry(other);
+
+            if (Option.isSome(again))
+              yield* store.retried(other.id, again.value.id);
+          }
 
           return { run: Option.getOrNull(queued) };
         }).pipe(
@@ -2450,7 +2589,7 @@ export const lostRuns = Layer.effectDiscard(
           Effect.annotateLogs({ run: run.id }),
         );
 
-        yield* heal(run, []).pipe(Effect.catchCause(Effect.logError));
+        yield* healEnded(run, []).pipe(Effect.catchCause(Effect.logError));
       }
     }).pipe(
       Effect.provideService(Store, store),

@@ -599,6 +599,12 @@ failed heal never queues another, and a failure of the same job and target
 while its heal is still queued or running joins that heal instead of starting
 another, so one fault gets one heal however many runs hit it.
 
+A batch's runs, such as a `deps` run queued for every repository, are healed
+as one run of the whole job would be. A failure waits until every run of its
+batch has ended, then the batch gets one heal for the repositories whose runs
+failed, which reads each one's error and log. Its retry runs each of those
+repositories again, each as its own run.
+
 A run that found work only an agent can do, with nothing failing, such as a
 `drift-review`, ends `handed-off` instead of `failed`. It gets a heal for each
 of its repositories rather than one over them all, since each needs its own

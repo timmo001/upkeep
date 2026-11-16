@@ -1,14 +1,16 @@
 /**
  * GitHub events through the server's pull: a release event queues its bump
- * once, a repeated delivery is dropped, and the batch is acked.
+ * once, a repeated delivery is dropped, and the batch is acked. Also the
+ * status, and the heal a batch of runs shares once it has ended.
  */
 import { BunServices } from "@effect/platform-bun";
 import type { Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
 import { Events } from "./Events";
-import { pullEvents, status } from "./Server";
+import { healEnded, pullEvents, status } from "./Server";
 import { Store } from "./Store";
+import { Triage } from "./Triage";
 
 const release = (tag: string): Domain.GitHubEvent => ({
   delivery: `delivery-${tag}`,
@@ -113,6 +115,61 @@ test("a burst of pushes queues one run of each job the repository is tracked for
     ),
   );
 });
+
+test("a batch's failures wait for the batch, then share one heal", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      const repos = ["timmo001/a", "timmo001/b", "timmo001/c"];
+
+      const batch = yield* store.queueBatch(
+        { job: "deps", trigger: "schedule", release: null },
+        repos,
+      );
+
+      // a and c fail, b passes, in that order
+      const outcomes = ["failed", "succeeded", "failed"] as const;
+      const ended: Array<Domain.Run> = [];
+
+      for (const [index, outcome] of outcomes.entries()) {
+        const claimed = yield* store.claim(["deps"], "desktop");
+
+        expect(Option.getOrNull(claimed)?.id).toBe(batch[index]?.id);
+
+        const run = yield* store.finish(
+          batch[index]?.id ?? "",
+          "desktop",
+          outcome,
+          outcome === "failed" ? `${repos[index]} broke` : null,
+        );
+
+        ended.push(run);
+
+        yield* healEnded(run, outcome === "failed" ? [repos[index] ?? ""] : []);
+
+        const heals = yield* store.runs({ job: "heal", limit: 10 });
+
+        // Nothing is healed until the last run of the batch has ended
+        expect(heals).toHaveLength(index < 2 ? 0 : 1);
+      }
+
+      const [healRun] = yield* store.runs({ job: "heal", limit: 10 });
+
+      expect(healRun?.heal?.target).toEqual({
+        kind: "consumers",
+        repos: ["timmo001/a", "timmo001/c"],
+      });
+
+      for (const id of [batch[0]?.id ?? "", batch[2]?.id ?? ""])
+        expect((yield* store.run(id)).heals).toEqual([healRun?.id ?? ""]);
+
+      expect((yield* store.run(batch[1]?.id ?? "")).heals).toEqual([]);
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(Triage.none),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
 
 test("a release event queues its bump once and the batch is acked", () => {
   const acked: Array<string> = [];
