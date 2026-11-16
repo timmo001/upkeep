@@ -437,7 +437,8 @@ export class Datasources extends Context.Service<
     Effect.gen(function* () {
       const gh = yield* Gh;
       const http = yield* HttpClient.HttpClient;
-      const kept = yield* Kept.make("deps");
+      // A run narrowed to one repository mustn't drop what the others read
+      const kept = yield* Kept.make("deps", { keepFor: "7 days" });
 
       const provide = <A, E>(effect: Effect.Effect<A, E, Gh>) =>
         Effect.provideService(effect, Gh, gh);

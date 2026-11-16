@@ -4,7 +4,16 @@
  * changed. A 304 costs no rate limit, so an unchanged read is free.
  */
 import { Api } from "@timmo001/effect-gh";
-import { Config, Effect, Exit, FileSystem, Path, Schema } from "effect";
+import {
+  Clock,
+  Config,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Path,
+  Schema,
+} from "effect";
 
 const Entry = Schema.Struct({
   validators: Schema.Struct({
@@ -12,6 +21,8 @@ const Entry = Schema.Struct({
     lastModified: Schema.optionalKey(Schema.String),
   }),
   value: Schema.Json,
+  /** When a run last read it, for a job that keeps what other runs read. */
+  at: Schema.optionalKey(Schema.Number),
 });
 
 type Entry = typeof Entry.Type;
@@ -60,37 +71,58 @@ const fileOf = (job: string) =>
  * Only what this run read is written, so what it no longer reads goes. With
  * `onlyOnSuccess`, a run that fails writes nothing, for a job that skips work
  * on what's unchanged and must not skip what the failed run left undone.
+ *
+ * With `keepFor`, for a job whose runs each read a part, such as one
+ * repository's, what other runs read is kept too, merged with the file as it
+ * is when this run ends, until no run has read it for that long.
  */
 export const make = Effect.fnUntraced(function* (
   job: string,
-  options: { readonly onlyOnSuccess?: boolean } = {},
+  options: {
+    readonly onlyOnSuccess?: boolean;
+    readonly keepFor?: Duration.Input;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = yield* fileOf(job);
 
-  const earlier = yield* fs.readFileString(file).pipe(
+  const read = fs.readFileString(file).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Entries))),
     Effect.orElseSucceed((): typeof Entries.Type => ({})),
   );
 
+  const earlier = yield* read;
+
   const kept = new Map<string, Entry>();
+
+  // What to write: this run's reads, stamped, over the others' still in date
+  const written = Effect.gen(function* () {
+    if (options.keepFor === undefined) return Object.fromEntries(kept);
+
+    const now = yield* Clock.currentTimeMillis;
+    const since = now - Duration.toMillis(options.keepFor);
+
+    const others = Object.entries(yield* read).filter(
+      ([key, entry]) => !kept.has(key) && (entry.at ?? now) >= since,
+    );
+
+    return Object.fromEntries([
+      ...others,
+      ...[...kept].map(([key, entry]) => [key, { ...entry, at: now }]),
+    ]);
+  });
 
   yield* Effect.addFinalizer((exit) =>
     options.onlyOnSuccess === true && Exit.isFailure(exit)
       ? Effect.void
-      : fs
-          .makeDirectory(path.dirname(file), { recursive: true })
-          .pipe(
-            Effect.andThen(
-              fs.writeFileString(
-                `${file}.tmp`,
-                JSON.stringify(Object.fromEntries(kept)),
-              ),
-            ),
-            Effect.andThen(fs.rename(`${file}.tmp`, file)),
-            Effect.ignore,
-          ),
+      : Effect.gen(function* () {
+          const entries = yield* written;
+
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(`${file}.tmp`, JSON.stringify(entries));
+          yield* fs.rename(`${file}.tmp`, file);
+        }).pipe(Effect.ignore),
   );
 
   /**
