@@ -300,7 +300,9 @@ by hand, is queued as a batch of runs, one for each repository tracked for
 it. Each is a few minutes long, so the lane's other jobs, such as `bump` and
 `sync`, go ahead of the batch rather than waiting hours behind one long run,
 and a run interrupted, failed or retried is only that repository's. A run for
-one repository still waiting, such as an event's, joins the batch.
+one repository still waiting, such as an event's, joins the batch. The Jobs
+page shows how the job's latest batch is getting on, and Runs marks each of
+its runs as in a batch.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in

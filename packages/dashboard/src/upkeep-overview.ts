@@ -1,6 +1,7 @@
 /**
  * `upkeep-overview`: the Jobs page. Every job, grouped by the lane it runs
- * in, with its latest run, a button to run it (unless it runs on releases,
+ * in, with its latest run (and latest batch, for a job that fans out), a
+ * button to run it (unless it runs on releases,
  * which need one given) and, for a parked job, why and
  * a button to unpark it, and a switch to pause or resume one that starts by
  * itself; then each
@@ -73,6 +74,24 @@ const starts = (job: Domain.JobStatus) =>
             >`,
         job.onRelease ? "On release" : null,
       ].filter((start) => start !== null);
+
+/**
+ * How a job's latest batch, one run for each repository, is getting on, such
+ * as `33 of 40 done, 1 didn't pass`.
+ */
+export const batchSummary = (batch: Domain.BatchProgress) => {
+  const done = batch.passed + batch.failed;
+
+  return [
+    batch.finishedAt === null
+      ? `${done} of ${batch.total} done`
+      : `all ${batch.total} done`,
+    batch.running > 0 ? `${batch.running} running` : null,
+    batch.failed > 0 ? `${batch.failed} didn't pass` : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+};
 
 export const jobActions = (job: Domain.JobStatus) => html`
   ${
@@ -224,7 +243,15 @@ export class UpkeepOverview extends LitElement {
                 : html`<a href=${runHref(job.lastRun.id)}
                       >${stateBadge(job.lastRun.state)}</a
                     >
-                    ${time(job.lastRun.queuedAt)}`,
+                    ${time(job.lastRun.queuedAt)}
+                    ${
+                      job.batch === undefined || job.batch === null
+                        ? null
+                        : html`<div class="muted">
+                            Batch ${time(job.batch.queuedAt)}:
+                            ${batchSummary(job.batch)}
+                          </div>`
+                    }`,
           "fit",
         ),
       },

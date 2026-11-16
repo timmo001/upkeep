@@ -1,13 +1,14 @@
 /**
  * `upkeep-job`: one job, what starts it, whether it's parked, the heals of
- * its consumers waiting on the heal limit, and its runs.
+ * its consumers waiting on the heal limit, how its latest batch is getting
+ * on for a job that fans out, and its runs.
  */
 import { css, html, LitElement } from "lit";
 import { always, AtomController } from "./AtomController.ts";
 import { phArrowLeft } from "./icons.ts";
 import { empty, shared, time, view } from "./ui.ts";
 import { jobs, jobsHref, runHref } from "./upkeep.ts";
-import { jobActions } from "./upkeep-overview.ts";
+import { batchSummary, jobActions } from "./upkeep-overview.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
@@ -92,6 +93,25 @@ export class UpkeepJob extends LitElement {
                 )}.
                 Each used its heals for the last 24 hours, so its heal is queued
                 once one frees up.
+              </gw-alert>`
+        }
+        ${
+          job.batch === undefined || job.batch === null
+            ? null
+            : html`<gw-alert
+                class="message"
+                tone=${job.batch.failed > 0 ? "warning" : "neutral"}
+                heading="Latest batch"
+              >
+                Queued ${time(job.batch.queuedAt)}, one run for each of
+                ${job.batch.total} repositories:
+                ${batchSummary(job.batch)}${
+                  job.batch.finishedAt === null
+                    ? html`, ${job.batch.queued} waiting.`
+                    : html`, the last ended ${time(job.batch.finishedAt)}.`
+                }
+                Other jobs in its lane go first, and its failures share one heal
+                once every run has ended.
               </gw-alert>`
         }
         <gw-section heading="Runs" storage-key="upkeep.job.section.runs">

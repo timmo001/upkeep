@@ -694,6 +694,27 @@ test("a batch queues a run for each repository, after the lane's other runs", ()
       }
 
       expect(order).toEqual([sync.id, all.id, ...batch.map((each) => each.id)]);
+
+      // The job's latest batch, as the Jobs page shows it
+      yield* store.finish(batch[0]?.id ?? "", "desktop", "succeeded", null);
+
+      expect((yield* store.latestBatches()).get("deps")).toEqual({
+        id: batch[0]?.batch ?? "",
+        queuedAt: batch[0]?.queuedAt ?? 0,
+        total: 2,
+        queued: 0,
+        running: 1,
+        passed: 1,
+        failed: 0,
+        finishedAt: null,
+      });
+
+      yield* store.finish(batch[1]?.id ?? "", "desktop", "failed", "broke");
+
+      const ended = (yield* store.latestBatches()).get("deps");
+
+      expect(ended?.failed).toBe(1);
+      expect(ended?.finishedAt).not.toBeNull();
     }),
   ));
 

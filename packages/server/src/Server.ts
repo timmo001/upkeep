@@ -967,6 +967,8 @@ const JobsHandlers = HttpApiBuilder.group(
           .machineRuns(Catalogue.machineJobs.map((job) => job.id))
           .pipe(Effect.orDie);
 
+        const batches = yield* store.latestBatches().pipe(Effect.orDie);
+
         return Catalogue.jobs.map((job): Domain.JobStatus => ({
           id: job.id,
           name: job.name,
@@ -984,6 +986,10 @@ const JobsHandlers = HttpApiBuilder.group(
           ...(job.machine === true && {
             machine: true,
             machines: machines.get(job.id) ?? [],
+          }),
+          ...(job.fanOut === true && {
+            fanOut: true,
+            batch: batches.get(job.id) ?? null,
           }),
         }));
       }),

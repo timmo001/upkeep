@@ -290,13 +290,27 @@ const presetOf = (chosen: ReadonlyArray<string> | undefined) =>
       : chosen !== undefined && sameValues(chosen, states),
   );
 
-/** The release a run is for, or the one repository it was narrowed to. */
+/**
+ * The release a run is for, or the one repository it was narrowed to, marked
+ * when it's one of a batch, which its job's page shows the progress of.
+ */
 const release = (run: Domain.Run) =>
   run.release !== null
     ? externalLink(run.release.url, `${run.release.repo}@${run.release.tag}`)
     : run.repo == null
       ? ""
-      : externalLink(`https://github.com/${run.repo}`, run.repo);
+      : html`${externalLink(`https://github.com/${run.repo}`, run.repo)}
+        ${
+          run.batch == null
+            ? null
+            : html`<div class="muted">
+                <a
+                  href=${jobHref(run.job)}
+                  title="One of a batch, a run for each repository"
+                  >in a batch</a
+                >
+              </div>`
+        }`;
 
 /** The local day a time falls on, as `YYYY-MM-DD`, as the date filter keeps it. */
 const dayOf = (millis: number) => {

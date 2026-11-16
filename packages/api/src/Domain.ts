@@ -1397,6 +1397,28 @@ export const Inbox = Schema.Struct({
 
 export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
 
+/**
+ * How a batch of a job that fans out is getting on: its runs, one for each
+ * repository, by where they've got to.
+ */
+export const BatchProgress = Schema.Struct({
+  id: Schema.String,
+  queuedAt: Schema.Finite,
+  total: Schema.Int,
+  queued: Schema.Int,
+  running: Schema.Int,
+  /** Ended as succeeded or skipped. */
+  passed: Schema.Int,
+  /** Ended any other way, such as failed, being healed or cancelled. */
+  failed: Schema.Int,
+  /** When its last run ended, or null while any is still to end. */
+  finishedAt: Schema.NullOr(Schema.Finite),
+});
+
+export interface BatchProgress extends Schema.Schema.Type<
+  typeof BatchProgress
+> {}
+
 /** A job with its latest run, for a status list. */
 export const JobStatus = Schema.Struct({
   ...Job.fields,
@@ -1409,6 +1431,11 @@ export const JobStatus = Schema.Struct({
   waiting: Schema.optionalKey(Schema.Array(WaitingHeal)),
   /** For a machine job: each worker's latest run. Missing from older servers. */
   machines: Schema.optionalKey(Schema.Array(Run)),
+  /**
+   * For a job that fans out: its latest batch, or null before its first.
+   * Missing from older servers.
+   */
+  batch: Schema.optionalKey(Schema.NullOr(BatchProgress)),
 });
 
 export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}

@@ -1164,6 +1164,12 @@ const RunRow = Schema.Struct({
 
 const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(RunRow));
 
+const decodeBatches = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({ job: Schema.String, ...Domain.BatchProgress.fields }),
+  ),
+);
+
 /**
  * A heal's target as it's kept: `upkeep`, the consumer's `owner/name`, or
  * several consumers' names joined by commas, which a name never has.
@@ -1629,6 +1635,11 @@ export class Store extends Context.Service<
     batchRuns(
       batch: string,
     ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
+    /** How each job's latest batch is getting on, by job. */
+    latestBatches(): Effect.Effect<
+      ReadonlyMap<string, Domain.BatchProgress>,
+      StoreError
+    >;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
      * queued before it. `states` keeps only runs in one of them, `open` only
@@ -2434,6 +2445,33 @@ export class Store extends Context.Service<
       return yield* selectRuns(sql`
         SELECT * FROM runs WHERE batch = ${batch} ORDER BY queued_at, id
       `);
+    }, Effect.mapError(storeError));
+
+    const latestBatches = Effect.fn("Store.latestBatches")(function* () {
+      const rows = yield* sql`
+        WITH latest AS (
+          SELECT job, batch FROM (
+            SELECT job, batch, ROW_NUMBER() OVER (
+              PARTITION BY job ORDER BY queued_at DESC, id DESC
+            ) AS rank
+            FROM runs WHERE batch IS NOT NULL
+          ) WHERE rank = 1
+        )
+        SELECT latest.job, latest.batch AS id,
+          min(runs.queued_at) AS queued_at,
+          count(*) AS total,
+          sum(runs.state = 'queued') AS queued,
+          sum(runs.state = 'running') AS running,
+          sum(runs.state IN ('succeeded', 'skipped')) AS passed,
+          sum(runs.state NOT IN ('queued', 'running', 'succeeded', 'skipped'))
+            AS failed,
+          CASE WHEN sum(runs.state IN ('queued', 'running')) = 0
+            THEN max(runs.finished_at) END AS finished_at
+        FROM latest JOIN runs ON runs.batch = latest.batch
+        GROUP BY latest.job, latest.batch
+      `.pipe(Effect.flatMap(decodeBatches));
+
+      return new Map(rows.map(({ job, ...progress }) => [job, progress]));
     }, Effect.mapError(storeError));
 
     /**
@@ -5924,6 +5962,7 @@ export class Store extends Context.Service<
       queueRun: announce(touches("runs"), queueRun),
       queueBatch: announce(touches("runs"), queueBatch),
       batchRuns,
+      latestBatches,
       runs,
       run,
       latestRuns,
