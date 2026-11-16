@@ -1087,6 +1087,36 @@ test("dropping a queued retry leaves its failure failed, with no retry", () =>
     }),
   ));
 
+test("a removed job's failures are settled and its queued runs dropped", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const gone = yield* finished("renovate", "failed");
+      const kept = yield* finished("labels", "failed");
+
+      const retry = yield* store.queueRun({
+        job: "renovate",
+        trigger: "manual",
+        release: null,
+        repo: null,
+      });
+
+      yield* store.retried(gone.id, retry.id);
+
+      expect(yield* store.settleRemovedJobs()).toEqual(["renovate"]);
+      expect((yield* store.run(retry.id).pipe(Effect.flip))._tag).toBe(
+        "RunNotFound",
+      );
+      expect(yield* store.run(gone.id)).toMatchObject({
+        state: "cancelled",
+        attention: false,
+      });
+      expect((yield* store.run(kept.id)).state).toBe("failed");
+      expect(yield* store.settleRemovedJobs()).toEqual([]);
+    }),
+  ));
+
 test("a heal's record fills in as its worker reports", () =>
   run(
     Effect.gen(function* () {

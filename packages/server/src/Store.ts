@@ -2114,6 +2114,12 @@ export class Store extends Context.Service<
       Api.Cancelled,
       Api.RunNotFound | Api.RunFinished | StoreError
     >;
+    /**
+     * Settle what's left of jobs no longer in the catalogue: drop their queued
+     * runs and cancel their open failures, with their heals. Returns the jobs
+     * settled.
+     */
+    settleRemovedJobs(): Effect.Effect<ReadonlyArray<string>, StoreError>;
     log(
       id: string,
       after: number,
@@ -4801,6 +4807,67 @@ export class Store extends Context.Service<
       Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
     );
 
+    /**
+     * Settle what's left of jobs no longer in the catalogue, such as one that
+     * was renamed: no worker runs them, so nothing later settles their
+     * failures. Queued runs are dropped, open failures cancelled, and their
+     * heals and what they asked of you settled with them. Returns the jobs
+     * settled.
+     */
+    const settleRemovedJobs = Effect.fn("Store.settleRemovedJobs")(
+      function* () {
+        const known = Catalogue.jobs.map((job) => job.id);
+
+        const dropped = yield* sql<{ id: string; job: string }>`
+          DELETE FROM runs
+          WHERE state = 'queued' AND NOT ${sql.in("job", known)}
+          RETURNING id, job
+        `;
+
+        if (dropped.length > 0) {
+          yield* sql`
+            UPDATE runs
+            SET retry = NULL,
+              state = CASE WHEN state = 'retrying' THEN 'failed' ELSE state END
+            WHERE ${sql.in(
+              "retry",
+              dropped.map(({ id }) => id),
+            )}
+          `;
+        }
+
+        const cancelled = yield* sql<{ id: string; job: string }>`
+          UPDATE runs SET state = 'cancelled', attention = 0
+          WHERE heal_of IS NULL
+            AND NOT ${sql.in("job", known)}
+            AND ${sql.in("state", Domain.openStates)}
+          RETURNING id, job
+        `;
+
+        if (cancelled.length > 0) {
+          const ids = cancelled.map(({ id }) => id);
+
+          yield* sql`
+            UPDATE runs SET settled_by = heal_of, attention = 0
+            WHERE settled_by IS NULL AND ${sql.in("heal_of", ids)}
+          `;
+          yield* sql`DELETE FROM waiting_heals WHERE ${sql.in("run_id", ids)}`;
+          yield* sql`
+            UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+            WHERE dismissed_at IS NULL
+              AND ${sql.in(
+                "key",
+                ids.map((id) => runNeedsKey(id)),
+              )}
+          `;
+        }
+
+        return [...new Set([...dropped, ...cancelled].map(({ job }) => job))];
+      },
+      sql.withTransaction,
+      Effect.catchTag("SqlError", (cause) => Effect.fail(storeError(cause))),
+    );
+
     const log = Effect.fn("Store.log")(function* (
       id: string,
       after: number,
@@ -6195,6 +6262,13 @@ export class Store extends Context.Service<
       staleNote: announce(touches("inbox", "attention"), staleNote),
       recordContext: announce(touches("attention"), recordContext),
       cancel: announce(touchesRun("runs"), cancel),
+      settleRemovedJobs: announce(
+        ({ result }: { readonly result: ReadonlyArray<string> }) =>
+          result.length === 0
+            ? []
+            : [{ topic: "runs" as const }, { topic: "inbox" as const }],
+        settleRemovedJobs,
+      ),
       log,
       logTail,
       claimed,

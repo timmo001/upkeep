@@ -197,6 +197,14 @@ const scopeTo = Effect.fn("scopeTo")(function* (
 const queue = Effect.fn("queue")(function* (run: NewRun) {
   const store = yield* Store;
 
+  // A job that's been removed or renamed has no worker to run it, as a heal
+  // of one of its failures could still ask for
+  if (Option.isNone(findJob(run.job))) {
+    yield* Effect.logWarning(`Skipped ${run.job}: it's no longer a job`);
+
+    return Option.none<Domain.Run>();
+  }
+
   // A parked or paused job is only run by hand until it's let go again.
   if (run.trigger !== "manual") {
     const parked = yield* store.parked();
@@ -2611,6 +2619,22 @@ export const lostRuns = Layer.effectDiscard(
   }),
 );
 
+/**
+ * Once at start, settle what's left of jobs a release removed or renamed,
+ * which no worker runs and nothing later settles.
+ */
+export const settleRemovedJobs = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const jobs = yield* store.settleRemovedJobs();
+
+    if (jobs.length > 0)
+      yield* Effect.logInfo(
+        `Settled the runs of jobs no longer in the catalogue: ${jobs.join(", ")}`,
+      );
+  }).pipe(Effect.catchCause(Effect.logError)),
+);
+
 /** How long finished runs are kept, and how many of each job's survive that. */
 const retention = Config.all({
   days: Config.Int("UPKEEP_KEEP_DAYS").pipe(Config.withDefault(30)),
@@ -2882,6 +2906,7 @@ export const layer = (options: ServeOptions) =>
     scheduler,
     machineScheduler,
     lostRuns,
+    settleRemovedJobs,
     unparkResolved,
     healWaiting,
     retryGitHubDown,
