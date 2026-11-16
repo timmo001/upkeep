@@ -124,6 +124,7 @@ export const deps: Job = {
   onRelease: false,
   lane: "repos",
   tracked: true,
+  fanOut: true,
 };
 
 export const ci: Job = {

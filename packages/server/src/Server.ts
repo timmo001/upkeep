@@ -223,6 +223,42 @@ const queue = Effect.fn("queue")(function* (run: NewRun) {
     }
   }
 
+  // A run for every repository of a job that fans out goes as a batch, one
+  // run for each repository tracked for it. A heal's retry runs as the run it
+  // retries did.
+  const job = Option.getOrNull(findJob(run.job));
+
+  if (
+    job?.fanOut === true &&
+    (run.repo ?? null) === null &&
+    run.release === null &&
+    (run.command ?? null) === null &&
+    run.heal === undefined &&
+    run.trigger !== "heal"
+  ) {
+    const needs = Catalogue.trackingJob(job);
+
+    const repos = (yield* store.repos())
+      .filter((tracked) => needs === null || tracked.jobs.includes(needs))
+      .map((tracked) => tracked.repo);
+
+    const batch = yield* store.queueBatch(run, repos);
+    const [first] = batch;
+
+    if (first !== undefined) {
+      yield* Effect.logInfo(
+        `Queued ${run.job} for ${batch.length} repositories, one run each`,
+      ).pipe(
+        Effect.annotateLogs({
+          batch: first.batch ?? "",
+          trigger: run.trigger,
+        }),
+      );
+
+      return Option.some(first);
+    }
+  }
+
   const queued = yield* store.queueRun(run);
 
   yield* Effect.logInfo(`Queued ${queued.job}`).pipe(

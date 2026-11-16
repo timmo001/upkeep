@@ -290,10 +290,17 @@ waiting for the agent and recording what it did, carries on beside the lane on
 the same worker, so the next one starts straight away. Heals keep their lane
 until they end, so the heal sessions setting still caps how many run at once.
 
-In each lane a run you asked for by hand goes first, then the oldest. A run
-for every repository takes over the runs for one repository of the same job
-still waiting, in the oldest one's place, rather than doing them again after
-them.
+In each lane a run you asked for by hand goes first, then the oldest, then a
+batch's runs. A run for every repository takes over the runs for one
+repository of the same job still waiting, in the oldest one's place, rather
+than doing them again after them.
+
+`deps` fans out instead: a run of it for every repository, by its schedule or
+by hand, is queued as a batch of runs, one for each repository tracked for
+it. Each is a few minutes long, so the lane's other jobs, such as `bump` and
+`sync`, go ahead of the batch rather than waiting hours behind one long run,
+and a run interrupted, failed or retried is only that repository's. A run for
+one repository still waiting, such as an event's, joins the batch.
 
 On Arch, the `upkeep-git` package builds the binary from main and installs a
 `upkeep-worker` user service. Put `UPKEEP_SERVER` and `UPKEEP_WORKER_TOKEN` in
@@ -875,7 +882,7 @@ user may start without a password. Each package's own install script restarts
 its user service, except `upkeep-git`'s: it sends the worker a SIGHUP, and the
 worker drains. It takes no new runs, finishes the ones it has, this one among
 them, and exits with 75, which `upkeep-worker.service` restarts on the new
-binary. A drain waits 2 hours at most, enough for a full `deps` run, so a run that
+binary. A drain waits 2 hours at most, so a run that
 never ends doesn't hold up every other job: what's still going then is
 interrupted, and the server puts it back at the front of the queue. A run interrupted a second
 time fails. `systemctl --user reload upkeep-worker` drains it the same way, so

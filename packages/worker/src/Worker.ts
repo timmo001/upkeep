@@ -113,10 +113,9 @@ export interface WorkOptions {
   readonly drain?: Effect.Effect<void>;
   /**
    * How long a drain waits for the runs in hand, 2 hours by default, so a
-   * run that never ends doesn't hold up every other job. A full `deps` run
-   * takes up to that long, and each release of Upkeep drains the worker, so a
-   * shorter limit cut it off over and over. What's still going then is
-   * interrupted, and the server puts it back at the front of the queue.
+   * run that never ends doesn't hold up every other job. What's still going
+   * then is interrupted, and the server puts it back at the front of the
+   * queue.
    */
   readonly drainLimit?: Duration.Input;
 }

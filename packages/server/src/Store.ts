@@ -1020,6 +1020,14 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`DROP TABLE attention_rules`;
   }),
+  // A run for every repository of a job that fans out is queued as a batch,
+  // one run for each repository
+  "0048_run_batches": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE runs ADD COLUMN batch TEXT`;
+    yield* sql`CREATE INDEX runs_batch ON runs (batch) WHERE batch IS NOT NULL`;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1119,6 +1127,7 @@ const RunRow = Schema.Struct({
   releaseTag: Schema.NullOr(Schema.String),
   releaseUrl: Schema.NullOr(Schema.String),
   scopeRepo: Schema.NullOr(Schema.String),
+  batch: Schema.NullOr(Schema.String),
   state: Domain.RunState,
   worker: Schema.NullOr(Schema.String),
   queuedAt: Schema.Finite,
@@ -1583,6 +1592,8 @@ export interface NewRun {
   readonly release: Domain.Release | null;
   /** The one repository it works on, or every one the job tracks without it. */
   readonly repo?: string | null;
+  /** The batch it's one of, queued for each repository of a job that fans out. */
+  readonly batch?: string | null;
   /** For a command run: what it's asked to do. */
   readonly command?: Domain.Command | null;
   /** For a heal: the failed run, its job, what to heal and its triage issue. */
@@ -1604,6 +1615,16 @@ export class Store extends Context.Service<
      * repository takes over the waiting runs for one, in the oldest's place.
      */
     queueRun(run: NewRun): Effect.Effect<Domain.Run, StoreError>;
+    /**
+     * Queue a run for every repository as a batch, one run for each of
+     * `repos` sharing a new batch ID, each as {@link queueRun} would. A
+     * repository with a run already waiting keeps it, in the batch when it
+     * wasn't in one. Returns the batch's runs.
+     */
+    queueBatch(
+      run: NewRun,
+      repos: ReadonlyArray<string>,
+    ): Effect.Effect<ReadonlyArray<Domain.Run>, StoreError>;
     /**
      * The latest runs, newest first, or with `before`, a run's id, the ones
      * queued before it. `states` keeps only runs in one of them, `open` only
@@ -2250,6 +2271,7 @@ export class Store extends Context.Service<
       trigger,
       release,
       repo,
+      batch,
       command,
       heal,
     }: NewRun) {
@@ -2284,11 +2306,12 @@ export class Store extends Context.Service<
 
       // A run for every repository would only do again what the waiting
       // runs for one do, so the oldest becomes it and the rest go. A manual
-      // one stays manual, so it keeps its place ahead of the others.
+      // one stays manual, so it keeps its place ahead of the others. A
+      // batch's runs stay as they are, each its own run.
       if (scope === null) {
         const scoped = yield* selectRuns(sql`
             SELECT * FROM runs
-            WHERE ${same} AND scope_repo IS NOT NULL
+            WHERE ${same} AND scope_repo IS NOT NULL AND batch IS NULL
             ORDER BY queued_at, id
           `);
 
@@ -2325,6 +2348,7 @@ export class Store extends Context.Service<
             releaseTag: release?.tag ?? null,
             releaseUrl: release?.url ?? null,
             scopeRepo: scope,
+            batch: batch ?? null,
             command: commandColumn,
             state: "queued",
             queuedAt: yield* Clock.currentTimeMillis,
@@ -2368,6 +2392,33 @@ export class Store extends Context.Service<
 
         if (newRun.heal !== undefined)
           yield* linkHeal(newRun.heal.of, queued.id);
+
+        return queued;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
+
+    const queueBatch = Effect.fn("Store.queueBatch")(
+      function* (newRun: NewRun, repos: ReadonlyArray<string>) {
+        const batch = yield* random.ulid;
+        const queued: Array<Domain.Run> = [];
+
+        for (const repo of repos) {
+          const run = yield* placeRun({ ...newRun, repo, batch });
+
+          // A waiting run for the repository, such as an event's, joins it
+          const [joined] =
+            run.batch === null || run.batch === undefined
+              ? yield* selectRuns(sql`
+                  UPDATE runs SET batch = ${batch}
+                  WHERE id = ${run.id}
+                  RETURNING *
+                `)
+              : [];
+
+          queued.push(joined ?? run);
+        }
 
         return queued;
       },
@@ -2711,8 +2762,11 @@ export class Store extends Context.Service<
               -- A command for one worker waits for that one
               AND coalesce(json_extract(command, '$.worker'), ${worker})
                 = ${worker}
-            -- What someone asked for goes before what started itself
-            ORDER BY trigger = 'manual' DESC, queued_at, id LIMIT 1
+            -- What someone asked for goes before what started itself, and a
+            -- batch's runs after the rest, so a batch doesn't hold up a lane
+            ORDER BY trigger = 'manual' AND batch IS NULL DESC,
+              batch IS NOT NULL, queued_at, id
+            LIMIT 1
           )
           RETURNING *
         `);
@@ -5858,6 +5912,7 @@ export class Store extends Context.Service<
 
     return Store.of({
       queueRun: announce(touches("runs"), queueRun),
+      queueBatch: announce(touches("runs"), queueBatch),
       runs,
       run,
       latestRuns,

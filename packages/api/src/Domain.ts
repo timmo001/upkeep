@@ -61,6 +61,12 @@ export const Job = Schema.Struct({
    * update the machine itself. Missing from older servers.
    */
   machine: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether a run of it for every repository is queued as a batch of runs,
+   * one for each repository tracked for it, so each is short and fails,
+   * heals and runs again on its own. Missing from older servers.
+   */
+  fanOut: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Job extends Schema.Schema.Type<typeof Job> {}
@@ -1195,6 +1201,11 @@ export const Run = Schema.Struct({
    * Missing from older servers.
    */
   repo: Schema.optionalKey(Schema.NullOr(RepoName)),
+  /**
+   * For one of a batch, queued for each repository of a job that fans out:
+   * the batch, shared by its runs. Missing from older servers.
+   */
+  batch: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** For a command run: what it's asked to do. */
   command: Schema.NullOr(Command),
   state: RunState,

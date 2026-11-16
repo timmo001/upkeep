@@ -641,6 +641,62 @@ test("a run for every repository takes over the waiting runs for one", () =>
     }),
   ));
 
+test("a batch queues a run for each repository, after the lane's other runs", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      const waiting = yield* store.queueRun({
+        job: "deps",
+        trigger: "event",
+        release: null,
+        repo: "timmo001/a",
+      });
+
+      const batch = yield* store.queueBatch(
+        { job: "deps", trigger: "schedule", release: null },
+        ["timmo001/a", "timmo001/b"],
+      );
+
+      const sync = yield* store.queueRun({
+        job: "sync",
+        trigger: "schedule",
+        release: null,
+      });
+
+      // The event's run joins the batch rather than queueing another
+      expect(batch.map((each) => each.repo)).toEqual([
+        "timmo001/a",
+        "timmo001/b",
+      ]);
+      expect(batch[0]?.id).toBe(waiting.id);
+      expect(batch[0]?.batch).not.toBeNull();
+      expect(batch[1]?.batch).toBe(batch[0]?.batch);
+
+      // A run for every repository leaves the batch's runs as they are
+      const all = yield* store.queueRun({
+        job: "deps",
+        trigger: "schedule",
+        release: null,
+      });
+
+      expect(all.repo).toBeNull();
+      expect(all.batch).toBeNull();
+
+      const order: Array<string> = [];
+
+      for (;;) {
+        const claimed = yield* store.claim(["deps", "sync"], "desktop");
+
+        if (Option.isNone(claimed)) break;
+
+        order.push(claimed.value.id);
+      }
+
+      expect(order).toEqual([sync.id, all.id, ...batch.map((each) => each.id)]);
+    }),
+  ));
+
 test("runs page with a before cursor, skipping and repeating none", () =>
   run(
     Effect.gen(function* () {
