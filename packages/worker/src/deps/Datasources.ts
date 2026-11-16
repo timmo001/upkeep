@@ -4,8 +4,8 @@
  * artifacts and Gradle plugins through Maven Central, Google's repository and
  * the plugin portal, Node.js and Python versions from nodejs.org and
  * python.org, GitHub releases, tags and refs through the GitHub
- * API. Lookups are cached for the run, so a package many repositories use is
- * read once, and GitHub responses are kept between runs and asked for again
+ * API. Lookups are kept for half an hour for every run on the worker, so a
+ * package many repositories use is read once, and GitHub responses are kept between runs and asked for again
  * conditionally, so what hasn't changed costs no rate limit. Release and tag
  * lists stop at the page that reaches the version in use. A config's custom
  * datasources are fetched and run through their JSONata transforms. An
@@ -13,7 +13,17 @@
  */
 import { Gh, GhCommandError } from "@timmo001/effect-gh";
 import jsonata from "jsonata";
-import { Cache, Context, Effect, Layer, Match, Option, Schema } from "effect";
+import {
+  Cache,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Option,
+  Schema,
+} from "effect";
 import { Yaml } from "effect/encoding";
 import {
   HttpClient,
@@ -411,6 +421,40 @@ export const notesBetween = (
     compare: `https://github.com/${repository}/compare/${target.version.replace(high, low)}...${target.version}`,
   };
 };
+
+/** How long a lookup serves every run on the worker. */
+const keepLookups = Duration.minutes(30);
+
+/** Before a custom datasource's key, so it can't meet another's. */
+const customKey = "custom\u0000";
+
+/** A run's own fetch, for a lookup no run on the worker has made lately. */
+class Fetch extends Context.Service<
+  Fetch,
+  {
+    readonly releases: (key: string) => Effect.Effect<Releases, DepsError>;
+  }
+>()("@upkeep/worker/deps/Datasources/Fetch") {}
+
+/**
+ * Lookups kept for half an hour for every run on the worker, so when a job
+ * runs once for each repository a package many of them use is still read
+ * once. A failure isn't kept. Each lookup is fetched by the run that asked
+ * for it first, through its own GitHub login and kept responses.
+ */
+export class Lookups extends Context.Service<
+  Lookups,
+  Cache.Cache<string, Releases, DepsError, Fetch>
+>()("@upkeep/worker/deps/Lookups") {
+  static readonly layer = Layer.effect(
+    Lookups,
+    Cache.makeWith((key: string) => Fetch.use((fetch) => fetch.releases(key)), {
+      capacity: 8192,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? keepLookups : 0),
+      requireServicesAt: "lookup",
+    }),
+  );
+}
 
 export class Datasources extends Context.Service<
   Datasources,
@@ -1031,91 +1075,90 @@ export class Datasources extends Context.Service<
         } satisfies Releases;
       });
 
-      const cache = yield* Cache.make({
-        capacity: 4096,
-        lookup: (key: string) => {
-          const [datasource = "", packageName = "", ref = ""] =
-            key.split("\u0000");
+      const lookups = yield* Lookups;
 
-          const repository = githubRepository(packageName);
-          const url = `https://github.com/${repository}`;
+      const fetchReleases = (key: string) => {
+        const [datasource = "", packageName = "", ref = ""] =
+          key.split("\u0000");
 
-          const lookup = Effect.gen(function* () {
-            if (datasource === "npm") return yield* npm(packageName);
+        const repository = githubRepository(packageName);
+        const url = `https://github.com/${repository}`;
 
-            if (datasource === "pypi") return yield* pypi(packageName);
+        const lookup = Effect.gen(function* () {
+          if (datasource === "npm") return yield* npm(packageName);
 
-            if (datasource === "node-version") return yield* nodeVersions;
+          if (datasource === "pypi") return yield* pypi(packageName);
 
-            if (datasource === "python-version") return yield* pythonVersions;
+          if (datasource === "node-version") return yield* nodeVersions;
 
-            if (datasource === "go") return yield* goModule(packageName, ref);
+          if (datasource === "python-version") return yield* pythonVersions;
 
-            if (datasource === "maven") return yield* maven(packageName, ref);
+          if (datasource === "go") return yield* goModule(packageName, ref);
 
-            // A plugin's marker artifact, as Gradle resolves `id(...)`
-            if (datasource === "gradle-plugin")
-              return yield* maven(
-                `${packageName}:${packageName}.gradle.plugin`,
-                ref,
-              );
+          if (datasource === "maven") return yield* maven(packageName, ref);
 
-            if (datasource === "docker") return yield* docker(packageName, ref);
+          // A plugin's marker artifact, as Gradle resolves `id(...)`
+          if (datasource === "gradle-plugin")
+            return yield* maven(
+              `${packageName}:${packageName}.gradle.plugin`,
+              ref,
+            );
 
-            if (datasource === "github-releases")
-              return {
-                releases: (yield* releases(repository, ref)).map(
-                  (release): Release => ({
-                    version: release.tag_name,
-                    date: release.published_at ?? undefined,
-                    prerelease: release.prerelease,
-                    notes: release.body ?? "",
-                    url: release.html_url,
-                  }),
-                ),
-                sourceUrl: url,
-              } satisfies Releases;
+          if (datasource === "docker") return yield* docker(packageName, ref);
 
-            if (datasource === "github-tags")
-              return {
-                releases: yield* tags(repository, ref),
-                sourceUrl: url,
-              } satisfies Releases;
+          if (datasource === "github-releases")
+            return {
+              releases: (yield* releases(repository, ref)).map(
+                (release): Release => ({
+                  version: release.tag_name,
+                  date: release.published_at ?? undefined,
+                  prerelease: release.prerelease,
+                  notes: release.body ?? "",
+                  url: release.html_url,
+                }),
+              ),
+              sourceUrl: url,
+            } satisfies Releases;
 
-            if (datasource === "git-refs") {
-              const branch =
-                ref === "HEAD" || /^[a-f\d]{7,40}$/i.test(ref)
-                  ? (yield* Schema.decodeUnknownEffect(RepositoryInfo)(
-                      yield* get(`repos/${repository}`),
-                    )).default_branch
-                  : ref;
+          if (datasource === "github-tags")
+            return {
+              releases: yield* tags(repository, ref),
+              sourceUrl: url,
+            } satisfies Releases;
 
-              const commit = yield* commitDate(repository, branch);
+          if (datasource === "git-refs") {
+            const branch =
+              ref === "HEAD" || /^[a-f\d]{7,40}$/i.test(ref)
+                ? (yield* Schema.decodeUnknownEffect(RepositoryInfo)(
+                    yield* get(`repos/${repository}`),
+                  )).default_branch
+                : ref;
 
-              return {
-                releases: [
-                  {
-                    version: branch,
-                    digest: commit.sha,
-                    date: commit.date,
-                  },
-                ],
-                sourceUrl: url,
-              } satisfies Releases;
-            }
+            const commit = yield* commitDate(repository, branch);
 
-            return yield* new DepsError({
-              message: `no ${datasource} datasource`,
-            });
+            return {
+              releases: [
+                {
+                  version: branch,
+                  digest: commit.sha,
+                  date: commit.date,
+                },
+              ],
+              sourceUrl: url,
+            } satisfies Releases;
+          }
+
+          return yield* new DepsError({
+            message: `no ${datasource} datasource`,
           });
+        });
 
-          return lookup.pipe(
-            Effect.mapError((cause) =>
-              cause instanceof DepsError ? cause : failed(datasource)(cause),
-            ),
-          );
-        },
-      });
+        return lookup.pipe(
+          Effect.mapError((cause) =>
+            cause instanceof DepsError ? cause : failed(datasource)(cause),
+          ),
+        );
+      };
 
       /**
        * A custom datasource: fetch its URL, parse it by its format, then run
@@ -1177,15 +1220,20 @@ export class Datasources extends Context.Service<
         } satisfies Releases;
       });
 
-      const customCache = yield* Cache.make({
-        capacity: 256,
-        lookup: (key: string) =>
-          customLookup(key).pipe(
-            Effect.mapError((cause) =>
-              cause instanceof DepsError ? cause : failed("custom")(cause),
-            ),
-          ),
+      // What this run fetches a key with when no run on the worker has lately
+      const fetch = Fetch.of({
+        releases: (key) =>
+          key.startsWith(customKey)
+            ? customLookup(key.slice(customKey.length)).pipe(
+                Effect.mapError((cause) =>
+                  cause instanceof DepsError ? cause : failed("custom")(cause),
+                ),
+              )
+            : fetchReleases(key),
       });
+
+      const lookupKept = (key: string) =>
+        Cache.get(lookups, key).pipe(Effect.provideService(Fetch, fetch));
 
       return Datasources.of({
         lookup: (dependency, custom = {}) => {
@@ -1206,22 +1254,23 @@ export class Datasources extends Context.Service<
               currentValue: dependency.currentValue,
             };
 
-            return Cache.get(
-              customCache,
-              JSON.stringify({
-                url: render(config.registryUrlTemplate, values),
-                format: config.format,
-                transforms: config.transformTemplates.map((transform) =>
-                  /\{\{\s*\{?\s*(?:packageName|currentValue)\b/.test(transform)
-                    ? render(transform, values)
-                    : transform,
-                ),
-              }),
+            return lookupKept(
+              customKey +
+                JSON.stringify({
+                  url: render(config.registryUrlTemplate, values),
+                  format: config.format,
+                  transforms: config.transformTemplates.map((transform) =>
+                    /\{\{\s*\{?\s*(?:packageName|currentValue)\b/.test(
+                      transform,
+                    )
+                      ? render(transform, values)
+                      : transform,
+                  ),
+                }),
             );
           }
 
-          return Cache.get(
-            cache,
+          return lookupKept(
             [
               dependency.datasource,
               dependency.packageName,
@@ -1244,8 +1293,7 @@ export class Datasources extends Context.Service<
 
           if (repository === undefined) return Effect.succeed(undefined);
 
-          return Cache.get(
-            cache,
+          return lookupKept(
             ["github-releases", repository, from].join("\u0000"),
           ).pipe(
             Effect.map((found) =>

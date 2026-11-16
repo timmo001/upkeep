@@ -5,6 +5,7 @@ import { Server, version } from "@upkeep/server";
 import {
   ghLayer,
   handlers,
+  Lookups,
   openSession,
   Outages,
   RunLog,
@@ -283,6 +284,8 @@ let drained = false;
 const worker = Command.make("worker", { server }, (input) =>
   Worker.work(handlers, { onOutdated: selfUpdate, drain: hangup }).pipe(
     Effect.provide(workerClient(input.server)),
+    // Built once, so a job's runs share what each looked up
+    Effect.provide(Lookups.layer),
     Effect.andThen(
       Effect.sync(() => {
         drained = true;
@@ -386,7 +389,7 @@ const run = Command.make(
               }).pipe(Effect.provide(adminClient(url))),
           }),
         Option.getOrNull(input.repo),
-      );
+      ).pipe(Effect.provide(Lookups.layer));
     }
 
     if (Option.isNone(input.server)) {

@@ -1,7 +1,84 @@
-/** Which GitHub releases' notes an update takes in. */
+/**
+ * Which GitHub releases' notes an update takes in, and that runs on one
+ * worker share their lookups.
+ */
+import { Gh } from "@timmo001/effect-gh";
 import { expect, test } from "bun:test";
-import { notesBetween } from "./Datasources";
-import type { Release } from "./Policy";
+import { Effect, FileSystem, Layer, Path, Stream } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { Datasources, Lookups, notesBetween } from "./Datasources";
+import type { Dependency, Release } from "./Policy";
+
+test("runs on a worker share what one of them looked up", async () => {
+  let fetched = 0;
+
+  const http = HttpClient.make((request) =>
+    Effect.sync(() => {
+      fetched += 1;
+
+      return HttpClientResponse.fromWeb(request, new Response("1.0.0\n1.1.0"));
+    }),
+  );
+
+  const unused = Effect.die("gh isn't read for a custom datasource");
+
+  const gh = Gh.of({
+    execute: () => unused,
+    json: () => unused,
+    stream: () => Stream.die("unused"),
+    interactive: () => unused,
+  });
+
+  const dependency: Dependency = {
+    manager: "regex",
+    file: "versions.txt",
+    depName: "thing",
+    packageName: "thing",
+    datasource: "custom.things",
+    depType: "dependencies",
+    currentValue: "1.0.0",
+  };
+
+  const custom = {
+    things: {
+      registryUrlTemplate: "https://example.test/{{packageName}}",
+      format: "plain",
+      transformTemplates: [],
+    },
+  };
+
+  // Each run builds its own datasources, as a deps run does
+  const run = Datasources.use((datasources) =>
+    datasources.lookup(dependency, custom),
+  ).pipe(Effect.provide(Datasources.layer));
+
+  const [first, second] = await Effect.runPromise(
+    Effect.all([run, run]).pipe(
+      Effect.provide(Lookups.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(Gh, gh),
+          Layer.succeed(HttpClient.HttpClient, http),
+          // Kept reads and writes nothing, so the real cache is left alone
+          FileSystem.layerNoop({
+            readFileString: () => Effect.succeed("{}"),
+            makeDirectory: () => Effect.void,
+            writeFileString: () => Effect.void,
+            rename: () => Effect.void,
+          }),
+          Path.layer,
+        ),
+      ),
+    ),
+  );
+
+  expect(first?.releases.map((release) => release.version)).toEqual([
+    "1.0.0",
+    "1.1.0",
+  ]);
+  expect(second).toEqual(first);
+  expect(fetched).toBe(1);
+});
 
 const release = (version: string, notes: string): Release => ({
   version,

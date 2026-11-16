@@ -8,6 +8,9 @@ export { layer as ghLayer } from "@timmo001/effect-gh";
 
 export { handlers } from "./handlers";
 
+/** Dependency lookups kept for every run on the worker, built once for it. */
+export { Lookups } from "./deps/Datasources";
+
 export { openSession } from "./jobs/launch";
 
 export { selfUpdate } from "./jobs/machine";

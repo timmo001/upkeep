@@ -21,7 +21,7 @@ import { type ReadFile, Updaters } from "../deps/Updaters";
 import { ghReason, reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
 import * as Regression from "../Regression";
-import { listed, pushed, summary, trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedRepos } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
 import { ConsumersFailed } from "../Worker";
@@ -119,34 +119,56 @@ const openAlerts = (repo: string) =>
     ),
   );
 
-/** The account's own repositories that aren't archived or forks. */
-const repositories = Effect.fnUntraced(function* () {
+/** Read each of a few repositories, leaving out one GitHub doesn't have. */
+const readEach = (names: ReadonlyArray<string>) =>
+  Effect.forEach(names, (name) =>
+    Api.json(
+      { endpoint: `repos/${name}`, method: "GET" },
+      OwnedRepository,
+    ).pipe(
+      Effect.map((repo) => [repo]),
+      Effect.catchIf(missing, () =>
+        Effect.succeed<ReadonlyArray<typeof OwnedRepository.Type>>([]),
+      ),
+    ),
+  );
+
+/**
+ * The account's own repositories that aren't archived or forks. A run for a
+ * few, such as one of a batch, reads just those, rather than listing them
+ * all.
+ */
+const repositories = Effect.fnUntraced(function* (only: ReadonlyArray<string>) {
   const login = yield* GitHubApp.login;
 
   // An installation token can't list `user/repos`, only the repositories the
   // App is installed on
-  const pages = yield* Option.match(yield* GitHubApp.Account, {
-    onNone: () =>
-      Api.pages(
-        {
-          endpoint: "user/repos",
-          method: "GET",
-          query: { affiliation: "owner", per_page: 100 },
-        },
-        Schema.Array(OwnedRepository),
-      ),
-    onSome: () =>
-      Api.pages(
-        {
-          endpoint: "installation/repositories",
-          method: "GET",
-          query: { per_page: 100 },
-        },
-        Schema.Struct({ repositories: Schema.Array(OwnedRepository) }),
-      ).pipe(
-        Effect.map((pages) => pages.map(({ repositories }) => repositories)),
-      ),
-  });
+  const pages = yield* only.length <= 3
+    ? readEach(only)
+    : Option.match(yield* GitHubApp.Account, {
+        onNone: () =>
+          Api.pages(
+            {
+              endpoint: "user/repos",
+              method: "GET",
+              query: { affiliation: "owner", per_page: 100 },
+            },
+            Schema.Array(OwnedRepository),
+          ),
+        onSome: () =>
+          Api.pages(
+            {
+              endpoint: "installation/repositories",
+              method: "GET",
+              query: { per_page: 100 },
+            },
+            Schema.Struct({ repositories: Schema.Array(OwnedRepository) }),
+          ).pipe(
+            Effect.map((pages) =>
+              pages.map(({ repositories }) => repositories),
+            ),
+          ),
+      });
 
   return pages
     .flat()
@@ -1112,7 +1134,8 @@ const applyRepository = Effect.fnUntraced(function* (
 export const deps = Effect.fnUntraced(function* () {
   const settings = yield* Settings.load();
   const extras = settings.deps;
-  const tracked = yield* trackedFor(Catalogue.deps.id);
+  const names = yield* trackedRepos(Catalogue.deps.id);
+  const tracked = new Set(names.map((name) => name.toLowerCase()));
 
   const applying = new Set(
     (extras?.apply ?? []).map((repo) => repo.toLowerCase()),
@@ -1121,8 +1144,8 @@ export const deps = Effect.fnUntraced(function* () {
   const dryRun = extras?.dryRun !== false;
   const worktrees = yield* Worktrees.forRun("deps");
 
-  const repos = (yield* repositories()).filter((repo) =>
-    tracked(repo.full_name),
+  const repos = (yield* repositories(names)).filter((repo) =>
+    tracked.has(repo.full_name.toLowerCase()),
   );
 
   yield* RunLog.info(`Reading dependencies in ${repos.length} repositories`);

@@ -33,6 +33,7 @@ import {
 import type { FileSystem, Path } from "effect";
 import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
+import type { Lookups } from "./deps/Datasources";
 import { logResolved } from "./Environment";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
@@ -80,6 +81,7 @@ export type Handler = (
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
+  | Lookups
 >;
 
 /** The jobs a worker can run, by job ID. */
@@ -174,14 +176,24 @@ const outcome = (exit: Exit.Exit<unknown, unknown>) => {
   if (Option.isSome(Option.filter(error, Schema.is(Outages.GitHubDown))))
     return { outcome: "github-down" as const, error: reason(exit.cause) };
 
-  const interrupted = Cause.hasInterruptsOnly(exit.cause);
+  const stopped = Cause.hasInterruptsOnly(exit.cause);
 
   return {
     outcome: "failed" as const,
-    error: interrupted
+    error: stopped
       ? "The worker stopped before the run finished"
       : pretty(exit.cause),
-    interrupted,
+    // One that couldn't reach a server, such as Upkeep's restarting for an
+    // upgrade, didn't fail in itself, so it's queued again once, as one the
+    // worker stopped is, rather than failing a heal that nothing heals
+    interrupted:
+      stopped ||
+      Option.exists(
+        error,
+        (failure) =>
+          HttpClientError.isHttpClientError(failure) &&
+          Predicate.isTagged(failure.reason, "TransportError"),
+      ),
     ...Option.match(failed, {
       onNone: () => ({}),
       onSome: (error) => ({ consumers: error.repos }),

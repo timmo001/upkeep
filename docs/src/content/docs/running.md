@@ -300,7 +300,9 @@ by hand, is queued as a batch of runs, one for each repository tracked for
 it. Each is a few minutes long, so the lane's other jobs, such as `bump` and
 `sync`, go ahead of the batch rather than waiting hours behind one long run,
 and a run interrupted, failed or retried is only that repository's. A run for
-one repository still waiting, such as an event's, joins the batch. The Jobs
+one repository still waiting, such as an event's, joins the batch. A
+worker keeps what its runs look up, such as a package's releases, for half an
+hour, so a package many repositories use is still read once a batch. The Jobs
 page shows how the job's latest batch is getting on, and Runs marks each of
 its runs as in a batch.
 
