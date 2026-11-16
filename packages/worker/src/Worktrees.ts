@@ -226,16 +226,27 @@ export interface Place {
   readonly within?: string;
 }
 
+/** How to check a worktree out. */
+export interface CheckoutOptions {
+  /**
+   * Whether to check its submodules out too, true by default. Each run's
+   * worktree clones them afresh, which can take most of a short run, so one
+   * that only reads the tree, such as planning updates, leaves them out.
+   */
+  readonly submodules?: boolean;
+}
+
 /**
  * A clean worktree of the repository at the tip of `branch`: made the first
- * time, and reset to the tip after, with its submodules when it has any.
- * Returns its directory. It stays until it's removed.
+ * time, and reset to the tip after, with its submodules when it has any,
+ * unless they're left out. Returns its directory. It stays until it's removed.
  */
 export const checkout = Effect.fnUntraced(function* (
   repo: string,
   branch: string,
   place: Place,
   listed?: Listed,
+  how: CheckoutOptions = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -292,7 +303,10 @@ export const checkout = Effect.fnUntraced(function* (
     }),
   );
 
-  if (yield* fs.exists(path.join(directory, ".gitmodules")))
+  if (
+    how.submodules !== false &&
+    (yield* fs.exists(path.join(directory, ".gitmodules")))
+  )
     yield* run(
       "git",
       ["submodule", "update", "--quiet", "--init", "--recursive", "--force"],
@@ -531,13 +545,14 @@ export const forRun = Effect.fnUntraced(function* (job: string) {
 
   return {
     trusted,
-    checkout: (repo: string, branch: string) =>
+    checkout: (repo: string, branch: string, options?: CheckoutOptions) =>
       Effect.gen(function* () {
         const directory = yield* checkout(
           repo,
           branch,
           { name },
           yield* listed,
+          options,
         );
 
         directories.add(directory);

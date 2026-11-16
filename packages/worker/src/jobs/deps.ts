@@ -213,7 +213,11 @@ const planRepository = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const directory = yield* worktrees.checkout(repo, branch);
+  // Planning only reads the tree, where a submodule is its commit
+  const directory = yield* worktrees.checkout(repo, branch, {
+    submodules: false,
+  });
+
   const options = { cwd: directory, trusted: worktrees.trusted };
 
   const paths = (yield* Bump.run("git", ["ls-files", "-z"], options))
@@ -912,7 +916,12 @@ const maintainLockfiles = Effect.fnUntraced(function* (
   context: ApplyContext,
 ) {
   const { trusted } = context.worktrees;
-  const directory = yield* context.worktrees.checkout(repo, branch);
+
+  // Whether it's due only needs the history, so submodules wait until it is
+  const directory = yield* context.worktrees.checkout(repo, branch, {
+    submodules: false,
+  });
+
   const options = { cwd: directory, trusted };
 
   const last = (yield* Bump.run(
@@ -948,6 +957,9 @@ const maintainLockfiles = Effect.fnUntraced(function* (
 
     return false;
   }
+
+  // Now with its submodules, as an install or a check may need them
+  yield* context.worktrees.checkout(repo, branch);
 
   const mise = yield* Bump.usesMise(directory);
 
