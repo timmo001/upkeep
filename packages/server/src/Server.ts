@@ -1141,6 +1141,10 @@ const RunsHandlers = HttpApiBuilder.group(
               state: found.state,
             });
 
+          // A job that's been removed or renamed has no worker to run it
+          if (Option.isNone(findJob(found.job)))
+            return yield* new Api.JobNotFound({ id: found.job });
+
           if (found.release === null && Catalogue.needsRelease(found.job))
             return yield* new Api.ReleaseRequired({ id: found.job });
 
