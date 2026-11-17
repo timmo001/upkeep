@@ -31,7 +31,7 @@
     "alchemy": "2.0.0-beta.87",
     "astro": "7.4.12",
     "effect": "4.1.4",
-    "wrangler": "4.162.0"
+    "wrangler": "4.163.0"
   },
   "trustedDependencies": [
     "esbuild",
