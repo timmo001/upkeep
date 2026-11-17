@@ -29,11 +29,11 @@
   },
   "devDependencies": {
     "@effect/tsgo": "0.70.0",
-    "@oxlint/plugins": "1.93.0",
+    "@oxlint/plugins": "1.94.0",
     "@phosphor-icons/core": "2.1.1",
     "@timmo001/oxlint-rules": "0.7.1",
     "@types/bun": "1.4.4",
-    "oxlint": "1.93.0",
+    "oxlint": "1.94.0",
     "oxlint-tsgolint": "7.0.2007",
     "svgpath": "2.6.0",
     "typescript": "7.0.2"
