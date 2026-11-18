@@ -81,7 +81,7 @@
         "@timmo001/groundwork-tokens": "0.51.0",
         "@timmo001/groundwork-ui": "0.51.0",
         "@upkeep/api": "workspace:*",
-        "cronstrue": "3.39.0",
+        "cronstrue": "3.41.0",
         "effect": "4.1.4",
         "lit": "3.3.3",
       },
@@ -1476,7 +1476,7 @@
 
     "crelt": ["crelt@1.0.7", "", {}, "sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA=="],
 
-    "cronstrue": ["cronstrue@3.39.0", "", { "bin": { "cronstrue": "bin/cli.js" } }, "sha512-b5lKTLr5uFJZfkjjGx3k/XIHvi1xKmv1wVmHOC1hVUJCgf8SYX/EoX4SHeJKYPVQRXDVddN78lwhmwtnUbdn7w=="],
+    "cronstrue": ["cronstrue@3.41.0", "", { "bin": { "cronstrue": "bin/cli.js" } }, "sha512-1B5JJP3vsZbP4NOoz9OboFljpcc+aGg6WBQsyGr/Q0LS7ZYoSH9oimGpEglTGMS4ywwY1aYfr1So2GgfdeXj0w=="],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
 
