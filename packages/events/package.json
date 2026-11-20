@@ -16,11 +16,11 @@
   },
   "dependencies": {
     "@upkeep/api": "workspace:*",
-    "effect": "4.1.4"
+    "effect": "4.1.5"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.87",
-    "@effect/platform-bun": "4.1.4",
+    "@effect/platform-bun": "4.1.5",
     "@effect/tsgo": "0.73.2",
     "@oxlint/plugins": "1.94.0",
     "@timmo001/oxlint-rules": "0.7.1",
