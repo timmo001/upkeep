@@ -289,38 +289,53 @@ export class UpkeepOverview extends LitElement {
     ></gw-table>`;
   }
 
-  /** Each worker's agents, one row per role, grouped by worker. */
+  /**
+   * Each worker's agents, one row per role, grouped by worker, or one row for
+   * a worker that only keeps its own machine current.
+   */
   #agents(list: ReadonlyArray<Domain.WorkerAgents>) {
     if (list.length === 0)
       return html`<p class="muted">
         No worker has said which agents it has yet.
       </p>`;
 
-    const rows = list.flatMap((worker) => [
-      {
-        id: `${worker.worker}:decisions`,
-        worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
-        role: "Decisions",
-        model: worker.decisions ?? "None",
-        for:
-          worker.decisions === null
-            ? "Without a model, lost runs are retried and other failures are left for you"
-            : "Chooses to retry, fix, park or ask, and picks the agent for a fix",
-      },
-      ...worker.agents.map((agent, index) => ({
-        id: `${worker.worker}:${index}`,
-        worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
-        role: [
-          "Fix",
-          ...(index === 0 ? ["the default", "summaries"] : []),
-          ...(index === worker.agents.length - 1
-            ? ["the heals the decision model isn't sure about"]
-            : []),
-        ].join(", "),
-        model: agentLabel(agent),
-        for: agent.for,
-      })),
-    ]);
+    const rows = list.flatMap((worker) =>
+      worker.machine?.only === true
+        ? [
+            {
+              id: `${worker.worker}:machine`,
+              worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
+              role: "Maintenance only",
+              model: "None",
+              for: `Keeps its own machine current with ${worker.machine.stages.map((stage) => `dot up ${stage}`).join(", ")}, and takes no other jobs`,
+            },
+          ]
+        : [
+            {
+              id: `${worker.worker}:decisions`,
+              worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
+              role: "Decisions",
+              model: worker.decisions ?? "None",
+              for:
+                worker.decisions === null
+                  ? "Without a model, lost runs are retried and other failures are left for you"
+                  : "Chooses to retry, fix, park or ask, and picks the agent for a fix",
+            },
+            ...worker.agents.map((agent, index) => ({
+              id: `${worker.worker}:${index}`,
+              worker: `${worker.worker}, as of ${formatTime(worker.at)}`,
+              role: [
+                "Fix",
+                ...(index === 0 ? ["the default", "summaries"] : []),
+                ...(index === worker.agents.length - 1
+                  ? ["the heals the decision model isn't sure about"]
+                  : []),
+              ].join(", "),
+              model: agentLabel(agent),
+              for: agent.for,
+            })),
+          ],
+    );
 
     const columns: TableColumn[] = [
       { id: "worker", header: "Worker" },
