@@ -1076,6 +1076,12 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* settleHandoffs(sql);
   }),
+  // The `dot up` stages each worker runs, and on what cron, as it last said
+  "0050_worker_machine": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* sql`ALTER TABLE worker_agents ADD COLUMN machine TEXT`;
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1458,6 +1464,7 @@ const decodeAgents = Schema.decodeUnknownEffect(
       agents: Schema.fromJsonString(Schema.Array(Domain.Agent)),
       launch: Schema.Number,
       resume: Schema.Number,
+      machine: Schema.NullOr(Schema.fromJsonString(Domain.WorkerMachine)),
     }),
   ),
 );
@@ -1935,11 +1942,16 @@ export class Store extends Context.Service<
     takeHeld(
       job: string,
     ): Effect.Effect<ReadonlyArray<Domain.Release>, StoreError>;
-    /** Keep the agents a worker said it's set up with, replacing its last. */
+    /**
+     * Keep the agents and machine stages a worker said it's set up with,
+     * replacing its last, and drop its queued runs of stages it stopped
+     * running. Returns how many runs were dropped.
+     */
     setAgents(
       worker: string,
       setup: Domain.AgentSetup,
-    ): Effect.Effect<void, StoreError>;
+      machine?: Domain.WorkerMachine,
+    ): Effect.Effect<number, StoreError>;
     /** Each worker's agents, by worker name. */
     agents(): Effect.Effect<ReadonlyArray<Domain.WorkerAgents>, StoreError>;
     /**
@@ -3537,37 +3549,83 @@ export class Store extends Context.Service<
       Effect.mapError(storeError),
     );
 
-    const setAgents = Effect.fn("Store.setAgents")(function* (
-      worker: string,
-      setup: Domain.AgentSetup,
-    ) {
-      yield* sql`
-        INSERT INTO worker_agents ${sql.insert({
-          worker,
-          decisions: setup.decisions,
-          agents: JSON.stringify(setup.agents),
-          launch: setup.launch ? 1 : 0,
-          resume: setup.resume ? 1 : 0,
-          at: yield* Clock.currentTimeMillis,
-        })}
-        ON CONFLICT (worker) DO UPDATE
-        SET decisions = excluded.decisions, agents = excluded.agents,
-          launch = excluded.launch, resume = excluded.resume, at = excluded.at
-      `;
-    }, Effect.mapError(storeError));
+    const setAgents = Effect.fn("Store.setAgents")(
+      function* (
+        worker: string,
+        setup: Domain.AgentSetup,
+        machine?: Domain.WorkerMachine,
+      ) {
+        const stored = machine === undefined ? null : JSON.stringify(machine);
+
+        const [before] = yield* sql<{ machine: string | null }>`
+          SELECT machine FROM worker_agents WHERE worker = ${worker}
+        `;
+
+        yield* sql`
+          INSERT INTO worker_agents ${sql.insert({
+            worker,
+            decisions: setup.decisions,
+            agents: JSON.stringify(setup.agents),
+            launch: setup.launch ? 1 : 0,
+            resume: setup.resume ? 1 : 0,
+            machine: stored,
+            at: yield* Clock.currentTimeMillis,
+          })}
+          ON CONFLICT (worker) DO UPDATE
+          SET decisions = excluded.decisions, agents = excluded.agents,
+            launch = excluded.launch, resume = excluded.resume,
+            machine = excluded.machine, at = excluded.at
+        `;
+
+        if (machine === undefined || before?.machine === stored) return 0;
+
+        const stopped = Catalogue.machineJobs
+          .filter((job) => !Catalogue.runsOn(job, machine))
+          .map((job) => job.id);
+
+        if (stopped.length === 0) return 0;
+
+        const dropped = yield* sql<{ id: string }>`
+          DELETE FROM runs
+          WHERE state = 'queued' AND ${sql.in("job", stopped)}
+            AND json_extract(command, '$.kind') = 'machine'
+            AND json_extract(command, '$.worker') = ${worker}
+          RETURNING id
+        `;
+
+        if (dropped.length > 0) {
+          yield* sql`
+            UPDATE runs
+            SET retry = NULL,
+              state = CASE WHEN state = 'retrying' THEN 'failed' ELSE state END
+            WHERE ${sql.in(
+              "retry",
+              dropped.map(({ id }) => id),
+            )}
+          `;
+        }
+
+        return dropped.length;
+      },
+      sql.withTransaction,
+      Effect.mapError(storeError),
+    );
 
     const agents = Effect.fn("Store.agents")(function* () {
       return yield* sql`
-        SELECT worker, decisions, agents, launch, resume, at
+        SELECT worker, decisions, agents, launch, resume, machine, at
         FROM worker_agents ORDER BY worker
       `.pipe(
         Effect.flatMap(decodeAgents),
         Effect.map((rows) =>
-          rows.map(({ launch, resume, ...row }): Domain.WorkerAgents => ({
-            ...row,
-            launch: launch !== 0,
-            resume: resume !== 0,
-          })),
+          rows.map(
+            ({ launch, resume, machine, ...row }): Domain.WorkerAgents => ({
+              ...row,
+              launch: launch !== 0,
+              resume: resume !== 0,
+              ...(machine !== null && { machine }),
+            }),
+          ),
         ),
       );
     }, Effect.mapError(storeError));
@@ -6229,7 +6287,13 @@ export class Store extends Context.Service<
       paused,
       hold,
       takeHeld,
-      setAgents: announce(touches("workers"), setAgents),
+      setAgents: announce(
+        ({ result }) =>
+          result > 0
+            ? [{ topic: "workers" }, { topic: "runs" }]
+            : [{ topic: "workers" }],
+        setAgents,
+      ),
       agents,
       putSkillChange: announce(touches("skills"), putSkillChange),
       skillChange,

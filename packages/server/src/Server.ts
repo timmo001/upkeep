@@ -24,6 +24,7 @@ import {
   Option,
   PubSub,
   Redacted,
+  Result,
   Schedule,
   Schema,
   Struct,
@@ -330,27 +331,27 @@ const liveWorkers = Effect.fn("liveWorkers")(function* () {
   const since =
     (yield* Clock.currentTimeMillis) - Duration.toMillis("30 minutes");
 
-  return (yield* store.agents())
-    .filter((worker) => worker.at >= since)
-    .map((worker) => worker.worker);
+  return (yield* store.agents()).filter((worker) => worker.at >= since);
 });
 
 /**
- * Queue a machine job on each live worker, returning the first run queued. A
- * job held by a pause or park is skipped as usual.
+ * Queue a machine job on each live worker that runs it, returning the first
+ * run queued. A job held by a pause or park is skipped as usual.
  */
 const queueMachine = Effect.fn("queueMachine")(function* (
-  job: Domain.JobId,
+  job: Domain.Job,
   trigger: Domain.Trigger,
 ) {
   const queued: Array<Domain.Run> = [];
 
   for (const worker of yield* liveWorkers()) {
+    if (!Catalogue.runsOn(job, worker.machine)) continue;
+
     const run = yield* queue({
-      job,
+      job: job.id,
       trigger,
       release: null,
-      command: { kind: "machine", worker },
+      command: { kind: "machine", worker: worker.worker },
     });
 
     if (Option.isSome(run)) queued.push(run.value);
@@ -1020,7 +1021,7 @@ const JobsHandlers = HttpApiBuilder.group(
 
         const queued = yield* (
           job.value.machine === true
-            ? queueMachine(params.id, "manual")
+            ? queueMachine(job.value, "manual")
             : queue({
                 job: params.id,
                 trigger: "manual",
@@ -1032,7 +1033,7 @@ const JobsHandlers = HttpApiBuilder.group(
         return yield* Option.match(queued, {
           onNone: () =>
             job.value.machine === true
-              ? Effect.die(new Error("No worker is live to run it on"))
+              ? Effect.die(new Error("No live worker runs it"))
               : Effect.die(new Error("A manual run wasn't queued")),
           onSome: Effect.succeed,
         });
@@ -1246,9 +1247,25 @@ const counted = (parts: ReadonlyArray<string | null>) =>
 export const status = Effect.fn("status")(function* () {
   const store = yield* Store;
   const now = yield* Clock.currentTimeMillis;
-  const workers = yield* liveWorkers();
+  const live = yield* liveWorkers();
+  const workers = live.map((worker) => worker.worker);
   const parked = [...(yield* store.parked()).keys()].toSorted();
   const inbox = yield* store.inbox(now - Api.inboxDays * 86_400_000);
+
+  // Workers that only keep their own machine current run none of the jobs,
+  // so with nothing else live, nothing runs them
+  const maintaining = live
+    .filter((worker) => worker.machine?.only === true)
+    .map((worker) => worker.worker);
+
+  const idle =
+    workers.length === 0
+      ? "no worker is live"
+      : maintaining.length === workers.length
+        ? maintaining.length === 1
+          ? `no worker runs jobs: ${maintaining.join("")} only maintains itself`
+          : `no worker runs jobs: ${maintaining.slice(0, -1).join(", ")} and ${maintaining.at(-1) ?? ""} only maintain themselves`
+        : null;
 
   const entries: ReadonlyArray<Domain.NeedsYou> = inbox.entries
     .filter((entry) => entry.kind === "needs")
@@ -1310,7 +1327,7 @@ export const status = Effect.fn("status")(function* () {
 
   // A suggested release is there to be told about, not something wrong
   const health: Domain.Health =
-    workers.length === 0
+    idle !== null
       ? "degraded"
       : entries.length + changes.length + staleNotes.length > 0
         ? "warning"
@@ -1318,9 +1335,9 @@ export const status = Effect.fn("status")(function* () {
 
   const summary =
     needs.length === 0
-      ? workers.length === 0
-        ? "Nothing needs you, but no worker is live"
-        : "Nothing needs you"
+      ? idle === null
+        ? "Nothing needs you"
+        : `Nothing needs you, but ${idle}`
       : counted([
           entries.length === 0
             ? null
@@ -1334,7 +1351,7 @@ export const status = Effect.fn("status")(function* () {
           releases.length === 0
             ? null
             : `${releases.length} ${releases.length === 1 ? "release" : "releases"} suggested`,
-          workers.length === 0 ? "no worker live" : null,
+          workers.length === 0 ? "no worker live" : idle,
         ]);
 
   return { health, summary, needs, parked, workers, at: now };
@@ -1439,7 +1456,7 @@ const WorkHandlers = HttpApiBuilder.group(
 
         if (payload.agents !== undefined) {
           yield* store
-            .setAgents(worker.name, payload.agents)
+            .setAgents(worker.name, payload.agents, payload.machine)
             .pipe(Effect.orDie);
         }
 
@@ -2535,46 +2552,83 @@ export const scheduler = Layer.effectDiscard(
 );
 
 /**
- * Queue each machine job on each live worker whose latest run of it is older
- * than the job's last scheduled time, once a minute. That keeps the schedule
+ * Queue each machine job on each live worker that runs it, whose latest run
+ * of it is older than the job's last scheduled time on that worker: its own
+ * cron for the stage when it gives one, or the job's. A cron of the worker's
+ * that won't parse counts as the job's.
+ */
+export const queueMachineRuns = Effect.fn("queueMachineRuns")(function* (
+  cronOf: (expression: string) => Cron.Cron | null,
+) {
+  const store = yield* Store;
+  const now = yield* Clock.currentTimeMillis;
+  const workers = yield* liveWorkers();
+
+  const jobs = Catalogue.machineJobs.flatMap((job) =>
+    job.schedule === null ? [] : [{ job, schedule: job.schedule }],
+  );
+
+  const latest = yield* store.machineRuns(jobs.map(({ job }) => job.id));
+
+  for (const { job, schedule } of jobs) {
+    const runs = latest.get(job.id) ?? [];
+
+    for (const { worker, machine } of workers) {
+      if (!Catalogue.runsOn(job, machine)) continue;
+
+      const own =
+        job.stage === undefined ? undefined : machine?.schedules?.[job.stage];
+
+      const cron = (own === undefined ? null : cronOf(own)) ?? cronOf(schedule);
+
+      if (cron === null) continue;
+
+      const due = Cron.prev(cron, now).getTime();
+
+      const last = runs.find(
+        (run) =>
+          run.command?.kind === "machine" && run.command.worker === worker,
+      );
+
+      if (last !== undefined && last.queuedAt >= due) continue;
+
+      yield* queue({
+        job: job.id,
+        trigger: "schedule",
+        release: null,
+        command: { kind: "machine", worker },
+      });
+    }
+  }
+});
+
+/** Parse each cron expression once, keeping null for one that won't parse. */
+export const cronCache = () => {
+  const parsed = new Map<string, Cron.Cron | null>();
+
+  return (expression: string) => {
+    const known = parsed.get(expression);
+
+    if (known !== undefined) return known;
+
+    const cron = Result.getOrNull(Cron.parse(expression));
+
+    parsed.set(expression, cron);
+
+    return cron;
+  };
+};
+
+/**
+ * Queue the machine jobs that are due, once a minute. That keeps the schedule
  * and catches a worker up when it comes back after being off.
  */
 export const machineScheduler = Layer.effectDiscard(
   Effect.gen(function* () {
     const store = yield* Store;
+    const cronOf = cronCache();
 
-    const crons = Catalogue.machineJobs.flatMap((job) =>
-      job.schedule === null
-        ? []
-        : [{ job: job.id, cron: Cron.parseUnsafe(job.schedule) }],
-    );
-
-    yield* Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const workers = yield* liveWorkers();
-      const latest = yield* store.machineRuns(crons.map(({ job }) => job));
-
-      for (const { job, cron } of crons) {
-        const due = Cron.prev(cron, now).getTime();
-        const runs = latest.get(job) ?? [];
-
-        for (const worker of workers) {
-          const last = runs.find(
-            (run) =>
-              run.command?.kind === "machine" && run.command.worker === worker,
-          );
-
-          if (last !== undefined && last.queuedAt >= due) continue;
-
-          yield* queue({
-            job,
-            trigger: "schedule",
-            release: null,
-            command: { kind: "machine", worker },
-          });
-        }
-      }
-    }).pipe(
+    yield* queueMachineRuns(cronOf).pipe(
       Effect.provideService(Store, store),
       Effect.catchCause(Effect.logError),
       Effect.repeat(Schedule.spaced("1 minute")),
@@ -2697,9 +2751,9 @@ const handleEvent = Effect.fn("handleEvent")(function* (
 
     if (job === null) continue;
 
-    // A machine job runs on every live worker, as on its schedule
+    // A machine job runs on every live worker that runs it, as on its schedule
     if (job.machine === true) {
-      const run = yield* queueMachine(job.id, "event");
+      const run = yield* queueMachine(job, "event");
 
       if (Option.isSome(run)) queued.push(run.value);
 

@@ -1,14 +1,21 @@
 /**
  * GitHub events through the server's pull: a release event queues its bump
  * once, a repeated delivery is dropped, and the batch is acked. Also the
- * status, and the heal a batch of runs shares once it has ended.
+ * status, the heal a batch of runs shares once it has ended, and which
+ * workers the machine jobs queue on.
  */
 import { BunServices } from "@effect/platform-bun";
-import type { Domain } from "@upkeep/api";
+import { Catalogue, type Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
 import { Events } from "./Events";
-import { healEnded, pullEvents, status } from "./Server";
+import {
+  cronCache,
+  healEnded,
+  pullEvents,
+  queueMachineRuns,
+  status,
+} from "./Server";
 import { Store } from "./Store";
 import { Triage } from "./Triage";
 
@@ -61,6 +68,121 @@ test("the status counts what needs you, and says when no worker is live", () =>
       Effect.provide(BunServices.layer),
     ),
   ));
+
+const setup: Domain.AgentSetup = {
+  decisions: null,
+  agents: [],
+  launch: false,
+  resume: false,
+};
+
+test("the status says when every live worker only maintains itself", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.setAgents("nas", setup, {
+        stages: ["dotfiles"],
+        only: true,
+      });
+
+      const maintaining = yield* status();
+
+      expect(maintaining.health).toBe("degraded");
+      expect(maintaining.summary).toBe(
+        "Nothing needs you, but no worker runs jobs: nas only maintains itself",
+      );
+
+      yield* store.setAgents("desktop", setup, {
+        stages: ["dotfiles"],
+        only: false,
+      });
+
+      expect((yield* status()).health).toBe("ok");
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
+
+test("machine jobs queue only on the workers that run their stage, on each one's cron", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      // An older worker that doesn't say runs every stage
+      yield* store.setAgents("desktop", setup);
+
+      yield* store.setAgents("nas", setup, {
+        stages: ["dotfiles", "tools"],
+        schedules: { tools: "30 4 * * 0" },
+        only: true,
+      });
+
+      const asked: Array<string> = [];
+      const cached = cronCache();
+
+      yield* queueMachineRuns((expression) => {
+        asked.push(expression);
+
+        return cached(expression);
+      });
+
+      const queued = (yield* store.runs({ limit: 50 })).map(
+        (run) =>
+          `${run.job}:${run.command?.kind === "machine" ? run.command.worker : ""}`,
+      );
+
+      expect(queued.filter((run) => run.endsWith(":nas")).toSorted()).toEqual([
+        "up-dotfiles:nas",
+        "up-tools:nas",
+      ]);
+
+      expect(queued.filter((run) => run.endsWith(":desktop"))).toHaveLength(
+        Catalogue.machineJobs.length,
+      );
+
+      expect(asked).toContain("30 4 * * 0");
+
+      // Dropping a stage drops its queued run on that worker only
+      yield* store.setAgents("nas", setup, {
+        stages: ["dotfiles"],
+        only: true,
+      });
+
+      const left = yield* store.runs({ job: "up-tools", limit: 10 });
+
+      expect(
+        left.map((run) =>
+          run.command?.kind === "machine" ? run.command.worker : "",
+        ),
+      ).toEqual(["desktop"]);
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
+
+test("an opt-in stage only runs on the workers that list it", () => {
+  const job: Domain.Job = {
+    id: "up-dotfiles",
+    name: "Dotfiles",
+    description: "Pulls the dotfiles",
+    schedule: null,
+    onRelease: false,
+    lane: "machine",
+    tracked: false,
+    machine: true,
+    stage: "dotfiles",
+    optIn: true,
+  };
+
+  expect(Catalogue.runsOn(job, undefined)).toBe(false);
+  expect(Catalogue.runsOn(job, { stages: [], only: false })).toBe(false);
+  expect(Catalogue.runsOn(job, { stages: ["dotfiles"], only: false })).toBe(
+    true,
+  );
+});
 
 test("a burst of pushes queues one run of each job the repository is tracked for", () => {
   const push = (delivery: string): Domain.GitHubEvent => ({
