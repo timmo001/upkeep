@@ -23,7 +23,7 @@ import {
 } from "effect/http";
 import { HttpApiMiddleware } from "effect/http-api";
 import { Atom, AtomHttpApi, Reactivity } from "effect/reactivity";
-import { versioned } from "./update.ts";
+import { update, versioned } from "./update.ts";
 
 const storage = Atom.runtime(BrowserKeyValueStore.layerLocalStorage);
 
@@ -493,6 +493,155 @@ export const keepNote = UpkeepApi.runtime.fn((id: string) =>
     Effect.ensuring(notesChanged),
   ),
 );
+
+const backupsKey = ["backups"];
+
+/** The backups of the store kept on the server, newest first. */
+export const backups = UpkeepApi.query("backups", "list", {
+  reactivityKeys: backupsKey,
+});
+
+/** Something to do with the backups, from the Backups panel. */
+export type BackupAction =
+  | { readonly kind: "make" }
+  | { readonly kind: "download"; readonly name: string }
+  | { readonly kind: "remove"; readonly name: string }
+  | { readonly kind: "restore"; readonly name: string };
+
+/** How a backup action went, to show beside the list. */
+export interface BackupOutcome {
+  readonly tone: "success" | "danger";
+  readonly message: string;
+  /** Whether the server is starting again on a restored store. */
+  readonly restarting: boolean;
+}
+
+const outcome = (message: string, restarting = false): BackupOutcome => ({
+  tone: "success",
+  message,
+  restarting,
+});
+
+/** Save what's at `path` under the page's base as a file, without leaving it. */
+const saveFile = (path: string) =>
+  Effect.sync(() => {
+    const link = document.createElement("a");
+
+    link.href = new URL(path, document.baseURI).href;
+    link.download = "";
+    link.click();
+  });
+
+/**
+ * Make, download, remove or restore a backup. A backup that can't be made or
+ * restored, or isn't there, comes back as a message rather than a failure.
+ */
+export const backupAction = UpkeepApi.runtime.fn((action: BackupAction) =>
+  UpkeepApi.use((client) => {
+    switch (action.kind) {
+      case "make":
+        return client.backups
+          .create()
+          .pipe(
+            Effect.map((made) =>
+              outcome(`Made ${made.name}. Download it to keep it elsewhere.`),
+            ),
+          );
+      case "download":
+        return client.backups.link({ params: { name: action.name } }).pipe(
+          Effect.tap(({ path }) => saveFile(path)),
+          Effect.as(outcome(`Downloading ${action.name}`)),
+        );
+      case "remove":
+        return client.backups
+          .remove({ params: { name: action.name } })
+          .pipe(Effect.as(outcome(`Deleted ${action.name}`)));
+      case "restore":
+        return client.backups
+          .restore({ params: { name: action.name } })
+          .pipe(
+            Effect.as(
+              outcome(
+                `Restoring ${action.name}. The server is starting again on it.`,
+                true,
+              ),
+            ),
+          );
+    }
+  }).pipe(
+    Effect.catchTag(["BackupError", "UnknownBackup"], (error) =>
+      Effect.succeed<BackupOutcome>({
+        tone: "danger",
+        message: error.message,
+        restarting: false,
+      }),
+    ),
+    asDefects,
+    Effect.ensuring(Reactivity.invalidate(backupsKey)),
+  ),
+);
+
+/**
+ * Send a backup file from this device to restore, as the admin with `bearer`,
+ * telling `progress` how much is sent. Ends with why it failed, or nothing
+ * once the server has it. Not through fetch, which can't tell how much of a
+ * file is sent.
+ */
+export const uploadBackup = (
+  file: File,
+  bearer: string,
+  progress: (sent: number) => void,
+) =>
+  new Promise<string | undefined>((resolve) => {
+    const request = new XMLHttpRequest();
+
+    request.open("POST", new URL("api/backups/restore", document.baseURI));
+    request.setRequestHeader("content-type", "application/octet-stream");
+    request.setRequestHeader("authorization", `Bearer ${bearer}`);
+
+    for (const [name, value] of Object.entries(update.headers)) {
+      request.setRequestHeader(name, value);
+    }
+
+    request.upload.addEventListener("progress", (event) =>
+      progress(event.loaded),
+    );
+    request.addEventListener("load", () =>
+      resolve(
+        request.status < 300
+          ? undefined
+          : Option.match(decodeFailure(request.responseText), {
+              onNone: () => `The server said ${request.status}`,
+              onSome: (failure) => failure.message,
+            }),
+      ),
+    );
+    request.addEventListener("error", () =>
+      resolve("The upload stopped before the server had it all"),
+    );
+    request.send(file);
+  });
+
+const decodeFailure = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ message: Schema.String })),
+);
+
+/** Wait for the server to answer again after it restarts. */
+export const serverBack = async () => {
+  // It answers for a moment before it stops
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  for (;;) {
+    const up = await fetch(new URL("api/health", document.baseURI)).then(
+      (response) => response.ok,
+      () => false,
+    );
+
+    if (up) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+};
 
 export const run = Atom.family((id: string) =>
   UpkeepApi.query("runs", "get", {

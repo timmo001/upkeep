@@ -5,7 +5,8 @@
  * which need one given) and, for a parked job, why and
  * a button to unpark it, and a switch to pause or resume one that starts by
  * itself; then each
- * worker's agents, with their roles, models and what they're for. Each table
+ * worker's agents, with their roles, models and what they're for, the notes
+ * for agents working on Upkeep, and the store's backups. Each table
  * starts with its groups folded away. The latest runs have their own page.
  */
 import type {
@@ -43,6 +44,7 @@ import "@timmo001/groundwork-ui/define/gw-card.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-table.ts";
+import "./upkeep-backups.ts";
 import "./upkeep-notes.ts";
 
 /** Each lane's heading: a lane runs one run at a time, so a job waits only behind its own lane. */
@@ -387,6 +389,15 @@ export class UpkeepOverview extends LitElement {
                     scope="upkeep"
                     empty="None yet. Agents add what they learn about Upkeep here, and so can you."
                   ></upkeep-notes>
+                </gw-card>
+              </gw-section>
+              <gw-section
+                class="section"
+                heading="Backups"
+                storage-key="upkeep.jobs.section.backups"
+              >
+                <gw-card>
+                  <upkeep-backups></upkeep-backups>
                 </gw-card>
               </gw-section>`
       }
