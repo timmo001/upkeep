@@ -10,6 +10,9 @@ arch:
 image: ghcr.io/timmo001/upkeep-app
 ingress: true
 ingress_port: 8099
+# Streams request bodies to the app, so a backup uploads through Home
+# Assistant without the Supervisor holding it all in memory
+ingress_stream: true
 panel_icon: mdi:wrench-clock
 panel_title: Upkeep
 ports:
@@ -20,6 +23,10 @@ watchdog: http://[HOST]:[PORT:7272]/api/health
 # Stopped during backups so the SQLite database is copied in a consistent
 # state. Workers retry until the server is back.
 backup: cold
+# Upkeep's own backups beside the store are copies already, so Home
+# Assistant's backups of the app leave them out
+backup_exclude:
+  - backups/*
 # Reads the Supervisor's info on this app and the triage app beside it, to
 # find triage on the Supervisor's network.
 hassio_api: true

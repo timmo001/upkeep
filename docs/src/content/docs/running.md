@@ -257,6 +257,39 @@ and so on. Run it again to pick up where it stopped: items already saved are
 kept. Read one back with `op item get "<title>" --fields credential --reveal`.
 Once your own admin is saved, the server admin token can go.
 
+## Backups
+
+A backup is the server's whole store: runs and their logs, the inbox,
+attention, notes, repositories, and the admin and worker tokens, so workers
+and admins keep working against a restored server without new tokens. The
+settings above aren't in it; keep those where they're set. Backups are made
+while the server runs and kept in `backups` beside the store, as
+`upkeep-<time>.upkeep-backup`.
+
+```bash
+upkeep backups                      # the ones kept on the server
+upkeep backups make                 # make one
+upkeep backups get <name> -o <file> # download one
+upkeep backups remove <name>
+upkeep backups restore <name>       # restore one kept on the server
+upkeep backups restore <file>       # or a file here
+```
+
+The dashboard's Jobs page does the same in its **Backups** section.
+
+A restore first checks the backup is a sound Upkeep store and not from a newer
+Upkeep than the server; update the server before restoring a newer one. Then
+the server starts again on it in the same process, keeping the store it
+replaced beside it as `server.db.before-restore` until the next restore.
+Workers retry until it's back.
+
+To move the server to another machine, make a backup on the old one and
+download it, start the new one with its settings, restore the file there, then
+point `UPKEEP_SERVER` on the workers and admins at the new one.
+
+In the Home Assistant app, Home Assistant's own backups of the app leave the
+kept backups out, as they're copies already.
+
 ## Workers
 
 ```bash
