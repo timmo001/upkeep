@@ -3,12 +3,13 @@
  * one while sending heartbeats and its log, and reports how it ended. Jobs
  * run in lanes, one run per lane at a time, so a long heal doesn't hold up
  * the schedule. Nothing a run or the server does stops a lane, so a worker
- * keeps going through a failed job or a server restart. No lane takes new
- * work while the machine login's GitHub rate limit is down to its reserve,
- * and a run that fails while a limit is spent runs again once it resets, with
- * no new work taken until then. A run that fails while a part of GitHub it
- * uses is down waits for it and runs again, and no lane takes new work while
- * the REST API is down. Asked to drain, such as after an upgrade, it
+ * keeps going through a failed job or a server restart. No lane but the
+ * machine lane, which only needs git, takes new work while the machine
+ * login's GitHub rate limit is down to its reserve, and a run that fails
+ * while a limit is spent runs again once it resets, with no new work taken
+ * until then. A run that fails while a part of GitHub it uses is down waits
+ * for it and runs again, and no lane but the machine lane takes new work
+ * while the REST API is down. Asked to drain, such as after an upgrade, it
  * finishes the runs it has and stops, rather than cutting them off, unless
  * they take longer than the drain's limit.
  */
@@ -100,12 +101,13 @@ export interface WorkOptions {
   /**
    * What to do when the server refuses this worker as older than itself,
    * such as updating the machine's packages, at most every 15 minutes: a
-   * refused worker takes no runs, so no job can update it.
+   * refused worker takes no runs, so no job can update it. It ends with
+   * whether the worker should now drain and restart on what it installed.
    */
   readonly onOutdated?: Effect.Effect<
-    void,
+    boolean,
     never,
-    ChildProcessSpawner.ChildProcessSpawner
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   >;
   /**
    * Completes when the worker should stop taking runs, such as once its
@@ -580,8 +582,11 @@ export const work = Effect.fn("Worker.work")(function* (
     });
 
   // Every lane hears it's outdated at once, so only the first in each window
-  // catches up
+  // catches up. A worker that restarts on what it installed only does so once
+  // it's been up a window, so an update that brings nothing newer, as before
+  // the release is out, can't have it restart over and over.
   const caughtUpAt = yield* Ref.make<number | null>(null);
+  const upSince = yield* Clock.currentTimeMillis;
 
   const catchUp = Effect.gen(function* () {
     if (options.onOutdated === undefined) return;
@@ -594,7 +599,20 @@ export const work = Effect.fn("Worker.work")(function* (
         : [false, last],
     );
 
-    if (due) yield* options.onOutdated;
+    if (!due || !(yield* options.onOutdated)) return;
+
+    if (now - upSince < Duration.toMillis("15 minutes")) {
+      yield* Effect.logInfo(
+        "Updated, but this worker started less than 15 minutes ago, so it restarts on the next catch-up",
+      );
+
+      return;
+    }
+
+    yield* Effect.logInfo(
+      "Updated: finishing the runs in hand, then restarting on the new binary",
+    );
+    yield* Deferred.succeed(draining, undefined);
   });
 
   yield* Effect.logInfo(`Waiting for runs of ${jobs.join(", ")}`);
@@ -668,7 +686,9 @@ export const work = Effect.fn("Worker.work")(function* (
     const frees = command || name === "agent";
 
     const next = Effect.gen(function* () {
-      const claimable = yield* holdOff(command, laneJobs);
+      // `dot up` only needs git, so the machine lane doesn't wait on GitHub
+      const claimable =
+        name === "machine" ? laneJobs : yield* holdOff(command, laneJobs);
 
       const setup = command ? {} : { ...(yield* agents), machine };
       const resting = command ? false : yield* quiet;

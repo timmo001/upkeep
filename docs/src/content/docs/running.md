@@ -319,7 +319,8 @@ older than the server. Each claim carries the worker's protocol, and the server
 gives a worker older than itself no runs at all rather than one it can't read:
 the worker logs that it's older than the server and needs `upkeep-git`
 updated, and picks up work again once it is. A worker on a machine with
-`dot up first-party` set up updates itself (see [Machines](#machines)); update
+`dot up first-party` set up, or `machine.selfUpdate`, updates itself (see
+[Machines](#machines)); update
 the others before a release that raises the protocol.
 
 A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
@@ -924,7 +925,40 @@ away.
 
 A worker the server refuses as [older than itself](#workers) can't take that
 run, so it runs `dot up first-party` itself, at most every 15 minutes, until
-the upgrade restarts it on a version the server takes.
+the upgrade restarts it on a version the server takes. `machine.selfUpdate`
+runs another command in its place, for a worker installed some other way:
+
+```json
+{
+  "machine": {
+    "selfUpdate": ["mise", "upgrade", "github:timmo001/upkeep"]
+  }
+}
+```
+
+Once that command succeeds, the worker drains and exits with 75 as above, so
+its service restarts it on the new binary. It only restarts once it's been up
+15 minutes, so an update that brings nothing newer doesn't restart it over and
+over.
+
+`machine.command` runs `dot` some other way: the job runs the command with
+`up <stage> --json` after it, `["dot"]` by default. With an SSH prefix, a
+worker keeps another machine current, one without a worker of its own:
+
+```json
+{
+  "machine": {
+    "only": true,
+    "command": ["ssh", "my-server", "dot"],
+    "stages": ["dotfiles", "tools"]
+  }
+}
+```
+
+The stow, Herdr and agents stages after a stage go through the same command.
+The machine jobs only need `git`, so unlike the other jobs they still start
+while GitHub's REST API is down or the machine login's rate limit is down to
+its reserve.
 
 #### Maintenance-only workers
 

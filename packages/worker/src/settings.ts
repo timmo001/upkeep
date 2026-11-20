@@ -267,7 +267,8 @@ const CronString = Schema.String.check(
  * The `dot up` stages this worker keeps current. Every stage but the opt-in
  * ones by default. `only` takes no other jobs, for a machine that should only
  * keep itself current. `schedules` moves a stage to another cron on this
- * worker only. Read once at start, so a change needs a restart.
+ * worker only. The stages, `only` and the schedules are read once at start,
+ * so a change to them needs a restart.
  */
 const Machine = Schema.Struct({
   only: Schema.optionalKey(Schema.Boolean),
@@ -275,6 +276,18 @@ const Machine = Schema.Struct({
   schedules: Schema.optionalKey(
     Schema.Record(Catalogue.Stage, Schema.optionalKey(CronString)),
   ),
+  /**
+   * What runs `up <stage> --json`, `["dot"]` by default. An `ssh` prefix,
+   * such as `["ssh", "box", "dot"]`, keeps another machine current.
+   */
+  command: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
+  /**
+   * What an outdated worker runs to catch up with the server, in place of
+   * `dot up first-party`, such as `["mise", "upgrade", "github:timmo001/upkeep"]`.
+   * Once it succeeds the worker drains and exits, so its service restarts it
+   * on the new binary.
+   */
+  selfUpdate: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
 });
 
 export type Machine = typeof Machine.Type;

@@ -4,12 +4,15 @@
  * stage prints what it did as JSON; its log goes to the run's log as it goes.
  * A dotfiles pull is applied by the stow and Herdr stages after it. When a
  * stage changed skills or agent plugins, the agents stage follows to reload
- * running agents. A worker without `dot` has nothing to do.
+ * running agents. A worker without `dot` has nothing to do. The settings'
+ * `machine.command` runs `dot` some other way, such as over SSH to keep
+ * another machine current.
  */
 import { Effect, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { summary } from "../Reporter";
 import * as RunLog from "../RunLog";
+import * as Settings from "../settings";
 import { skipped } from "../Worker";
 
 /** The fields of `dot up <stage> --json` the job reads. */
@@ -44,15 +47,29 @@ export class StageFailed extends Schema.TaggedError<StageFailed>()(
   }
 }
 
+/** What runs `up <stage> --json`: the settings' command, or `dot`. */
+type Command = readonly [string, ...Array<string>];
+
+const defaultCommand: Command = ["dot"];
+
 /** What Graphviz's `dot` prints when it's given a command it doesn't know. */
 const notDotfiles = /Usage: dot \[|graphviz|Error: dot: option/i;
 
 /**
  * Why a stage gave no result, from the last line it printed, since dot's own
- * error comes last: Graphviz's `dot` in its place, or what dot said.
+ * error comes last: Graphviz's `dot` in its place, when it's run as plain
+ * `dot`, or what dot said.
  */
-const noResult = (code: number, printed: ReadonlyArray<string>) => {
-  if (notDotfiles.test(printed.join("\n")))
+const noResult = (
+  command: Command,
+  code: number,
+  printed: ReadonlyArray<string>,
+) => {
+  if (
+    command.length === 1 &&
+    command[0] === "dot" &&
+    notDotfiles.test(printed.join("\n"))
+  )
     return `${Bun.which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`;
 
   const last = printed.findLast((line) => line.trim() !== "")?.trim();
@@ -63,15 +80,16 @@ const noResult = (code: number, printed: ReadonlyArray<string>) => {
 };
 
 /** Run `dot up <stage> --json`, logging stderr, and decode what it prints. */
-const stage = Effect.fnUntraced(function* (name: string) {
+const stage = Effect.fnUntraced(function* (command: Command, name: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const [head, ...rest] = command;
 
   const errors: Array<string> = [];
 
   const [stdout, code] = yield* Effect.scoped(
     Effect.gen(function* () {
       const handle = yield* spawner.spawn(
-        ChildProcess.make("dot", ["up", name, "--json"], {
+        ChildProcess.make(head, [...rest, "up", name, "--json"], {
           stdin: "ignore",
           extendEnv: true,
           env: { GIT_TERMINAL_PROMPT: "0", NO_COLOR: "1" },
@@ -104,7 +122,11 @@ const stage = Effect.fnUntraced(function* (name: string) {
   )(stdout).pipe(
     Effect.mapError(
       (cause) =>
-        new StageFailed({ stage: name, error: noResult(code, errors), cause }),
+        new StageFailed({
+          stage: name,
+          error: noResult(command, code, errors),
+          cause,
+        }),
     ),
   );
 
@@ -123,23 +145,30 @@ const described = (result: StageResult) =>
     .map((action) => action.message);
 
 /**
- * Upgrade this machine's first-party packages outside a run, for a worker
- * the server refuses as older than itself, which no run can reach. The
- * upkeep package's own upgrade then has the worker drain and restart on the
- * new binary.
- * A machine without `dot`, or without the upgrade set up, is left as it is.
+ * Catch up with the server, for a worker it refuses as older than itself,
+ * which no run can reach: the settings' `machine.selfUpdate`, or an upgrade
+ * of this machine's first-party packages outside a run. The upkeep package's
+ * own upgrade has the worker drain and restart on the new binary; after a
+ * command from the settings succeeds, this says the worker should. A machine
+ * without the command, or without the upgrade set up, is left as it is.
  */
 export const selfUpdate = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  yield* Effect.logInfo(
-    "Upgrading this machine's first-party packages to catch up with the server",
+  const configured = yield* Settings.loadMachine().pipe(
+    Effect.map((machine) => machine?.selfUpdate),
+    Effect.orElseSucceed(() => undefined),
   );
+
+  const [head, ...rest] = configured ?? ["dot", "up", "first-party", "--json"];
+  const shown = [head, ...rest].join(" ");
+
+  yield* Effect.logInfo(`Running ${shown} to catch up with the server`);
 
   const code = yield* Effect.scoped(
     spawner
       .spawn(
-        ChildProcess.make("dot", ["up", "first-party", "--json"], {
+        ChildProcess.make(head, rest, {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
@@ -150,18 +179,27 @@ export const selfUpdate = Effect.gen(function* () {
       .pipe(Effect.flatMap((handle) => handle.exitCode)),
   );
 
-  if (Number(code) !== 0)
-    yield* Effect.logWarning(`dot up first-party exited with ${code}`);
+  if (Number(code) !== 0) {
+    yield* Effect.logWarning(`${shown} exited with ${code}`);
+
+    return false;
+  }
+
+  return configured !== undefined;
 }).pipe(
   Effect.catchCause((cause) =>
-    Effect.logWarning("Couldn't upgrade this machine's packages", cause),
+    Effect.logWarning("Couldn't catch up with the server", cause).pipe(
+      Effect.as(false),
+    ),
   ),
 );
 
 export const machine = Effect.fnUntraced(function* (name: string) {
-  const result = yield* stage(name).pipe(
+  const command = (yield* Settings.loadMachine())?.command ?? defaultCommand;
+
+  const result = yield* stage(command, name).pipe(
     Effect.catchTag("PlatformError", (error) =>
-      RunLog.info(`dot couldn't run here: ${error.message}`).pipe(
+      RunLog.info(`${command[0]} couldn't run here: ${error.message}`).pipe(
         Effect.as(null),
       ),
     ),
@@ -175,7 +213,7 @@ export const machine = Effect.fnUntraced(function* (name: string) {
   // and the Herdr stage syncs the machine lists it may have brought
   const applied =
     name === "dotfiles" && result.changed
-      ? [yield* stage("stow"), yield* stage("herdr")]
+      ? [yield* stage(command, "stow"), yield* stage(command, "herdr")]
       : [];
 
   for (const next of applied) changes.push(...described(next));
@@ -185,7 +223,7 @@ export const machine = Effect.fnUntraced(function* (name: string) {
     result.pluginsChanged ||
     applied.some((next) => next.skillsChanged)
   ) {
-    const agents = yield* stage("agents");
+    const agents = yield* stage(command, "agents");
 
     changes.push(...described(agents));
   }
