@@ -134,7 +134,7 @@
         "@types/bun": "1.4.4",
         "oxlint": "1.94.0",
         "oxlint-tsgolint": "7.0.2007",
-        "solid-js": "2.0.1",
+        "solid-js": "2.0.2",
         "typescript": "7.0.2",
       },
       "peerDependencies": {
@@ -2420,7 +2420,7 @@
 
     "socks-proxy-agent": ["socks-proxy-agent@8.0.5", "", { "dependencies": { "agent-base": "^7.1.2", "debug": "^4.3.4", "socks": "^2.8.3" } }, "sha512-HehCEsotFqbPW9sJ8WVYB6UbmIMv7kUUORIF2Nncq4VQvBfNBLibW9YZR5dlYCSUhwcD628pRllm7n+E+YTzJw=="],
 
-    "solid-js": ["solid-js@2.0.1", "", { "dependencies": { "@solidjs/signals": "^2.0.1", "seroval": "^1.8.0", "seroval-plugins": "^1.8.0" } }, "sha512-5bBwRCblIZ672y2H2aB5KIOfeP/N+acx1YoCjNCWYFc4ZI/Y7y7n/6N1kei8AgWmcJJQ1m5SV90rs3V8CPAnYQ=="],
+    "solid-js": ["solid-js@2.0.2", "", { "dependencies": { "@solidjs/signals": "^2.0.2", "seroval": "^1.8.0", "seroval-plugins": "^1.8.0" } }, "sha512-0ubVj/v/uXsiA+Ia0I2ktn/nqUzgT29dvAt/pcvqXrVysTHJdG2vpcIEFcs3SqVb+Gr6O+e8dUyik4gBVZA7Pw=="],
 
     "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
 
