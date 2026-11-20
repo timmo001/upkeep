@@ -149,7 +149,7 @@
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@effect/sql-sqlite-bun": "4.1.5",
-        "@timmo001/effect-triage": "0.26.0",
+        "@timmo001/effect-triage": "0.27.0",
         "@timmo001/groundwork-pwa": "0.51.0",
         "@upkeep/api": "workspace:*",
         "@upkeep/dashboard": "workspace:*",
@@ -1115,7 +1115,7 @@
 
     "@timmo001/effect-gh": ["@timmo001/effect-gh@0.13.2", "", { "dependencies": { "graphql": "17.1.0" }, "peerDependencies": { "effect": "^4.1.0" } }, "sha512-XY74QhpC/h1Lwte/qpgycbrzscQR2TUABmUp+jDK7aTFSV8vBC50mPQxsCmbCGhdCOBbtGFWZzEe3JNvOOsOOg=="],
 
-    "@timmo001/effect-triage": ["@timmo001/effect-triage@0.26.0", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-exYiEOmHeE42kqR9s6bvxxtOh3ECNudd51M/+4TnmoJyO/6L/MPjPw966B5TH7efZ9JV572OYaoJOf9zv4eSIQ=="],
+    "@timmo001/effect-triage": ["@timmo001/effect-triage@0.27.0", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-WnpiBoioAzMaT81WHkHUSOg2HPX02ri9FxYv3JaYIlrYVO+pHtxExwjLyq69zzrykfLO6VTKuPOVt9T+M6ShuQ=="],
 
     "@timmo001/groundwork-pwa": ["@timmo001/groundwork-pwa@0.51.0", "", { "dependencies": { "@timmo001/groundwork-tokens": "0.51.0", "effect": "4.1.4", "sharp": "0.35.5" }, "peerDependencies": { "vite": "^8.0.0" }, "optionalPeers": ["vite"] }, "sha512-EyVU5Q8bDuSLthzUBtDVR+r7DC1Ao4Cst0nX5pP176i9IEi61PQ8tyuYtAVEtkEjG2PrjdGuMjTNDp7ff/bMtg=="],
 
