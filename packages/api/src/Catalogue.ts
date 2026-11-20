@@ -2,7 +2,8 @@
  * Every job Upkeep knows, shared so the server schedules the same list the
  * workers can run and the CLI shows.
  */
-import type { Job } from "./Domain";
+import { Schema } from "effect";
+import type { Job, WorkerMachine } from "./Domain";
 
 export const releases: Job = {
   id: "releases",
@@ -249,23 +250,42 @@ export const command: Job = {
 };
 
 /**
- * A machine job: one `dot up` stage, run headless on every live worker so
- * each machine keeps itself current without `dot up`.
+ * The `dot up` stages the machine jobs run, which a worker's settings list
+ * to say which it runs.
+ */
+export const Stage = Schema.Literals([
+  "dotfiles",
+  "skills",
+  "repos",
+  "tools",
+  "plugins",
+  "first-party",
+]);
+
+export type Stage = typeof Stage.Type;
+
+/**
+ * A machine job: one `dot up` stage, run headless on each live worker that
+ * runs it so each machine keeps itself current without `dot up`. An opt-in
+ * stage only runs on the workers that list it.
  */
 const machine = (
-  stage: string,
+  stage: Stage,
   name: string,
   description: string,
   schedule: string,
+  options: { readonly optIn?: boolean } = {},
 ): Job => ({
   id: `up-${stage}`,
   name,
-  description: `${description}, on every worker, through \`dot up ${stage}\``,
+  description: `${description}, on each worker that runs it, through \`dot up ${stage}\``,
   schedule,
   onRelease: false,
   lane: "machine",
   tracked: false,
   machine: true,
+  stage,
+  ...(options.optIn === true && { optIn: true }),
 });
 
 export const upDotfiles = machine(
@@ -319,6 +339,19 @@ export const machineJobs: ReadonlyArray<Job> = [
   upPlugins,
   upFirstParty,
 ];
+
+/**
+ * Whether a worker runs a job, by the machine stages it told the server: any
+ * job that isn't a machine job, a machine job whose stage it lists, or, for an
+ * older worker that doesn't say, every machine job but the opt-in ones.
+ */
+export const runsOn = (job: Job, machine: WorkerMachine | undefined) => {
+  if (job.stage === undefined) return true;
+
+  if (machine === undefined) return job.optIn !== true;
+
+  return machine.stages.includes(job.stage);
+};
 
 /**
  * Whether a run of a job can be narrowed to one repository: the jobs that

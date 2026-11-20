@@ -61,6 +61,13 @@ export const Job = Schema.Struct({
    * update the machine itself. Missing from older servers.
    */
   machine: Schema.optionalKey(Schema.Boolean),
+  /** The `dot up` stage a machine job runs. Missing from older servers. */
+  stage: Schema.optionalKey(Schema.String),
+  /**
+   * Whether a machine job only runs on the workers that list its stage, so a
+   * worker that doesn't list its stages never runs it.
+   */
+  optIn: Schema.optionalKey(Schema.Boolean),
   /**
    * Whether a run of it for every repository is queued as a batch of runs,
    * one for each repository tracked for it, so each is short and fails,
@@ -474,10 +481,29 @@ export const AgentSetup = Schema.Struct({
 
 export interface AgentSetup extends Schema.Schema.Type<typeof AgentSetup> {}
 
+/**
+ * The `dot up` stages a worker runs, any it runs on a cron of its own, and
+ * whether it takes no other jobs, keeping only its own machine current.
+ */
+export const WorkerMachine = Schema.Struct({
+  stages: Schema.Array(Schema.String),
+  schedules: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  only: Schema.Boolean,
+});
+
+export interface WorkerMachine extends Schema.Schema.Type<
+  typeof WorkerMachine
+> {}
+
 /** A worker's agents, as it last told the server when it asked for work. */
 export const WorkerAgents = Schema.Struct({
   worker: Schema.String,
   ...AgentSetup.fields,
+  /**
+   * Its machine stages. Missing from older workers, which run every stage but
+   * the opt-in ones.
+   */
+  machine: Schema.optionalKey(WorkerMachine),
   at: Schema.Finite,
 });
 
@@ -1442,7 +1468,8 @@ export interface JobStatus extends Schema.Schema.Type<typeof JobStatus> {}
 
 /**
  * How Upkeep is as a whole: `ok`, `warning` while anything needs you, or
- * `degraded` while no worker is live to run anything.
+ * `degraded` while no live worker runs the jobs, as when every one only keeps
+ * its own machine current.
  */
 export const Health = Schema.Literals(["ok", "warning", "degraded"]);
 

@@ -68,6 +68,7 @@ import {
   TimelineWho,
   TrackedRepo,
   WorkerAgents,
+  WorkerMachine,
   WorkerSession,
 } from "./Domain";
 
@@ -981,6 +982,13 @@ export class WorkGroup extends HttpApiGroup.make("work")
       payload: Schema.Struct({
         jobs: Schema.Array(JobId),
         agents: Schema.optionalKey(AgentSetup),
+        /**
+         * The `dot up` stages the worker runs, whatever its lanes ask for
+         * right now, any it runs on a cron of its own, and whether it takes
+         * nothing else. Missing from older workers, which run every stage but
+         * the opt-in ones.
+         */
+        machine: Schema.optionalKey(WorkerMachine),
         protocol: Schema.optionalKey(Schema.Int),
         wait: Schema.optionalKey(Schema.Int),
       }),

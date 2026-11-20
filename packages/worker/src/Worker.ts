@@ -131,6 +131,13 @@ export class RunLost extends Schema.TaggedError<RunLost>()("RunLost", {
   }
 }
 
+/** The worker's settings leave it no job to take, such as no machine stages. */
+export class NoJobs extends Schema.TaggedError<NoJobs>()("NoJobs", {}) {
+  override get message() {
+    return "The settings leave this worker no jobs to take: list a machine stage, or drop machine.only";
+  }
+}
+
 /**
  * Some of a job's consumers failed. The server queues a heal for each one,
  * rather than one for Upkeep itself. Why each failed follows, as the job
@@ -415,7 +422,20 @@ export const work = Effect.fn("Worker.work")(function* (
   options: WorkOptions = {},
 ) {
   const client = yield* Client;
-  const jobs = Record.keys(handlers);
+  // Read once, so the lanes and what the server is told stay as they started
+  const machineSettings = yield* Settings.loadMachine();
+
+  const jobs = Record.keys(handlers).filter((id) =>
+    Settings.takes(
+      machineSettings,
+      Catalogue.jobs.find((job) => job.id === id),
+    ),
+  );
+
+  const machine = Settings.machineReport(machineSettings, jobs);
+
+  if (jobs.length === 0) return yield* new NoJobs();
+
   const pollInterval = options.pollInterval ?? "30 seconds";
   const commandPollInterval = options.commandPollInterval ?? "3 seconds";
   const heartbeatInterval = options.heartbeatInterval ?? "1 minute";
@@ -578,6 +598,12 @@ export const work = Effect.fn("Worker.work")(function* (
   });
 
   yield* Effect.logInfo(`Waiting for runs of ${jobs.join(", ")}`);
+
+  if (machine.only)
+    yield* Effect.logInfo(
+      `Only keeping this machine current, with dot up ${machine.stages.join(", ")}`,
+    );
+
   yield* status.write;
 
   // What needs a person: parked jobs and heals from the last day that asked.
@@ -644,7 +670,7 @@ export const work = Effect.fn("Worker.work")(function* (
     const next = Effect.gen(function* () {
       const claimable = yield* holdOff(command, laneJobs);
 
-      const setup = command ? {} : yield* agents;
+      const setup = command ? {} : { ...(yield* agents), machine };
       const resting = command ? false : yield* quiet;
       const started = yield* Clock.currentTimeMillis;
 
@@ -742,6 +768,10 @@ export const work = Effect.fn("Worker.work")(function* (
   const lanes = Domain.Lane.literals
     .map((name) => [name, jobs.filter((job) => laneOf(job) === name)] as const)
     .filter(([, jobsInLane]) => jobsInLane.length > 0);
+
+  yield* Effect.logInfo(
+    `Running the ${lanes.map(([name]) => name).join(", ")} lanes`,
+  );
 
   // Heals run side by side, as many as the settings allow, so a drift review
   // handed off for several repositories isn't worked through one at a time

@@ -49,8 +49,8 @@ export interface EventRun {
  *   or `drift` when it changed the dependency config or `tooling.yml`, or
  *   more paths than the event lists;
  * - a workflow run completing on the default branch: `ci` for the repository,
- *   and `up-first-party` on every worker when it's a successful publish of
- *   the first-party Arch packages.
+ *   and `up-first-party` on each worker that runs it when it's a successful
+ *   publish of the first-party Arch packages.
  *
  * Upkeep's own pushes come back too. Each is cheap: watch already knows its
  * commits, and deps and drift only run again when a push changed their

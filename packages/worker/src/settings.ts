@@ -4,8 +4,16 @@
  * derived, such as the checks of a repository that doesn't follow
  * groundwork's tasks. A missing file means every default.
  */
-import { Domain } from "@upkeep/api";
-import { Config, DateTime, Effect, FileSystem, Schema } from "effect";
+import { Catalogue, Domain } from "@upkeep/api";
+import {
+  Config,
+  Cron,
+  DateTime,
+  Effect,
+  FileSystem,
+  Result,
+  Schema,
+} from "effect";
 import { Rule } from "./deps/Policy";
 
 /** How the bump job treats one consumer. */
@@ -246,10 +254,36 @@ const QuietHours = Schema.Struct({ start: TimeOfDay, end: TimeOfDay });
 
 export type QuietHours = typeof QuietHours.Type;
 
+/** A cron expression, checked when the settings are read. */
+const CronString = Schema.String.check(
+  Schema.makeFilter((cron) =>
+    Result.isFailure(Cron.parse(cron))
+      ? `${cron} isn't a cron expression`
+      : undefined,
+  ),
+);
+
+/**
+ * The `dot up` stages this worker keeps current. Every stage but the opt-in
+ * ones by default. `only` takes no other jobs, for a machine that should only
+ * keep itself current. `schedules` moves a stage to another cron on this
+ * worker only. Read once at start, so a change needs a restart.
+ */
+const Machine = Schema.Struct({
+  only: Schema.optionalKey(Schema.Boolean),
+  stages: Schema.optionalKey(Schema.Array(Catalogue.Stage)),
+  schedules: Schema.optionalKey(
+    Schema.Record(Catalogue.Stage, Schema.optionalKey(CronString)),
+  ),
+});
+
+export type Machine = typeof Machine.Type;
+
 export const Settings = Schema.Struct({
   attention: Schema.optionalKey(Attention),
   notify: Schema.optionalKey(Notify),
   quietHours: Schema.optionalKey(QuietHours),
+  machine: Schema.optionalKey(Machine),
   /**
    * Opt in to naming tracked repositories from your own list, over their
    * README titles. The watch job runs `command` each time and reads the JSON
@@ -475,4 +509,59 @@ export const load = Effect.fnUntraced(function* () {
         Schema.decodeUnknownEffect(Schema.fromJsonString(Settings)),
       ),
     );
+});
+
+/**
+ * Read only the machine settings, failing when they're wrong, so a typo stops
+ * the worker at start rather than leaving it to take every job.
+ */
+export const loadMachine = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const file = yield* path;
+
+  if (!(yield* fs.exists(file))) return undefined;
+
+  const { machine } = yield* fs
+    .readFileString(file)
+    .pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({ machine: Schema.optionalKey(Machine) }),
+          ),
+        ),
+      ),
+    );
+
+  return machine;
+});
+
+/**
+ * Whether a worker with these machine settings takes a job: a machine job
+ * when it lists the job's stage, or doesn't list any and the stage isn't
+ * opt-in, and any other job unless it only keeps its machine current.
+ */
+export const takes = (
+  machine: Machine | undefined,
+  job: Domain.Job | undefined,
+) => {
+  if (job?.stage === undefined) return machine?.only !== true;
+
+  if (machine?.stages === undefined) return job.optIn !== true;
+
+  return machine.stages.some((stage) => stage === job.stage);
+};
+
+/** The machine stages a worker taking these jobs tells the server. */
+export const machineReport = (
+  machine: Machine | undefined,
+  jobs: ReadonlyArray<string>,
+): Domain.WorkerMachine => ({
+  stages: jobs.flatMap((id) => {
+    const stage = Catalogue.jobs.find((job) => job.id === id)?.stage;
+
+    return stage === undefined ? [] : [stage];
+  }),
+  only: machine?.only === true,
+  ...(machine?.schedules !== undefined && { schedules: machine.schedules }),
 });
