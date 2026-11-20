@@ -70,7 +70,9 @@ upkeep status --bar-json
 `upkeep status` is Upkeep's one status, from the server's `/api/status`, which
 the bar, the OpenCode footer and agents all read, so each shows the same
 count. It's `ok`, `warning` while anything needs you, or `degraded` while no
-worker has asked for work in the last half hour. What needs you is each inbox
+worker that runs the jobs has asked for work in the last half hour, as when
+the only ones live are [maintenance-only](#maintenance-only-workers). What
+needs you is each inbox
 entry that needs a person, such as a heal that asked or a parked job, each
 skill change waiting for your approval, and each release suggested (see
 [Releases](#releases)), which alone doesn't make it `warning`, with the
@@ -870,11 +872,31 @@ Bun through `mise exec`.
 The `up-*` jobs keep each worker's own machine current, so nobody has to run
 `dot up` for the parts that need no root. Each runs one `dot up` stage
 headless, `dot up <stage> --json`, and reads what it did from the JSON it
-prints. Unlike the other jobs, they run once on every worker that asked for
-work in the last half hour rather than once overall: the server queues a run
-for each worker whose latest run of the job is older than the job's last
-scheduled time. It checks once a minute, so a worker that was off catches up
-when it comes back, and running a job by hand queues it on every live worker.
+prints. Unlike the other jobs, they run once on each worker that asked for
+work in the last half hour and runs the stage, rather than once overall: the
+server queues a run for each worker whose latest run of the job is older than
+the job's last scheduled time. It checks once a minute, so a worker that was
+off catches up when it comes back, and running a job by hand queues it on
+every live worker that runs it.
+
+A worker runs every stage by default. `machine` in its settings narrows that:
+`stages` lists the stages it runs, and `schedules` moves a stage to a cron of
+its own on that worker, leaving the others on the job's schedule:
+
+```json
+{
+  "machine": {
+    "stages": ["dotfiles", "skills", "tools"],
+    "schedules": { "tools": "30 4 * * 0" }
+  }
+}
+```
+
+A stage left out of `stages` is never queued on that worker, and its runs
+already queued there are dropped. A stage the worker doesn't know, or a cron
+that won't parse, stops it starting and says why. The worker reads these
+settings once as it starts and tells the server with each ask for work, so a
+change needs a restart.
 
 A dotfiles pull is applied by `dot up stow` and `dot up herdr` straight after
 it. When a stage changed skills or agent plugins, the job runs `dot up agents`
@@ -903,6 +925,27 @@ away.
 A worker the server refuses as [older than itself](#workers) can't take that
 run, so it runs `dot up first-party` itself, at most every 15 minutes, until
 the upgrade restarts it on a version the server takes.
+
+#### Maintenance-only workers
+
+A machine that should keep itself current without taking Upkeep's other jobs,
+such as a server, runs a worker with `machine.only`:
+
+```json
+{
+  "machine": {
+    "only": true,
+    "stages": ["dotfiles", "tools"]
+  }
+}
+```
+
+It takes only the machine jobs for its stages, or every stage when it doesn't
+list them. The dashboard's worker list shows it as `Maintenance only`, with
+the stages it runs. While every live worker is one, nothing runs the other
+jobs, so Upkeep's [status](#status) is `degraded` and names them. A worker
+whose settings leave it nothing to take, such as `only` with an empty
+`stages`, fails to start.
 
 ### Bump
 
