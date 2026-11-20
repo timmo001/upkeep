@@ -1082,6 +1082,14 @@ const migrations = SqliteMigrator.fromRecord({
 
     yield* sql`ALTER TABLE worker_agents ADD COLUMN machine TEXT`;
   }),
+  // A failure a later run settled kept needing you, as did a run that held a
+  // skill change for you after the change landed or was dropped
+  "0051_settled_attention": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* clearAttention(sql, sql`settled_by IS NOT NULL`);
+    yield* clearAttention(sql, skillChangesOver(sql));
+  }),
 });
 
 /** A run's columns for settling the failures before it. */
@@ -1126,6 +1134,63 @@ const settleHealRuns = (sql: SqlClient.SqlClient) =>
         WHERE failed.id = runs.heal_of AND failed.settled_by IS NOT NULL
       )
   `;
+
+/**
+ * Clear what the runs `condition` picks, besides heals, left for a person:
+ * their attention, and the entries they raised.
+ */
+const clearAttention = (
+  sql: SqlClient.SqlClient,
+  condition: Statement.Fragment,
+) =>
+  Effect.gen(function* () {
+    const cleared = yield* sql<{ id: string }>`
+      UPDATE runs SET attention = 0
+      WHERE attention = 1 AND heal_of IS NULL AND ${condition}
+      RETURNING id
+    `;
+
+    if (cleared.length === 0) return;
+
+    yield* sql`
+      UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
+      WHERE dismissed_at IS NULL AND ${sql.in(
+        "key",
+        cleared.map((row) => runNeedsKey(row.id)),
+      )}
+    `;
+  });
+
+/**
+ * The skill-change runs whose change is over: landed or dropped, by its ID
+ * or, for one that started it, by its title once no change of that title is
+ * still open.
+ */
+const skillChangesOver = (sql: SqlClient.SqlClient) => {
+  const started = (state: Statement.Fragment) => sql`
+    SELECT 1 FROM skill_changes
+    WHERE skill_changes.repo = json_extract(runs.command, '$.repo')
+      AND skill_changes.title = json_extract(runs.command, '$.title')
+      AND ${state}
+  `;
+
+  return sql`
+    runs.job = ${Catalogue.skillChange.id} AND (
+      EXISTS (
+        SELECT 1 FROM skill_changes
+        WHERE skill_changes.id = json_extract(runs.command, '$.change')
+          AND skill_changes.state IN ('landed', 'dropped')
+      )
+      OR (
+        json_extract(runs.command, '$.kind') = 'skill-start'
+        AND EXISTS (${started(sql`1 = 1`)})
+        AND NOT EXISTS (
+          ${started(sql`skill_changes.state NOT IN ('landed', 'dropped')`)}
+        )
+      )
+    )
+  `;
+};
 
 /** The runs that handed work off to heals, one for each repository. */
 const handedOff = (sql: SqlClient.SqlClient) =>
@@ -2770,6 +2835,7 @@ export class Store extends Context.Service<
           WHERE ${sql.in("id", ids)}
         `;
         yield* settleHealRuns(sql);
+        yield* clearAttention(sql, sql.in("id", ids));
       }).pipe(Effect.catchTag("SchemaError", Effect.die));
 
     /**
@@ -2798,21 +2864,7 @@ export class Store extends Context.Service<
       yield* settleHealRuns(sql);
 
       // A run that left something for you no longer needs you once settled
-      const cleared = yield* sql<{ id: string }>`
-        UPDATE runs SET attention = 0
-        WHERE settled_by = ${by} AND heal_of IS NULL AND attention = 1
-        RETURNING id
-      `;
-
-      if (cleared.length > 0) {
-        yield* sql`
-          UPDATE entries SET dismissed_at = ${yield* Clock.currentTimeMillis}
-          WHERE dismissed_at IS NULL AND ${sql.in(
-            "key",
-            cleared.map((row) => runNeedsKey(row.id)),
-          )}
-        `;
-      }
+      yield* clearAttention(sql, sql`settled_by = ${by}`);
     }, Effect.mapError(storeError));
 
     /**
@@ -3681,6 +3733,9 @@ export class Store extends Context.Service<
             state = excluded.state, commit_sha = excluded.commit_sha,
             note = excluded.note, at = excluded.at
         `;
+
+        if (change.state === "landed" || change.state === "dropped")
+          yield* clearAttention(sql, skillChangesOver(sql));
       },
       sql.withTransaction,
       Effect.mapError(storeError),
@@ -3719,6 +3774,12 @@ export class Store extends Context.Service<
 
         if (rows.length === 0)
           return yield* new Api.SkillChangeNotFound({ id });
+
+        // The runs that held it for you are done with once it's over
+        if (update.state === "landed" || update.state === "dropped")
+          yield* clearAttention(sql, skillChangesOver(sql)).pipe(
+            Effect.mapError(storeError),
+          );
       },
     );
 
@@ -6295,10 +6356,16 @@ export class Store extends Context.Service<
         setAgents,
       ),
       agents,
-      putSkillChange: announce(touches("skills"), putSkillChange),
+      putSkillChange: announce(
+        touches("skills", "runs", "inbox"),
+        putSkillChange,
+      ),
       skillChange,
       skillChanges,
-      setSkillChangeState: announce(touches("skills"), setSkillChangeState),
+      setSkillChangeState: announce(
+        touches("skills", "runs", "inbox"),
+        setSkillChangeState,
+      ),
       putSkills: announce(touches("skills"), putSkills),
       skillsPage,
       putRelease: announce(touches("releases"), putRelease),

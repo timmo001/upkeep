@@ -1458,6 +1458,96 @@ test("a run that isn't a heal needs you when it leaves something for you", () =>
     }),
   ));
 
+const needsEntries = Effect.gen(function* () {
+  const { entries } = yield* (yield* Store).inbox(0);
+
+  return entries.filter((entry) => entry.kind === "needs");
+});
+
+test("a failure that needs you stops needing you once a later run passes", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "labels",
+        trigger: "manual",
+        release: null,
+      });
+
+      const id = Option.getOrThrow(
+        yield* store.claim(["labels"], "desktop"),
+      ).id;
+
+      yield* store.report(id, "desktop", { attention: true });
+      yield* store.finish(id, "desktop", "failed", "Red");
+
+      expect((yield* needsEntries).map((entry) => entry.run)).toEqual([id]);
+
+      const passed = yield* finished("labels", "succeeded");
+
+      expect(yield* store.run(id)).toMatchObject({
+        settledBy: passed.id,
+        attention: false,
+      });
+      expect(yield* needsEntries).toEqual([]);
+    }),
+  ));
+
+test("a run that held a skill change stops needing you once it lands", () =>
+  run(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.queueRun({
+        job: "skill-change",
+        trigger: "manual",
+        release: null,
+        command: {
+          kind: "skill-start",
+          repo: "timmo001/skills",
+          title: "gh-stack v2",
+          skills: ["gh-stack"],
+          work: "release",
+          reason: "Upstream moved",
+        },
+      });
+
+      const id = Option.getOrThrow(
+        yield* store.claim(["skill-change"], "desktop"),
+      ).id;
+
+      yield* store.putSkillChange("held", "desktop", {
+        repo: "timmo001/skills",
+        title: "gh-stack v2",
+        skills: ["gh-stack"],
+        work: "release",
+        reason: "Upstream moved",
+        base: "abc",
+        patch: "patch",
+        subject: "Update skill: gh-stack",
+        summary: null,
+        session: null,
+        directory: "/tmp/gh-stack",
+        state: "waiting",
+        commit: null,
+        note: null,
+      });
+      yield* store.report(id, "desktop", { attention: true });
+      yield* store.finish(id, "desktop", "succeeded", null);
+
+      expect((yield* needsEntries).map((entry) => entry.run)).toEqual([id]);
+
+      yield* store.setSkillChangeState("held", {
+        state: "landed",
+        commit: "def",
+      });
+
+      expect((yield* store.run(id)).attention).toBe(false);
+      expect(yield* needsEntries).toEqual([]);
+    }),
+  ));
+
 test("settling a job's heals clears its entry once none still needs a person", () =>
   run(
     Effect.gen(function* () {
