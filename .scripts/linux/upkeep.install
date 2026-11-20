@@ -2,7 +2,8 @@ post_install() {
   _upkeep_user_systemctl_installing daemon-reload
 
   cat <<'EOF'
-upkeep: installed the user service upkeep-worker.service, not enabled.
+upkeep: installed the user services upkeep-worker.service and
+upkeep-server.service, neither enabled.
 
 On a machine that runs jobs, add it with `upkeep workers add <name>`, then put
 the server's URL and the printed token in ~/.config/upkeep/worker.env:
@@ -16,11 +17,17 @@ and run:
 Dashboard upkeep:// session links open through `upkeep open`, with
 attention.resume set in ~/.config/upkeep/config.json and the admin's
 UPKEEP_SERVER and UPKEEP_ADMIN_TOKEN in ~/.config/upkeep/admin.env.
+
+On the machine that runs the server, put its settings in
+~/.config/upkeep/server.env and run:
+  systemctl --user enable --now upkeep-server.service
 EOF
 }
 
 post_upgrade() {
   _upkeep_user_systemctl_installing daemon-reload
+  # Workers retry until the server is back
+  _upkeep_user_systemctl_installing try-restart upkeep-server.service
   # SIGHUP asks the worker to finish its runs and restart on the new binary,
   # rather than cutting them off as a restart would. Only the main process
   # gets it, so the commands its runs started carry on.
@@ -29,6 +36,7 @@ post_upgrade() {
 
 pre_remove() {
   _upkeep_user_systemctl_installing disable --now upkeep-worker.service
+  _upkeep_user_systemctl_installing disable --now upkeep-server.service
 }
 
 # The user who ran the install through sudo or pkexec, if not root.

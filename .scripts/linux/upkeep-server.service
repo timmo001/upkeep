@@ -1,0 +1,19 @@
+[Unit]
+Description=Upkeep server, keeping the runs and queueing jobs for workers
+Documentation=https://upkeep.timmo.dev/running
+After=network-online.target
+Wants=network-online.target
+# Needs the server's settings, such as UPKEEP_HOSTNAME and
+# UPKEEP_SERVER_ADMIN_TOKEN. The store is in ~/.local/state/upkeep unless
+# UPKEEP_SERVER_DB says otherwise.
+ConditionPathExists=%h/.config/upkeep/server.env
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/upkeep/server.env
+ExecStart=/usr/bin/upkeep serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

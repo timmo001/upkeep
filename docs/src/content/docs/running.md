@@ -36,6 +36,19 @@ The settings can also come from a JSON file at `UPKEEP_OPTIONS`, with
 lowercase keys and no `UPKEEP_` prefix, such as `{ "keep_days": 14 }`. The
 environment wins over the file.
 
+### systemd
+
+The Arch package `upkeep-git` installs a user unit, `upkeep-server.service`,
+that isn't enabled. Put the settings in `~/.config/upkeep/server.env`, such as
+`UPKEEP_HOSTNAME=0.0.0.0` to take workers from other machines, then:
+
+```bash
+systemctl --user enable --now upkeep-server.service
+```
+
+The store is in `~/.local/state/upkeep` unless `UPKEEP_SERVER_DB` says
+otherwise. An upgrade restarts the server, and workers retry until it's back.
+
 ### Home Assistant
 
 The server also ships as a Home Assistant app, `ghcr.io/timmo001/upkeep-app`,
