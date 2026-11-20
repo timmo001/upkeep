@@ -18,6 +18,7 @@ import {
   Clock,
   Config,
   Cron,
+  Deferred,
   Duration,
   Effect,
   Layer,
@@ -27,6 +28,7 @@ import {
   Result,
   Schedule,
   Schema,
+  Stream,
   Struct,
 } from "effect";
 import {
@@ -35,9 +37,11 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { HttpApiBuilder } from "effect/http-api";
+import { HttpApiBuilder, HttpApiSchema } from "effect/http-api";
+import * as Backups from "./Backups";
 import { Events } from "./Events";
 import { GitHubApp } from "./GitHubApp";
+import { Restart } from "./Restart";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -2298,6 +2302,58 @@ const TokensHandlers = HttpApiBuilder.group(
   }),
 );
 
+/** A backup as a file to save, under its own name. */
+const asFile = (download: Backups.Download) =>
+  HttpApiSchema.withHeaders({
+    // Headers are already sent by the time anything fails, so a failure
+    // ends the download early and is only logged
+    body: download.data.pipe(
+      Stream.tapError((error) =>
+        Effect.logWarning(
+          `The download of ${download.name} stopped: ${error.message}`,
+        ),
+      ),
+    ),
+    headers: {
+      "content-disposition": `attachment; filename="${download.name}"`,
+    },
+  });
+
+const BackupsHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "backups",
+  Effect.fn(function* (handlers) {
+    const backups = yield* Backups.Backups;
+
+    return handlers.handleAll({
+      list: () => backups.list,
+      create: () => backups.create,
+      file: ({ params }) => backups.file(params.name).pipe(Effect.map(asFile)),
+      link: ({ params }) =>
+        backups
+          .link(params.name)
+          .pipe(
+            Effect.map((code) => ({ path: `api/backups/download/${code}` })),
+          ),
+      remove: ({ params }) => backups.remove(params.name),
+      restore: ({ params }) => backups.restore(params.name),
+      upload: ({ payload }) => backups.upload(payload),
+    });
+  }),
+);
+
+const BackupDownloadsHandlers = HttpApiBuilder.group(
+  Api.Api,
+  "backupDownloads",
+  Effect.fn(function* (handlers) {
+    const backups = yield* Backups.Backups;
+
+    return handlers.handle("download", ({ params }) =>
+      backups.download(params.code).pipe(Effect.map(asFile)),
+    );
+  }),
+);
+
 const SystemHandlers = HttpApiBuilder.group(Api.Api, "system", (handlers) =>
   Effect.succeed(
     handlers
@@ -2306,7 +2362,7 @@ const SystemHandlers = HttpApiBuilder.group(Api.Api, "system", (handlers) =>
   ),
 );
 
-/** The API's routes with `adminAuthorization`, needing a `Store` and `Tokens`. */
+/** The API's routes with `adminAuthorization`, needing a `Store`, `Tokens` and `Backups`. */
 const apiRoutes = (
   adminAuthorization: Layer.Layer<Api.AdminAuthorization, never, Tokens>,
 ) =>
@@ -2329,6 +2385,8 @@ const apiRoutes = (
       NotesHandlers,
       ThemeHandlers,
       TokensHandlers,
+      BackupsHandlers,
+      BackupDownloadsHandlers,
       SystemHandlers,
     ]),
     Layer.provide([adminAuthorization, WorkerAuthorizationLayer]),
@@ -2918,9 +2976,16 @@ export interface ServeOptions {
 const gracefulShutdownTimeout = Duration.seconds(3);
 
 /**
+ * The largest request the server takes: a backup's upload can be as big as
+ * the store, more than Bun's default of 128 MB.
+ */
+const maxRequestBodySize = 2 ** 40;
+
+/**
  * Serve the API and the dashboard over plain HTTP, with the scheduler and the
  * lost-run, unpark, waiting heal and prune sweeps. For HTTPS, put it behind a
- * reverse proxy, which handles TLS.
+ * reverse proxy, which handles TLS. A restore needs a `Restart`, which `run`
+ * gives it.
  */
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
@@ -2932,6 +2997,7 @@ export const layer = (options: ServeOptions) =>
           hostname: options.hostname,
           port: options.port,
           gracefulShutdownTimeout,
+          maxRequestBodySize,
         }),
       ),
     ),
@@ -2953,6 +3019,7 @@ export const layer = (options: ServeOptions) =>
               hostname: options.hostname,
               port,
               gracefulShutdownTimeout,
+              maxRequestBodySize,
             }),
           ),
         ),
@@ -2967,6 +3034,43 @@ export const layer = (options: ServeOptions) =>
     pruneRuns,
     pullEvents,
   ).pipe(
-    Layer.provide([Tokens.layer, Triage.layer, Events.layer, GitHubApp.layer]),
+    Layer.provide([
+      Tokens.layer,
+      Triage.layer,
+      Events.layer,
+      GitHubApp.layer,
+      Backups.Backups.layer,
+    ]),
     Layer.provideMerge(Store.layer),
   );
+
+/**
+ * Run the server until it's stopped, putting a staged restore in place
+ * before each start. Asked to restart, such as by a restore, it stops
+ * everything and starts again in this process.
+ */
+export const run = (options: ServeOptions) =>
+  Effect.gen(function* () {
+    while (true) {
+      yield* Backups.applyPending;
+
+      const restarting = yield* Deferred.make<void>();
+
+      const restart = Layer.succeed(
+        Restart,
+        Restart.of({
+          request: Deferred.succeed(restarting, undefined).pipe(Effect.asVoid),
+        }),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(layer(options).pipe(Layer.provide(restart)));
+          yield* Deferred.await(restarting);
+          // So the request that asked gets its answer first
+          yield* Effect.sleep(Duration.seconds(1));
+          yield* Effect.logInfo("Restarting the server");
+        }),
+      );
+    }
+  });

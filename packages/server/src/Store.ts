@@ -100,7 +100,7 @@ const joinUpdates = (
     }
   });
 
-const migrations = SqliteMigrator.fromRecord({
+const migrationSteps = {
   "0001_runs_releases_tokens": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
@@ -1090,7 +1090,14 @@ const migrations = SqliteMigrator.fromRecord({
     yield* clearAttention(sql, sql`settled_by IS NOT NULL`);
     yield* clearAttention(sql, skillChangesOver(sql));
   }),
-});
+};
+
+const migrations = SqliteMigrator.fromRecord(migrationSteps);
+
+/** The newest migration this server knows, which a backup can't be past. */
+export const latestMigration = Math.max(
+  ...Object.keys(migrationSteps).map((key) => Number.parseInt(key, 10)),
+);
 
 /** A run's columns for settling the failures before it. */
 const decodeSettling = Schema.decodeUnknownEffect(
@@ -2490,6 +2497,11 @@ export class Store extends Context.Service<
       scope: Api.TokenScope,
       name: string,
     ): Effect.Effect<boolean, StoreError>;
+    /**
+     * Write a consistent copy of the whole store to `path`, which mustn't
+     * exist yet, while it stays in use.
+     */
+    copyTo(path: string): Effect.Effect<void, StoreError>;
     /** Every change from now on, as it's written. */
     readonly changes: Stream.Stream<Domain.StateChange>;
     /**
@@ -6267,6 +6279,10 @@ export class Store extends Context.Service<
       return rows.length > 0;
     }, Effect.mapError(storeError));
 
+    const copyTo = Effect.fn("Store.copyTo")(function* (path: string) {
+      yield* sql`VACUUM INTO ${path}`;
+    }, Effect.mapError(storeError));
+
     yield* backfill.pipe(Effect.catchCause(Effect.logError));
 
     // A change goes out once its write has succeeded, so whoever hears of it
@@ -6489,6 +6505,7 @@ export class Store extends Context.Service<
       tokenName,
       tokens,
       removeToken,
+      copyTo,
       changes: Stream.fromPubSub(changes),
       subscribe: PubSub.subscribe(changes),
     });
@@ -6516,15 +6533,7 @@ export class Store extends Context.Service<
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
-
-      const stateHome = yield* Config.String("XDG_STATE_HOME").pipe(
-        Config.withDefault(path.join(home, ".local", "state")),
-      );
-
-      const filename = yield* Config.String("UPKEEP_SERVER_DB").pipe(
-        Config.withDefault(path.join(stateHome, "upkeep", "server.db")),
-      );
+      const filename = yield* storeFile;
 
       yield* fs.makeDirectory(path.dirname(filename), { recursive: true });
 
@@ -6532,3 +6541,17 @@ export class Store extends Context.Service<
     }),
   );
 }
+
+/** Where the store is: `$UPKEEP_SERVER_DB`, or `server.db` in `$XDG_STATE_HOME/upkeep`. */
+export const storeFile = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
+
+  const stateHome = yield* Config.String("XDG_STATE_HOME").pipe(
+    Config.withDefault(path.join(home, ".local", "state")),
+  );
+
+  return yield* Config.String("UPKEEP_SERVER_DB").pipe(
+    Config.withDefault(path.join(stateHome, "upkeep", "server.db")),
+  );
+});

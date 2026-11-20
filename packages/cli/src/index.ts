@@ -18,10 +18,12 @@ import {
   Console,
   Effect,
   Exit,
+  FileSystem,
   Layer,
   Option,
   Runtime,
   Schema,
+  Stream,
 } from "effect";
 import { Argument, CliError, Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -172,7 +174,7 @@ const serve = Command.make(
       Flag.withDefault("172.30.32.2"),
     ),
   },
-  (options) => Layer.launch(Server.layer(options)),
+  (options) => Server.run(options),
 ).pipe(
   Command.withDescription(
     "Run the server: the API, the dashboard, the job schedule and the store in $UPKEEP_SERVER_DB",
@@ -808,6 +810,148 @@ const workers = tokenCommands({
     "A name for the worker that doesn't identify the machine, such as desktop",
   variable: "UPKEEP_WORKER_TOKEN on the worker",
 });
+
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+const backupsList = Command.make(
+  "backups",
+  { json, server },
+  Effect.fn(
+    function* (input) {
+      const all = yield* (yield* Client).backups.list();
+
+      if (input.json) return yield* Console.log(JSON.stringify(all, null, 2));
+
+      if (all.length === 0) {
+        return yield* Console.log(
+          "No backups are kept on the server. Make one with upkeep backups make.",
+        );
+      }
+
+      for (const backup of all) {
+        yield* Console.log(
+          `${backup.name}  ${megabytes(backup.bytes)}  ${time(backup.at)}`,
+        );
+      }
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+);
+
+const backupsMake = Command.make(
+  "make",
+  { json, server },
+  Effect.fn(
+    function* (input) {
+      const made = yield* (yield* Client).backups.create();
+
+      if (input.json) return yield* Console.log(JSON.stringify(made, null, 2));
+
+      yield* Console.log(
+        `Made ${made.name} (${megabytes(made.bytes)}). Download it with upkeep backups get ${made.name}.`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Back up the server's store, keeping it on the server. Settings aren't in it",
+  ),
+);
+
+const backupName = Argument.String("name").pipe(
+  Argument.withDescription(
+    "The backup's name on the server, from upkeep backups",
+  ),
+);
+
+const backupsGet = Command.make(
+  "get",
+  {
+    name: backupName,
+    output: Flag.String("output").pipe(
+      Flag.withAlias("o"),
+      Flag.withDescription("Where to save it; its own name here by default"),
+      Flag.optional,
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const fs = yield* FileSystem.FileSystem;
+      const file = Option.getOrElse(input.output, () => input.name);
+
+      const response = yield* (yield* Client).backups.file({
+        params: { name: input.name },
+      });
+
+      yield* response.body.pipe(Stream.run(fs.sink(file)));
+
+      const info = yield* fs.stat(file);
+
+      yield* Console.log(`Saved ${file} (${megabytes(Number(info.size))})`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("Download a backup kept on the server"));
+
+const backupsRemove = Command.make(
+  "remove",
+  { name: backupName, server },
+  Effect.fn(
+    function* (input) {
+      yield* (yield* Client).backups.remove({ params: { name: input.name } });
+
+      yield* Console.log(`Removed ${input.name}`);
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(Command.withDescription("Remove a backup kept on the server"));
+
+const backupsRestore = Command.make(
+  "restore",
+  {
+    backup: Argument.String("backup").pipe(
+      Argument.withDescription(
+        "A backup file here, or the name of one kept on the server, from upkeep backups",
+      ),
+    ),
+    server,
+  },
+  Effect.fn(
+    function* (input) {
+      const fs = yield* FileSystem.FileSystem;
+      const client = yield* Client;
+
+      if (yield* fs.exists(input.backup)) {
+        yield* client.backups.upload({ payload: fs.stream(input.backup) });
+      } else {
+        yield* client.backups.restore({ params: { name: input.backup } });
+      }
+
+      yield* Console.log(
+        `Restoring ${input.backup}: the server checked it and is starting again on it. The store it replaced is kept beside it as server.db.before-restore.`,
+      );
+    },
+    (effect, input) => Effect.provide(effect, adminClient(input.server)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Restore a backup, from a file here or one kept on the server. The server checks it, then starts again on it",
+  ),
+);
+
+const backups = backupsList.pipe(
+  Command.withDescription(
+    "The backups of the server's store kept on it, and making, downloading, removing and restoring them",
+  ),
+  Command.withSubcommands([
+    backupsMake,
+    backupsGet,
+    backupsRemove,
+    backupsRestore,
+  ]),
+);
 
 const repoName = Argument.String("repo").pipe(
   Argument.withDescription("The repository, as owner/name"),
@@ -1595,6 +1739,7 @@ const upkeep = Command.make("upkeep").pipe(
     github,
     admins,
     workers,
+    backups,
     agent,
     mcp,
   ]),
