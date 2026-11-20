@@ -28,7 +28,7 @@
     "lit": "3.3.3"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.70.0",
+    "@effect/tsgo": "0.73.2",
     "@oxlint/plugins": "1.94.0",
     "@phosphor-icons/core": "2.1.1",
     "@timmo001/oxlint-rules": "0.7.1",
