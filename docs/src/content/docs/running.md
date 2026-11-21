@@ -360,6 +360,22 @@ On Arch, the `upkeep-git` package builds the binary from main and installs a
 jobs use, such as `mise` and `opencode2`, then run
 `systemctl --user enable --now upkeep-worker.service`.
 
+Elsewhere, install the binary from a release with mise:
+
+```sh
+mise use -g github:timmo001/upkeep
+```
+
+Each release carries `upkeep-linux-x64` and `upkeep-linux-arm64`, with their
+checksums in `SHA256SUMS`, built at the server's version, so a worker on the
+latest release speaks the server's protocol. Run `upkeep worker` from a
+service of your own, modelled on the packaged
+[`upkeep-worker.service`](https://github.com/timmo001/upkeep/blob/main/.scripts/linux/upkeep-worker.service)
+with mise's path in place of `/usr/bin/upkeep`, so it restarts when the worker
+exits with 75 after an update. Set `machine.selfUpdate` to
+`["mise", "upgrade", "github:timmo001/upkeep"]` so it updates itself (see
+[Machines](#machines)).
+
 Workers follow main and the server ships through releases, so a worker can be
 older than the server. Each claim carries the worker's protocol, and the server
 gives a worker older than itself no runs at all rather than one it can't read:

@@ -1,7 +1,9 @@
 ---
 # Builds the Home Assistant app image for each architecture on a published
 # release, tags one multi-arch manifest at ghcr.io/timmo001/upkeep-app, then
-# has timmo001/home-assistant-apps copy the app in.
+# has timmo001/home-assistant-apps copy the app in. Also attaches the upkeep
+# binary for each architecture, so machines without the Arch package can run a
+# worker from mise.
 name: Release
 
 # yamllint disable-line rule:truthy
@@ -53,6 +55,88 @@ jobs:
       version: ${{ github.event.release.tag_name }}
       home-assistant: true
       build-args: UPKEEP_BUILD_VERSION=${{ github.event.release.tag_name }}
+
+  # The upkeep binary at the release's version, built and smoke-tested on each
+  # architecture's own runner. Releases follow the server's version, so a
+  # worker on the latest one always speaks the server's protocol.
+  binaries:
+    name: Binary (${{ matrix.arch }})
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Only Bun, at the version mise.toml pins
+      - name: Set up Bun
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+        with:
+          install_args: bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --filter @upkeep/cli --ignore-scripts
+
+      - name: Build
+        working-directory: packages/cli
+        env:
+          UPKEEP_BUILD_VERSION: ${{ github.event.release.tag_name }}
+        run: bun run build
+
+      # --version shows the version was inlined, not left as dev
+      - name: Smoke-test
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version="$(packages/cli/dist/upkeep --version)"
+          if [ "$version" != "upkeep v$TAG" ]; then
+            echo "::error title=Binary version::--version printed '$version', not 'upkeep v$TAG'"
+            exit 1
+          fi
+          packages/cli/dist/upkeep --help
+          mv packages/cli/dist/upkeep "upkeep-linux-$ARCH"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: binary-${{ matrix.arch }}-${{ github.run_id }}
+          path: upkeep-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # Attaches both binaries and their checksums to the release, replacing what
+  # an earlier attempt uploaded.
+  attach-binaries:
+    name: Attach binaries
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binary-*-${{ github.run_id }}
+          merge-multiple: true
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          sha256sum upkeep-linux-x64 upkeep-linux-arm64 > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" upkeep-linux-x64 upkeep-linux-arm64 SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
 
   # Asks timmo001/home-assistant-apps to copy this release's app folder, now
   # its image is pushed.

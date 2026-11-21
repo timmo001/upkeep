@@ -8,10 +8,12 @@ compatibility: Needs mise, Bun and the gh and ha-bridge Code Mode tools, from th
 # Releasing Upkeep
 
 The Home Assistant app runs the server and dashboard; workers run from the
-`upkeep-git` package. A change only the worker or CLI uses needs no release,
-since `publish-arch-git.yml` publishes `upkeep-git` on each push to `main`. A
-change the server serves, such as a job added to `packages/api`'s catalogue or
-anything in the server or dashboard, needs one.
+`upkeep-git` package, or from a release's `upkeep-linux-x64` and
+`upkeep-linux-arm64` binaries through mise on machines without it. A change
+only the worker or CLI uses needs no release, since `publish-arch-git.yml`
+publishes `upkeep-git` on each push to `main`; mise-installed workers pick it
+up with the next release. A change the server serves, such as a job added to
+`packages/api`'s catalogue or anything in the server or dashboard, needs one.
 
 Releases are part of this repository's rollout and need no go-ahead.
 
@@ -32,7 +34,9 @@ Releases are part of this repository's rollout and need no go-ahead.
    `gh run watch <id> --exit-status`. It builds the image per architecture,
    pushes the manifest to `ghcr.io/timmo001/upkeep-app`, then dispatches to
    timmo001/home-assistant-apps. Check that repository's Update app run
-   succeeded before installing.
+   succeeded before installing. Beside the image it builds the binary for each
+   architecture and attaches `upkeep-linux-x64`, `upkeep-linux-arm64` and
+   `SHA256SUMS`; check `gh.release_view` lists all three.
 
 ## Install
 
