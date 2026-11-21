@@ -1090,6 +1090,64 @@ const migrationSteps = {
     yield* clearAttention(sql, sql`settled_by IS NOT NULL`);
     yield* clearAttention(sql, skillChangesOver(sql));
   }),
+  // Machine jobs are named by their stage now, `dotfiles` rather than
+  // `up-dotfiles`, wherever a job ID is kept. Run IDs stay, so links to runs
+  // keep working.
+  "0052_machine_job_ids": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    const renamed = new Map(
+      ["dotfiles", "skills", "repos", "tools", "plugins", "first-party"].map(
+        (stage) => [`up-${stage}`, stage],
+      ),
+    );
+
+    for (const [old, stage] of renamed) {
+      yield* sql`UPDATE runs SET job = ${stage} WHERE job = ${old}`;
+      yield* sql`UPDATE runs SET heal_job = ${stage} WHERE heal_job = ${old}`;
+
+      for (const table of [
+        "parked",
+        "paused",
+        "waiting_heals",
+        "held_releases",
+        "entries",
+      ]) {
+        yield* sql`UPDATE ${sql(table)} SET job = ${stage} WHERE job = ${old}`;
+      }
+
+      // Only the keys that carry a job ID, matched from their start, so a
+      // commit's key naming a repository like it is left alone
+      for (const [from, to] of [
+        [`needs:heal:${old}:`, `needs:heal:${stage}:`],
+        [`needs:parked:${old}`, `needs:parked:${stage}`],
+        [`fix:${old}:`, `fix:${stage}:`],
+      ] as const) {
+        yield* sql`
+          UPDATE entries SET key = ${to} || substr(key, ${from.length + 1})
+          WHERE substr(key, 1, ${from.length}) = ${from}
+        `;
+      }
+    }
+
+    const repos = yield* sql<{ repo: string; jobs: string }>`
+      SELECT repo, jobs FROM repos
+    `;
+
+    for (const { repo, jobs } of repos) {
+      const listed = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Array(Schema.String)),
+      )(jobs).pipe(Effect.orDie);
+
+      if (!listed.some((job) => renamed.has(job))) continue;
+
+      const moved = JSON.stringify(
+        listed.map((job) => renamed.get(job) ?? job),
+      );
+
+      yield* sql`UPDATE repos SET jobs = ${moved} WHERE repo = ${repo}`;
+    }
+  }),
 };
 
 const migrations = SqliteMigrator.fromRecord(migrationSteps);

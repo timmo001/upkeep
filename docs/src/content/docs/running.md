@@ -910,15 +910,18 @@ upkeep notes keep <note>
 | `timeline`          | Every 15 minutes | Reads the events of each tracked repository and your own, and the timelines of your issues and pull requests elsewhere that changed, for the Activity page. Each read is conditional, so what hasn't changed costs nothing. See [Dashboard](#dashboard).                                                                                                                                                                                                                   |
 | `attention-context` | Every 3 hours    | Asks an agent for a note on each Attention item that changed, a follow-up on groups whose items went, and what to do about your comments. A comment also queues it. See [Attention](#attention).                                                                                                                                                                                                                                                                           |
 | `command`           | On request       | Does one thing the dashboard asks, such as mark a notification read. A failed command shows on its run and is never healed.                                                                                                                                                                                                                                                                                                                                                |
-| `up-dotfiles`       | Hourly           | Pulls the dotfiles on every worker, rebuilds `dot` and stows them. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                              |
-| `up-skills`         | Hourly           | Moves every worker's shared skills to the latest main and relinks them, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                     |
-| `up-repos`          | Every 30 minutes | Pulls the tracked repositories on every worker that are behind and have no work in progress. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                    |
-| `up-tools`          | Daily at 05:10   | Installs and upgrades every worker's mise tools. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                                |
-| `up-plugins`        | Daily at 05:20   | Updates every worker's agent plugins, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                       |
-| `up-first-party`    | Hourly           | Upgrades every worker's packages from the signed first-party Arch repository without a password, and restarts the services still running an old binary. See [Machines](#machines).                                                                                                                                                                                                                                                                                         |
+| `dotfiles`          | Hourly           | Pulls the dotfiles on every worker, rebuilds `dot` and stows them. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                              |
+| `skills`            | Hourly           | Moves every worker's shared skills to the latest main and relinks them, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                     |
+| `repos`             | Every 30 minutes | Pulls the tracked repositories on every worker that are behind and have no work in progress. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                    |
+| `tools`             | Daily at 05:10   | Installs and upgrades every worker's mise tools. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                                |
+| `plugins`           | Daily at 05:20   | Updates every worker's agent plugins, reloading agents when they changed. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                       |
+| `first-party`       | Hourly           | Upgrades every worker's packages from the signed first-party Arch repository without a password, and restarts the services still running an old binary. See [Machines](#machines).                                                                                                                                                                                                                                                                                         |
+| `containers`        | Daily at 02:00   | Updates every worker's containers to their newest images and prunes old ones. A machine without containers has nothing to do. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                   |
+| `system`            | Daily at 02:15   | Upgrades the system packages and removes what's no longer needed, on the workers that list it. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                  |
+| `clean`             | Daily at 02:50   | Removes old caches and logs, on the workers that list it. See [Machines](#machines).                                                                                                                                                                                                                                                                                                                                                                                       |
 
 With [GitHub events](/events) set up, `bump`, `watch`, `sync`, `deps`,
-`drift`, `ci`, `skill-consumers` and `up-first-party` also start seconds after
+`drift`, `ci`, `skill-consumers` and `first-party` also start seconds after
 the release, push or workflow run that concerns them, and the schedules above
 catch what an event misses.
 
@@ -932,19 +935,23 @@ Bun through `mise exec`.
 
 ### Machines
 
-The `up-*` jobs keep each worker's own machine current, so nobody has to run
-`dot up` for the parts that need no root. Each runs one `dot up` stage
-headless, `dot up <stage> --json`, and reads what it did from the JSON it
-prints. Unlike the other jobs, they run once on each worker that asked for
+The machine jobs keep each worker's own machine current, so nobody has to run
+`dot up`. Each runs one `dot up` stage headless, `dot up <stage> --json`, and
+reads what it did from the JSON it prints. A machine job's ID is its stage,
+such as `dotfiles`, and the dashboard and notifications name it by the command
+it runs, `dot up dotfiles`. Unlike the other jobs, they run once on each worker that asked for
 work in the last half hour and runs the stage, rather than once overall: the
 server queues a run for each worker whose latest run of the job is older than
 the job's last scheduled time. It checks once a minute, so a worker that was
 off catches up when it comes back, and running a job by hand queues it on
 every live worker that runs it.
 
-A worker runs every stage by default. `machine` in its settings narrows that:
-`stages` lists the stages it runs, and `schedules` moves a stage to a cron of
-its own on that worker, leaving the others on the job's schedule:
+A worker runs every stage by default, except the opt-in ones, which only run
+on the workers that list them: `system`, which needs root set up for it on
+the machine, and `clean`, which deletes files. `machine` in its
+settings changes that: `stages` lists the stages it runs, and `schedules` moves
+a stage to a cron of its own on that worker, leaving the others on the job's
+schedule:
 
 ```json
 {
@@ -971,7 +978,7 @@ Graphviz's, fails the stage and names the binary found. A
 failed stage fails its run, which shows on the dashboard and is never healed.
 The Jobs table shows each worker's latest run of each one.
 
-`up-first-party` runs `dot up first-party`, which upgrades the packages from
+`first-party` runs `dot up first-party`, which upgrades the packages from
 the signed first-party Arch repository through a root unit that the worker's
 user may start without a password. Each package's own install script restarts
 its user service, except `upkeep-git`'s: it sends the worker a SIGHUP, and the
@@ -1036,8 +1043,8 @@ such as a server, runs a worker with `machine.only`:
 }
 ```
 
-It takes only the machine jobs for its stages, or every stage when it doesn't
-list them. The dashboard's worker list shows it as `Maintenance only`, with
+It takes only the machine jobs for its stages, or every stage but the opt-in
+ones when it doesn't list them. The dashboard's worker list shows it as `Maintenance only`, with
 the stages it runs. While every live worker is one, nothing runs the other
 jobs, so Upkeep's [status](#status) is `degraded` and names them. A worker
 whose settings leave it nothing to take, such as `only` with an empty

@@ -1,8 +1,9 @@
 /**
  * GitHub events through the server's pull: a release event queues its bump
  * once, a repeated delivery is dropped, and the batch is acked. Also the
- * status, the heal a batch of runs shares once it has ended, and which
- * workers the machine jobs queue on.
+ * status, the heal a batch of runs shares once it has ended, which workers
+ * the machine jobs queue on, and how a worker that still asks for them by
+ * their old names takes them.
  */
 import { BunServices } from "@effect/platform-bun";
 import { Catalogue, type Domain } from "@upkeep/api";
@@ -12,6 +13,7 @@ import { Events } from "./Events";
 import {
   cronCache,
   healEnded,
+  legacyMachineJobs,
   pullEvents,
   queueMachineRuns,
   status,
@@ -134,12 +136,13 @@ test("machine jobs queue only on the workers that run their stage, on each one's
       );
 
       expect(queued.filter((run) => run.endsWith(":nas")).toSorted()).toEqual([
-        "up-dotfiles:nas",
-        "up-tools:nas",
+        "dotfiles:nas",
+        "tools:nas",
       ]);
 
+      // Every stage but the opt-in ones
       expect(queued.filter((run) => run.endsWith(":desktop"))).toHaveLength(
-        Catalogue.machineJobs.length,
+        Catalogue.machineJobs.filter((job) => job.optIn !== true).length,
       );
 
       expect(asked).toContain("30 4 * * 0");
@@ -150,7 +153,7 @@ test("machine jobs queue only on the workers that run their stage, on each one's
         only: true,
       });
 
-      const left = yield* store.runs({ job: "up-tools", limit: 10 });
+      const left = yield* store.runs({ job: "tools", limit: 10 });
 
       expect(
         left.map((run) =>
@@ -163,10 +166,33 @@ test("machine jobs queue only on the workers that run their stage, on each one's
     ),
   ));
 
+test("a worker from before the rename still takes first-party, under its old name", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.setAgents("desktop", setup);
+      yield* queueMachineRuns(cronCache());
+
+      const legacy = legacyMachineJobs(["up-first-party", "drift"]);
+
+      expect(legacy.jobs).toEqual(["first-party", "drift"]);
+
+      const claimed = yield* store.claim(legacy.jobs, "desktop");
+
+      expect(Option.map(claimed, (run) => legacy.named(run).job)).toEqual(
+        Option.some("up-first-party"),
+      );
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
+
 test("an opt-in stage only runs on the workers that list it", () => {
   const job: Domain.Job = {
-    id: "up-dotfiles",
-    name: "Dotfiles",
+    id: "dotfiles",
+    name: "dot up dotfiles",
     description: "Pulls the dotfiles",
     schedule: null,
     onRelease: false,

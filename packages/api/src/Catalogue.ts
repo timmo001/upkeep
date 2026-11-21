@@ -260,24 +260,27 @@ export const Stage = Schema.Literals([
   "tools",
   "plugins",
   "first-party",
+  "containers",
+  "system",
+  "clean",
 ]);
 
 export type Stage = typeof Stage.Type;
 
 /**
  * A machine job: one `dot up` stage, run headless on each live worker that
- * runs it so each machine keeps itself current without `dot up`. An opt-in
- * stage only runs on the workers that list it.
+ * runs it so each machine keeps itself current without `dot up`. Its ID is
+ * the stage and its name the command it runs. An opt-in stage only runs on
+ * the workers that list it.
  */
 const machine = (
   stage: Stage,
-  name: string,
   description: string,
   schedule: string,
   options: { readonly optIn?: boolean } = {},
 ): Job => ({
-  id: `up-${stage}`,
-  name,
+  id: stage,
+  name: `dot up ${stage}`,
   description: `${description}, on each worker that runs it, through \`dot up ${stage}\``,
   schedule,
   onRelease: false,
@@ -290,44 +293,59 @@ const machine = (
 
 export const upDotfiles = machine(
   "dotfiles",
-  "Dotfiles",
   "Pull the dotfiles, rebuild dot and stow what changed",
   "5 * * * *",
 );
 
 export const upSkills = machine(
   "skills",
-  "Skills",
   "Move the shared skills to the latest main and relink them, reloading agents when they changed",
   "50 * * * *",
 );
 
 export const upRepos = machine(
   "repos",
-  "Repositories",
   "Pull the tracked repositories that are behind and have no work in progress",
   "20,50 * * * *",
 );
 
 export const upTools = machine(
   "tools",
-  "Tools",
   "Install and upgrade mise tools",
   "10 5 * * *",
 );
 
 export const upPlugins = machine(
   "plugins",
-  "Agent plugins",
   "Update the Pi, Plannotator and OpenCode plugins, reloading agents when they changed",
   "20 5 * * *",
 );
 
 export const upFirstParty = machine(
   "first-party",
-  "First-party packages",
   "Upgrade the packages from the signed first-party Arch repository without a password, and restart the services still running an old binary",
   "35 * * * *",
+);
+
+// Not opt-in: on a machine without containers the stage has nothing to do
+export const upContainers = machine(
+  "containers",
+  "Update containers to their newest images and prune old ones",
+  "0 2 * * *",
+);
+
+export const upSystem = machine(
+  "system",
+  "Upgrade system packages and remove what's no longer needed",
+  "15 2 * * *",
+  { optIn: true },
+);
+
+export const upClean = machine(
+  "clean",
+  "Remove old caches and logs",
+  "50 2 * * *",
+  { optIn: true },
 );
 
 /** The machine jobs, in the order a worker catching up runs them. */
@@ -338,6 +356,9 @@ export const machineJobs: ReadonlyArray<Job> = [
   upTools,
   upPlugins,
   upFirstParty,
+  upContainers,
+  upSystem,
+  upClean,
 ];
 
 /**
