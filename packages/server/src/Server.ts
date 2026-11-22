@@ -2449,6 +2449,20 @@ const versionGuard = guardVersion({
   guards: (path) => path.startsWith("/api/"),
 });
 
+/**
+ * Leaves successful responses out of the log, since workers and dashboards
+ * poll the API all day and logging every answer pushed everything else out of
+ * the journal. Failures and error statuses are still logged.
+ */
+const quietSuccess = <E, R>(
+  httpEffect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) =>
+  Effect.tap(httpEffect, (response) =>
+    response.status < 400
+      ? HttpMiddleware.withLoggerDisabled(Effect.void)
+      : Effect.void,
+  );
+
 /** Answers only the Supervisor on the ingress port, refusing everyone else. */
 const ingressGuard =
   (supervisor: string) =>
@@ -3017,7 +3031,7 @@ const maxRequestBodySize = 2 ** 40;
 export const layer = (options: ServeOptions) =>
   Layer.mergeAll(
     HttpRouter.serve(Layer.merge(routes, dashboard({ ingress: false })), {
-      middleware: versionGuard,
+      middleware: (effect) => quietSuccess(versionGuard(effect)),
     }).pipe(
       Layer.provide(
         BunHttpServer.layer({
@@ -3038,7 +3052,9 @@ export const layer = (options: ServeOptions) =>
           ),
           {
             middleware: (effect) =>
-              ingressGuard(options.ingressFrom)(versionGuard(effect)),
+              quietSuccess(
+                ingressGuard(options.ingressFrom)(versionGuard(effect)),
+              ),
           },
         ).pipe(
           Layer.provide(
