@@ -60,6 +60,7 @@ const extra = new Map<string, ReadonlyArray<Part>>([
   [Catalogue.stalledUpdates.id, ["pulls"]],
   [Catalogue.drift.id, ["git"]],
   [Catalogue.driftReview.id, ["git"]],
+  [Catalogue.branchDrift.id, ["git"]],
   [Catalogue.sync.id, ["git", "pulls"]],
   [Catalogue.deps.id, ["git", "pulls"]],
   [Catalogue.ci.id, ["actions"]],

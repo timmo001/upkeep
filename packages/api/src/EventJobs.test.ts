@@ -30,6 +30,7 @@ test("a push to the default branch watches and syncs the repository", () => {
   expect(jobs(push("timmo001/app", ["src/a.ts"]))).toEqual([
     "watch:timmo001/app",
     "sync:timmo001/app",
+    "branch-drift:timmo001/app",
   ]);
 });
 
@@ -46,6 +47,7 @@ test("a push that changes the dependency config or tooling.yml runs deps or drif
     "sync:timmo001/app",
     "deps:timmo001/app",
     "drift:timmo001/app",
+    "branch-drift:timmo001/app",
   ]);
 });
 
@@ -54,8 +56,11 @@ test("groundwork syncs every app, and the skills repository syncs its consumers"
   expect(jobs(push("timmo001/skills", []))).toContain("skill-consumers:all");
 });
 
-test("a push to another branch asks for nothing", () => {
-  expect(jobs(push("timmo001/app", [], { ref: "refs/heads/fix" }))).toEqual([]);
+test("a push to another branch only checks the branches that follow it", () => {
+  expect(jobs(push("timmo001/app", [], { ref: "refs/heads/fix" }))).toEqual([
+    "branch-drift:timmo001/app",
+  ]);
+  expect(jobs(push("timmo001/app", [], { ref: "refs/tags/v1" }))).toEqual([]);
 });
 
 test("a workflow run reads CI only once it completes on the default branch", () => {

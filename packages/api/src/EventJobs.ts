@@ -9,6 +9,9 @@ import type { GitHubEvent, JobId } from "./Domain";
 /** The file at a repository root that records its reviewed tool releases. */
 export const toolingFile = "tooling.yml";
 
+/** The file at a branch's root that names the branch it follows, and how. */
+export const branchFile = ".dot-branch.yml";
+
 /** Where Renovate looks for a repository's config, in its order. */
 export const renovateConfigFiles: ReadonlyArray<string> = [
   "renovate.json",
@@ -48,6 +51,8 @@ export interface EventRun {
  *   copies from it; `skill-consumers` on the skills repository; and `deps`
  *   or `drift` when it changed the dependency config or `tooling.yml`, or
  *   more paths than the event lists;
+ * - a push to any branch: `branch-drift` for the repository, since a branch
+ *   that follows the one pushed may now be behind it;
  * - a workflow run completing on the default branch: `ci` for the repository,
  *   and `first-party` on each worker that runs it when it's a successful
  *   publish of the first-party Arch packages.
@@ -61,11 +66,15 @@ export const runsFor = (event: GitHubEvent): ReadonlyArray<EventRun> => {
   const own = { repo: event.repo };
 
   if (event.event === "push") {
+    if (event.ref?.startsWith("refs/heads/") !== true) return [];
+
+    const branchDrift = { job: Catalogue.branchDrift.id, ...own };
+
     if (
       event.defaultBranch === null ||
       event.ref !== `refs/heads/${event.defaultBranch}`
     )
-      return [];
+      return [branchDrift];
 
     const changed = (matches: (path: string) => boolean) =>
       event.truncated || event.paths.some(matches);
@@ -84,6 +93,7 @@ export const runsFor = (event: GitHubEvent): ReadonlyArray<EventRun> => {
       ...(changed((path) => path === toolingFile)
         ? [{ job: Catalogue.drift.id, ...own }]
         : []),
+      branchDrift,
     ];
   }
 

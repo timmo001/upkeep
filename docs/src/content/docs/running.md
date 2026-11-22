@@ -321,8 +321,8 @@ how it ended for about a minute, so it isn't left running until it's lost. A
 worker reads GitHub through `gh`, logged in as whoever runs it.
 
 A worker runs jobs in seven lanes at once, one run per lane, so a long job
-doesn't hold up the others: heals in one, the agents you ask for (`change` and
-`skill-change`) in another, the quick jobs that read APIs or ask an agent for a
+doesn't hold up the others: heals in one, the agents (`change`, `skill-change`
+and `branch-drift`) in another, the quick jobs that read APIs or ask an agent for a
 few lines (such as `releases`, `watch`, `labels` and `notifications`) in a
 third, the jobs that clone and push to repositories in a fourth, where they
 take turns, the jobs that only read repositories or run their checks
@@ -506,8 +506,9 @@ your checkout's own branch and changes are never touched. Fetches only update
 A run's worktrees are removed when it ends, and any a run that died left
 behind go after 12 hours. An agent's, from a heal, a change or a skill change,
 are named `upkeep-agent-<kind>-<id>` and kept while it may still need you: a
-heal's until its run no longer needs you (or a week, for a change), and a
-skill change's until it has landed or been dropped. Nothing opens in Herdr
+heal's until its run no longer needs you (or a week, for a change), a
+skill change's until it has landed or been dropped, and a branch drift's until
+its branch is in step again. Nothing opens in Herdr
 until you resume one. Before a worktree is reused, empty Git lock files over an
 hour old are removed from it, its submodules and its repository, so a Git
 command cut off once, such as by a restart, doesn't fail every run after it.
@@ -515,7 +516,7 @@ command cut off once, such as by a restart, doesn't fail every run after it.
 ## Repositories
 
 Jobs that work on repositories (`releases`, `labels`, `bump`,
-`notifications`, `stalled-updates`, `drift`, `sync`, `deps` and `ci`) only touch the ones
+`notifications`, `stalled-updates`, `drift`, `branch-drift`, `sync`, `deps` and `ci`) only touch the ones
 the server tracks for them. Every other repository is left alone, and with
 none tracked they do nothing. The `watch` job reads every tracked repository,
 whatever it's opted into.
@@ -898,6 +899,7 @@ upkeep notes keep <note>
 | `stalled-updates`   | Hourly           | Takes over Renovate and Dependabot pull requests whose checks failed: squashes each onto the default branch, checks it, pushes it and closes the pull request. See [Stalled updates](#stalled-updates).                                                                                                                                                                                                                                                                    |
 | `drift`             | Every 6 hours    | Checks each repository's `tooling.yml` against the latest releases of its tools, pushes the pin moves that need no review, and fails with what to review for the rest. See [Drift](#drift).                                                                                                                                                                                                                                                                                |
 | `drift-review`      | On request       | Hands each repository tracked for `drift` to an agent, through a heal, to review as a whole against the current release of every tool in its `tooling.yml`: what it's still missing, not only what changed since the last review. See [Drift](#drift).                                                                                                                                                                                                                     |
+| `branch-drift`      | Daily at 05:00   | Keeps each branch with a `.dot-branch.yml` in step with the branch it follows, on a push to any branch too: an agent rebases each one that's behind, parents first, and the worker pushes it with a lease. See [Branch drift](#branch-drift).                                                                                                                                                                                                                              |
 | `sync`              | Hourly           | Runs groundwork's sync over the apps with a `sync.json`: carries their QML edits back to groundwork, copies its changes out, then checks and pushes each one. See [Sync](#sync).                                                                                                                                                                                                                                                                                           |
 | `deps`              | Every 6 hours    | Reads each repository's Renovate config, presets and all, without running Renovate, and logs the groups of updates it would open with who owns each: Renovate when it runs and automerges the group, otherwise Upkeep. In the repositories set to apply, it applies, checks and pushes Upkeep's groups, as a dry run by default.                                                                                                                                           |
 | `ci`                | Hourly           | Reads the latest CI on each repository's default branch, runs the checks of a red one here and fails with both, so a heal fixes it forward. See [CI](#ci).                                                                                                                                                                                                                                                                                                                 |
@@ -1520,6 +1522,55 @@ reviews every repository tracked for `drift`; it has no opt-in of its own.
 Set
 `UPKEEP_DRIFT_DRY_RUN=true` to log what would be pushed instead, without
 failing for the reviews.
+
+### Branch drift
+
+`branch-drift` keeps a repository's long-lived branches in step with the
+branch each one follows, such as a variant of a project kept on top of its
+main line. A branch opts in with a `.dot-branch.yml` at its root:
+
+```yaml
+mode: rebase # or own, which leaves the branch alone
+parent: main # the branch it's kept on top of
+ignore: # optional; parent commits that only touch these don't count as behind
+  - docs/generated.md
+```
+
+A branch without one, such as the default branch, is never touched. It runs
+daily, and on a push to any branch of a repository tracked for it, since a
+branch that follows the one pushed may now be behind it.
+
+Each run reads the file on every branch and works through the ones to rebase
+parents first. One is behind when its parent has commits it doesn't, leaving
+out those that only touch what it ignores. A branch behind its parent goes to
+an agent, the worker's `branches.agent` or else the first of `heal.agents`,
+in a worktree of its own, `upkeep-agent-branch-<repo>-<branch>`. The agent is
+told the branch's own commits, from the fork point with its parent or else
+their merge base, so only those replay even after the parent was rewritten.
+It rebases them onto the parent's tip following the branch's `AGENTS.md`, and
+runs the checks that names, without pushing. The worker then checks the rebase
+finished cleanly, holds the parent's tip, moved and left `.dot-branch.yml` as
+it was, and pushes with `--force-with-lease` on the tip it started from, so a
+branch pushed meanwhile is never overwritten.
+
+A branch waits while its parent isn't in step, and its children wait with it,
+so a branch is only rebased onto a parent that's in step itself; once the
+parent is pushed, its children go next in the same run. One the agent couldn't
+finish (it ran out of time, stopped for a decision, or its result or push
+failed) marks the run as needing you, and keeps its worktree and session to
+resume. It's skipped until it's in step again, when its worktree goes. So is a
+branch a checkout on the worker is part way through rebasing. A file that
+doesn't parse, a parent that isn't a branch and parents that loop need you
+too. None of these fails the run, so a heal never takes a branch over.
+
+```json
+{
+  "branches": {
+    "agent": { "model": "provider/model", "variant": "high" },
+    "sessionMinutes": 30
+  }
+}
+```
 
 ### Sync
 

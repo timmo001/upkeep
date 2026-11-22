@@ -105,6 +105,17 @@ export const driftReview: Job = {
   trackedAs: drift.id,
 };
 
+export const branchDrift: Job = {
+  id: "branch-drift",
+  name: "Branch drift",
+  description:
+    "Keep the branches that follow another, through a .dot-branch.yml, in step with it: an agent rebases each one that's behind, parents first, and the worker pushes it with a lease",
+  schedule: "0 5 * * *",
+  onRelease: false,
+  lane: "agent",
+  tracked: true,
+};
+
 export const sync: Job = {
   id: "sync",
   name: "Sync",
@@ -403,6 +414,7 @@ export const jobs: ReadonlyArray<Job> = [
   stalledUpdates,
   drift,
   driftReview,
+  branchDrift,
   sync,
   deps,
   ci,

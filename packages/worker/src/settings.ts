@@ -436,6 +436,24 @@ export const Settings = Schema.Struct({
       ),
     }),
   ),
+  branches: Schema.optionalKey(
+    Schema.Struct({
+      /**
+       * The OpenCode model and variant that rebases a branch behind the one
+       * it follows; the first of `heal.agents` by default.
+       */
+      agent: Schema.optionalKey(
+        Schema.Struct({
+          model: Schema.String,
+          variant: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      /** How long the agent has for a branch, 30 minutes by default. */
+      sessionMinutes: Schema.optionalKey(
+        Schema.Number.check(Schema.isGreaterThan(0)),
+      ),
+    }),
+  ),
 });
 
 export type Settings = typeof Settings.Type;

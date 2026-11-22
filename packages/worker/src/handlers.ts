@@ -7,6 +7,7 @@ import { ci } from "./jobs/ci";
 import { command as runCommand } from "./jobs/command";
 import { deps } from "./jobs/deps";
 import { drift, driftReview } from "./jobs/drift";
+import { branchDrift } from "./jobs/branch-drift";
 import { heal } from "./jobs/heal";
 import { labels } from "./jobs/labels";
 import { machine } from "./jobs/machine";
@@ -35,6 +36,7 @@ export const handlers: Handlers = {
   "stalled-updates": () => stalledUpdates(),
   drift: () => drift(),
   "drift-review": () => driftReview(),
+  "branch-drift": () => branchDrift(),
   sync: () => sync(),
   deps: () => deps(),
   ci: () => ci(),
