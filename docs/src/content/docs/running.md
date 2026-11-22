@@ -1548,21 +1548,26 @@ in a worktree of its own, `upkeep-agent-branch-<repo>-<branch>`. The agent is
 told the branch's own commits, from the fork point with its parent or else
 their merge base, so only those replay even after the parent was rewritten.
 It rebases them onto the parent's tip following the branch's `AGENTS.md`, and
-runs the checks that names, without pushing. The worker then checks the rebase
+runs the checks that names and the ones the pre-push hooks run, without
+pushing. The worker then checks the rebase
 finished cleanly, holds the parent's tip, moved and left `.dot-branch.yml` as
 it was, and pushes with `--force-with-lease` on the tip it started from, so a
 branch pushed meanwhile is never overwritten.
 
 A branch waits while its parent isn't in step, and its children wait with it,
 so a branch is only rebased onto a parent that's in step itself; once the
-parent is pushed, its children go next in the same run. A branch pushed to
+parent is pushed, its children go next in the same run. A worker keeps a
+repository's branches in one run at a time: a run that comes while another
+has them, such as the one a rebase's own push sets off, leaves them to it, and
+that run goes round again once it's through, up to five times, so a parent
+rewritten meanwhile has its children follow in the same run. A branch pushed to
 while its agent worked keeps what was pushed: the lease refuses the agent's
-result, its worktree goes, and the next run rebases it again from the new tip.
+result, its worktree goes, and it's rebased again from the new tip.
 One the agent couldn't finish (it ran out of time, stopped for a decision, or
 its result or push failed otherwise) marks the run as needing you, and keeps
 its worktree and session to resume. It's skipped until it's in step again,
 when its worktree goes. So is a
-branch a checkout on the worker is part way through rebasing. A file that
+branch a checkout on the worker is part way through rebasing, outside Upkeep. A file that
 doesn't parse, a parent that isn't a branch and parents that loop need you
 too. None of these fails the run, so a heal never takes a branch over.
 

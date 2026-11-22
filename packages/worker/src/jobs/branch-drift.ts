@@ -143,8 +143,11 @@ export const walk = <E, R>(
     return outcomes;
   });
 
-/** The branches an agent of this worker is rebasing now, by repository. */
-const working = new Set<string>();
+/** The repositories a run of this worker is keeping in step now. */
+const keeping = new Set<string>();
+
+/** The repositories a run asked for while another had them, to go round again. */
+const again = new Set<string>();
 
 const missing = (cause: unknown) =>
   cause instanceof GhCommandError && /\b404\b|Not Found/.test(cause.stderr);
@@ -267,6 +270,7 @@ const prompt = (entry: Managed, target: string, base: string, own: number) =>
     `\`${branchFile}\` is this branch's own: on a conflict in it keep this branch's side, and don't change it.`,
     "",
     "Run the checks AGENTS.md names once the rebase is done, and fix what the rebase broke in the commit it came from.",
+    "The worker's push runs the repository's pre-push hooks, such as hk or husky, and a hook that fails leaves the rebase for a person, so run what they run too, and make it pass.",
     "Don't push: the worker pushes once you've finished.",
     `If AGENTS.md says to ask before something the rebase needs, or a conflict needs a decision only a person can make, stop where you are and end with the line \`${needsYouLine}\`.`,
     "End with a short summary of what conflicted and how you settled it, for someone reading it cold.",
@@ -498,7 +502,6 @@ const keep = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const key = `${repo.toLowerCase()}#${entry.branch}`;
   const name = repo.split("/").at(-1) ?? repo;
 
   const own = yield* Worktrees.forAgent(
@@ -508,8 +511,6 @@ const keep = Effect.fnUntraced(function* (
   );
 
   const place = own.place(repo);
-
-  if (working.has(key)) return { kind: "busy" } satisfies Outcome;
 
   const directory = yield* worktrees.checkout(repo, entry.branch, {
     submodules: false,
@@ -562,11 +563,7 @@ const keep = Effect.fnUntraced(function* (
       note: `${behind} behind, and a checkout here is part way through rebasing it`,
     } satisfies Outcome;
 
-  working.add(key);
-
-  return yield* rebase(repo, entry, behind, place).pipe(
-    Effect.ensuring(Effect.sync(() => working.delete(key))),
-  );
+  return yield* rebase(repo, entry, behind, place);
 });
 
 const describe = (outcome: Outcome) => {
@@ -578,9 +575,9 @@ const describe = (outcome: Outcome) => {
     case "waiting":
       return `waiting for ${outcome.on}`;
     case "busy":
-      return "an agent here is already rebasing it";
+      return "another run here is keeping its branches, and goes round again for this one";
     case "moved":
-      return "pushed to while the agent rebased it, so it's rebased again on the next run";
+      return "pushed to while the agent rebased it, so it's rebased again from there";
     case "needs-you":
       return outcome.note;
   }
@@ -656,9 +653,44 @@ export const branchDrift = Effect.fnUntraced(function* () {
   const repos = yield* trackedRepos(Catalogue.branchDrift.id);
   const outcomes: Array<readonly [string, Outcome]> = [];
 
-  for (const repo of repos)
-    for (const [branch, outcome] of yield* keepRepository(repo, worktrees))
-      outcomes.push([`${repo.split("/").at(-1) ?? repo} ${branch}`, outcome]);
+  for (const repo of repos) {
+    const name = repo.split("/").at(-1) ?? repo;
+
+    if (keeping.has(repo)) {
+      again.add(repo);
+      yield* RunLog.info(
+        `${repo}: another run here is keeping its branches, so that run goes round again`,
+      );
+      outcomes.push([`${name} branches`, { kind: "busy" }]);
+      continue;
+    }
+
+    keeping.add(repo);
+
+    const kept = yield* Effect.gen(function* () {
+      const latest = new Map<string, Outcome>();
+      let passes = 0;
+
+      // A push while this run worked asks for another run, which leaves the
+      // repository to this one, so it goes round until nothing asked, a few
+      // times at most; the next push or the daily run takes it from there
+      do {
+        again.delete(repo);
+        passes += 1;
+
+        for (const [branch, outcome] of yield* keepRepository(repo, worktrees))
+          if (!(
+            outcome.kind === "in-step" && latest.get(branch)?.kind === "rebased"
+          ))
+            latest.set(branch, outcome);
+      } while (again.has(repo) && passes < 5);
+
+      return latest;
+    }).pipe(Effect.ensuring(Effect.sync(() => keeping.delete(repo))));
+
+    for (const [branch, outcome] of kept)
+      outcomes.push([`${name} ${branch}`, outcome]);
+  }
 
   const of = (kind: Outcome["kind"]) =>
     outcomes.flatMap(([name, outcome]) =>
@@ -680,12 +712,10 @@ export const branchDrift = Effect.fnUntraced(function* () {
         : [`${of("waiting").join(", ")} waiting on a parent`]),
       ...(of("busy").length === 0
         ? []
-        : [`${of("busy").join(", ")} already being rebased`]),
+        : [`${of("busy").join(", ")} left to another run here`]),
       ...(of("moved").length === 0
         ? []
-        : [
-            `${of("moved").join(", ")} pushed to meanwhile, so tried again next run`,
-          ]),
+        : [`${of("moved").join(", ")} pushed to meanwhile`]),
     ].join(", "),
   );
 
