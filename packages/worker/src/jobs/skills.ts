@@ -126,7 +126,10 @@ type Built = Effect.Success<ReturnType<typeof build>>;
 const maintain = Effect.fnUntraced(function* (
   built: Built,
   args: ReadonlyArray<string>,
-  options: { readonly capture?: boolean } = {},
+  options: {
+    readonly capture?: boolean;
+    readonly env?: Record<string, string>;
+  } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const captured: Array<string> = [];
@@ -157,6 +160,7 @@ const maintain = Effect.fnUntraced(function* (
             MISE_TRUSTED_CONFIG_PATHS: built.trusted,
             MISE_YES: "1",
             GIT_TERMINAL_PROMPT: "0",
+            ...options.env,
           },
         }),
       );
@@ -203,10 +207,18 @@ const report = Effect.fnUntraced(function* <A>(
   );
 });
 
-/** Sync the skill copies of every repository listed in `consumers.yml`. */
+/**
+ * Sync the skill copies of every repository listed in `consumers.yml`. The
+ * pushes carry vendored copies of the shared skills, so the repositories' own
+ * hk pre-push lint is switched off (`HK=0`): it would flag the skills' long
+ * Markdown lines in any repository that keeps MD013 on.
+ */
 export const skillConsumers = Effect.fnUntraced(function* () {
   const built = yield* build(yield* Worktrees.forRun("skill-consumers"));
-  const { exitCode } = yield* maintain(built, ["consumers"]);
+
+  const { exitCode } = yield* maintain(built, ["consumers"], {
+    env: { HK: "0" },
+  });
 
   if (exitCode !== 0)
     return yield* new SkillMaintenanceFailed({
