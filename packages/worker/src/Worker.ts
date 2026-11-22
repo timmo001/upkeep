@@ -35,7 +35,7 @@ import type { FileSystem, Path } from "effect";
 import { HttpClientError, type HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import type { Lookups } from "./deps/Datasources";
-import { logResolved } from "./Environment";
+import { logResolved, which } from "./Environment";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
 import * as Lane from "./Lane";
@@ -649,8 +649,7 @@ export const work = Effect.fn("Worker.work")(function* (
       const command = Settings.openCodeCommand(settings);
 
       return status.update({
-        missing:
-          command === null || Bun.which(command) !== null ? [] : [command],
+        missing: command === null || which(command) !== null ? [] : [command],
       });
     }),
     Effect.map((settings) => ({ agents: Settings.agentSetup(settings) })),

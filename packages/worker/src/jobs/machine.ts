@@ -10,6 +10,7 @@
  */
 import { Effect, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { which } from "../Environment";
 import { summary } from "../Reporter";
 import * as RunLog from "../RunLog";
 import * as Settings from "../settings";
@@ -70,7 +71,7 @@ const noResult = (
     command[0] === "dot" &&
     notDotfiles.test(printed.join("\n"))
   )
-    return `${Bun.which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`;
+    return `${which("dot") ?? "dot"} is Graphviz, not the dotfiles CLI, so ~/.local/bin isn't on the worker's PATH`;
 
   const last = printed.findLast((line) => line.trim() !== "")?.trim();
 

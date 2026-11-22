@@ -27,10 +27,17 @@ export const ensureLocalBin = (
 // Before any child process starts, whatever imports the worker
 ensureLocalBin();
 
+/**
+ * Where a child process finds a command. `Bun.which` on its own searches the
+ * PATH the process started with, missing `~/.local/bin` added above.
+ */
+export const which = (command: string) =>
+  Bun.which(command, { PATH: process.env.PATH ?? "" });
+
 /** Log which `dot` and `opencode2` child processes resolve to. */
 export const logResolved = Effect.gen(function* () {
   for (const command of ["dot", "opencode2"])
     yield* Effect.logInfo(
-      `${command} resolves to ${Bun.which(command) ?? "nothing on PATH"}`,
+      `${command} resolves to ${which(command) ?? "nothing on PATH"}`,
     );
 });
