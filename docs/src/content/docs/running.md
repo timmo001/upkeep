@@ -1555,10 +1555,13 @@ branch pushed meanwhile is never overwritten.
 
 A branch waits while its parent isn't in step, and its children wait with it,
 so a branch is only rebased onto a parent that's in step itself; once the
-parent is pushed, its children go next in the same run. One the agent couldn't
-finish (it ran out of time, stopped for a decision, or its result or push
-failed) marks the run as needing you, and keeps its worktree and session to
-resume. It's skipped until it's in step again, when its worktree goes. So is a
+parent is pushed, its children go next in the same run. A branch pushed to
+while its agent worked keeps what was pushed: the lease refuses the agent's
+result, its worktree goes, and the next run rebases it again from the new tip.
+One the agent couldn't finish (it ran out of time, stopped for a decision, or
+its result or push failed otherwise) marks the run as needing you, and keeps
+its worktree and session to resume. It's skipped until it's in step again,
+when its worktree goes. So is a
 branch a checkout on the worker is part way through rebasing. A file that
 doesn't parse, a parent that isn't a branch and parents that loop need you
 too. None of these fails the run, so a heal never takes a branch over.

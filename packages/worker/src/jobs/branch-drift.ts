@@ -57,6 +57,7 @@ export type Outcome =
   | { readonly kind: "rebased"; readonly behind: number }
   | { readonly kind: "waiting"; readonly on: string }
   | { readonly kind: "busy" }
+  | { readonly kind: "moved" }
   | { readonly kind: "needs-you"; readonly note: string };
 
 type Options = { readonly cwd: string; readonly trusted: string };
@@ -458,10 +459,21 @@ const rebase = Effect.fnUntraced(function* (
     ),
   );
 
-  if (Option.isNone(pushedTo))
-    return yield* left(
-      "the push failed, most likely because the branch moved while the agent worked",
+  if (Option.isNone(pushedTo)) {
+    // A branch pushed while the agent worked keeps what was pushed, and the
+    // next run rebases it again from there, so nothing is left for you
+    const now = yield* fetch(entry.branch, options).pipe(
+      Effect.andThen(revParse(`origin/${entry.branch}`, options)),
+      Effect.orElseSucceed(() => start),
     );
+
+    if (now === start)
+      return yield* left("the push failed, and the branch hasn't moved");
+
+    yield* Worktrees.discard(directory);
+
+    return { kind: "moved" } satisfies Outcome;
+  }
 
   yield* pushed(
     repo,
@@ -567,6 +579,8 @@ const describe = (outcome: Outcome) => {
       return `waiting for ${outcome.on}`;
     case "busy":
       return "an agent here is already rebasing it";
+    case "moved":
+      return "pushed to while the agent rebased it, so it's rebased again on the next run";
     case "needs-you":
       return outcome.note;
   }
@@ -664,8 +678,17 @@ export const branchDrift = Effect.fnUntraced(function* () {
       ...(of("waiting").length === 0
         ? []
         : [`${of("waiting").join(", ")} waiting on a parent`]),
+      ...(of("busy").length === 0
+        ? []
+        : [`${of("busy").join(", ")} already being rebased`]),
+      ...(of("moved").length === 0
+        ? []
+        : [
+            `${of("moved").join(", ")} pushed to meanwhile, so tried again next run`,
+          ]),
     ].join(", "),
   );
 
-  if (rebased.length === 0 && yours.length === 0) return skipped;
+  if (rebased.length === 0 && yours.length === 0 && of("moved").length === 0)
+    return skipped;
 }, Effect.scoped);
