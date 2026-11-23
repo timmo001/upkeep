@@ -59,34 +59,50 @@ test("a branch waits while its parent isn't in step", () => {
   });
 });
 
-const rangeDiff = [
-  "1:  7a25c7f = 1:  9dfd7d5 Add the station's monitors",
-  "2:  805be4d ! 2:  b4ce1a9 Pin the station's tools",
-  "3:  52e8a3e < -:  ------- Drop the old bar widget",
-  "-:  ------- > 3:  2705597 Fix the pins after the rebase",
-].join("\n");
+const commit = (subject: string, lines: string) => ({
+  key: `1 me ${subject}`,
+  subject,
+  lines,
+});
 
-test("only commits a rebase didn't replay as they were count", () => {
-  expect(reworked(rangeDiff)).toEqual([
-    { change: "changed", subject: "Pin the station's tools" },
-    { change: "dropped", subject: "Drop the old bar widget" },
-    { change: "added", subject: "Fix the pins after the rebase" },
+test("commits replayed with the same lines, or only touching what's ignored, don't count", () => {
+  expect(
+    reworked(
+      [
+        commit("Add the station's monitors", "+monitor"),
+        commit("Pin the station's tools", "+node 24"),
+        commit("Drop the old bar widget", "-widget"),
+        commit("Regenerate the diff page", ""),
+      ],
+      [
+        commit("Add the station's monitors", "+monitor"),
+        commit("Pin the station's tools", "+node 26"),
+        commit("Fix the pins after the rebase", "+pin"),
+        commit("Regenerate the diff page again", ""),
+      ],
+    ),
+  ).toEqual([
+    "Pin the station's tools",
+    "Fix the pins after the rebase",
+    "Drop the old bar widget",
   ]);
-  expect(reworked(rangeDiff.split("\n")[0] ?? "")).toEqual([]);
+  expect(
+    reworked([commit("Add monitors", "+m")], [commit("Add monitors", "+m")]),
+  ).toEqual([]);
 });
 
 test("the inbox says what changed, in the agent's words when it gave them", () => {
-  const entry = { branch: "station", parent: "main", ignore: [] };
-  const commits = reworked(rangeDiff);
+  const said =
+    "Settled the mise.toml conflict.\nChange: Keep station's tool pins over main's";
 
-  expect(
-    changeSubject(
-      entry,
-      "Settled the mise.toml conflict.\nChange: Keep station's tool pins over main's",
-      commits,
-    ),
-  ).toBe("Keep station's tool pins over main's");
-  expect(changeSubject(entry, "Change: none", commits)).toBe(
-    "Rebasing station onto main changed Pin the station's tools; dropped Drop the old bar widget; added Fix the pins after the rebase",
+  expect(changeSubject(said, ["Pin the station's tools"])).toBe(
+    "Keep station's tool pins over main's",
   );
+  expect(changeSubject("Change: none", ["Pin the station's tools"])).toBe(
+    "Pin the station's tools",
+  );
+  expect(changeSubject(null, ["Pin the tools", "Fix the pins"])).toBe(
+    "Pin the tools, and 1 more",
+  );
+  expect(changeSubject(said, [])).toBeNull();
 });
