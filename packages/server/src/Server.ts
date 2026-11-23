@@ -38,6 +38,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api";
+import { Addresses } from "./Addresses";
 import * as Backups from "./Backups";
 import { Events } from "./Events";
 import { GitHubApp } from "./GitHubApp";
@@ -131,6 +132,7 @@ const WorkerAuthorizationLayer = Layer.effect(
   Api.WorkerAuthorization,
   Effect.gen(function* () {
     const tokens = yield* Tokens;
+    const addresses = yield* Addresses;
 
     return Api.WorkerAuthorization.of({
       bearer: Effect.fn(function* (httpEffect, { credential }) {
@@ -143,6 +145,11 @@ const WorkerAuthorizationLayer = Layer.effect(
             message: "Missing or unknown worker token",
           });
         }
+
+        const request = yield* HttpServerRequest.HttpServerRequest;
+
+        if (Option.isSome(request.remoteAddress))
+          yield* addresses.seen(worker.value, request.remoteAddress.value);
 
         return yield* Effect.provideService(httpEffect, Api.CurrentWorker, {
           name: worker.value,
@@ -968,6 +975,7 @@ const JobsHandlers = HttpApiBuilder.group(
   "jobs",
   Effect.fn(function* (handlers) {
     const store = yield* Store;
+    const addresses = yield* Addresses;
 
     return handlers.handleAll({
       list: Effect.fn(function* () {
@@ -1007,6 +1015,15 @@ const JobsHandlers = HttpApiBuilder.group(
         }));
       }),
       agents: () => store.agents().pipe(Effect.orDie),
+      here: Effect.fn(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+
+        const worker = Option.isSome(request.remoteAddress)
+          ? yield* addresses.workerAt(request.remoteAddress.value)
+          : Option.none();
+
+        return { worker: Option.getOrNull(worker) };
+      }),
       run: Effect.fn(function* ({ params, payload }) {
         const job = findJob(params.id);
 
@@ -2417,6 +2434,8 @@ const apiRoutes = (
       SystemHandlers,
     ]),
     Layer.provide([adminAuthorization, WorkerAuthorizationLayer]),
+    // One for the handlers and the worker check alike
+    Layer.provide(Addresses.layer),
   );
 
 /** The API's routes, needing a `Store` and `Tokens`. */

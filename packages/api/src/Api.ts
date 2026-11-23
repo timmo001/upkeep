@@ -606,6 +606,14 @@ export class JobsGroup extends HttpApiGroup.make("jobs")
       success: Schema.Array(WorkerAgents),
     }),
     /**
+     * The worker on the machine the request comes from, as the one that last
+     * called from its address, for the dashboard to launch agents there by
+     * default. Null when none has.
+     */
+    HttpApiEndpoint.get("here", "/here", {
+      success: Schema.Struct({ worker: Schema.NullOr(Schema.String) }),
+    }),
+    /**
      * Queue a run, as the run button does. A run of the job for the same
      * release that's still waiting is returned instead of a second one. A job
      * that runs on releases needs one. With `repo`, the run only works on that
