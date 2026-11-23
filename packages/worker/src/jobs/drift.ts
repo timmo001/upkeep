@@ -11,7 +11,7 @@
  * pushed for it, and the repository fails with what to review, which the
  * heal hands to an agent.
  */
-import { Api, Search } from "@timmo001/effect-gh";
+import { Api, GhCommandError, Search } from "@timmo001/effect-gh";
 import { Catalogue, EventJobs } from "@upkeep/api";
 import {
   type Cause,
@@ -25,7 +25,7 @@ import {
 import { Yaml } from "effect/encoding";
 import { reason } from "../Failure";
 import * as GitHubApp from "../GitHubApp";
-import { listed, pushed, summary, trackedFor } from "../Reporter";
+import { listed, pushed, summary, trackedRepos } from "../Reporter";
 import * as RunLog from "../RunLog";
 import { ConsumersFailed, HandedOff, skipped } from "../Worker";
 import * as Worktrees from "../Worktrees";
@@ -311,9 +311,40 @@ const latest = Effect.fnUntraced(function* (tool: Tool, options: Options) {
   return tag;
 });
 
-/** Every repository of the signed-in account with a tooling.yml. */
-const repositories = Effect.fnUntraced(function* () {
+const missing = (cause: unknown) =>
+  cause instanceof GhCommandError && /\b404\b|Not Found/.test(cause.stderr);
+
+/** Whether a repository has a tooling.yml on its default branch. */
+const hasToolingFile = (repo: string) =>
+  Api.text({
+    endpoint: `repos/${repo}/contents/${toolingFile}`,
+    method: "GET",
+    headers: { Accept: "application/vnd.github.raw+json" },
+  }).pipe(
+    Effect.as(true),
+    Effect.catchIf(missing, () => Effect.succeed(false)),
+  );
+
+/**
+ * The tracked repositories of the signed-in account with a tooling.yml. A run
+ * for a few, such as one scoped to a repository, reads each one's file, since
+ * code search takes a while to index a tooling.yml that was just added, and a
+ * push adding one queues a run for it straight away.
+ */
+const repositories = Effect.fnUntraced(function* (
+  tracked: ReadonlyArray<string>,
+) {
   const login = yield* GitHubApp.login;
+
+  if (tracked.length <= 3)
+    return (yield* Effect.filter(
+      tracked.filter(
+        (repo) => repo.split("/")[0]?.toLowerCase() === login.toLowerCase(),
+      ),
+      hasToolingFile,
+    )).toSorted();
+
+  const names = new Set(tracked.map((repo) => repo.toLowerCase()));
 
   const results = yield* Search.code({
     query: "reviewed",
@@ -328,7 +359,8 @@ const repositories = Effect.fnUntraced(function* () {
     ...new Set(
       results
         .filter((result) => result.path === toolingFile)
-        .map((result) => result.repository.nameWithOwner),
+        .map((result) => result.repository.nameWithOwner)
+        .filter((repo) => names.has(repo.toLowerCase())),
     ),
   ].toSorted();
 });
@@ -524,8 +556,7 @@ export const drift = Effect.fnUntraced(function* () {
     Config.withDefault(false),
   );
 
-  const tracked = yield* trackedFor(Catalogue.drift.id);
-  const repos = (yield* repositories()).filter(tracked);
+  const repos = yield* repositories(yield* trackedRepos(Catalogue.drift.id));
   const failures = { repos: new Array<string>(), reasons: new Array<string>() };
   const failed = failures.repos;
   const reviewing: Array<string> = [];
@@ -647,8 +678,7 @@ export const reviewRepository = Effect.fnUntraced(function* (
  */
 export const driftReview = Effect.fnUntraced(function* () {
   const worktrees = yield* Worktrees.forRun("drift");
-  const tracked = yield* trackedFor(Catalogue.drift.id);
-  const repos = (yield* repositories()).filter(tracked);
+  const repos = yield* repositories(yield* trackedRepos(Catalogue.drift.id));
   const failures = { repos: new Array<string>(), reasons: new Array<string>() };
   const failed = failures.repos;
   const reviewing: Array<string> = [];
