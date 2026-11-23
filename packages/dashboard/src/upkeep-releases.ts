@@ -191,8 +191,8 @@ export class UpkeepReleases extends LitElement {
     ></gw-menu-button>`;
   }
 
-  #list(page: Domain.ReleasesPage) {
-    const byRepo = new Map(page.repos.map((entry) => [entry.repo, entry]));
+  #table(entries: ReadonlyArray<Domain.ReleaseEntry>, label: string) {
+    const byRepo = new Map(entries.map((entry) => [entry.repo, entry]));
 
     const draw =
       (
@@ -254,7 +254,39 @@ export class UpkeepReleases extends LitElement {
       },
     ];
 
+    return html`<gw-table
+      label=${label}
+      row-key="id"
+      sort="suggestion"
+      descending
+      search-label=${`Search ${label.toLowerCase()}`}
+      .columns=${columns}
+      .rows=${entries.map((entry) => ({
+        id: entry.repo,
+        name: entry.name,
+        release: entry.snapshot?.releaseTag ?? "",
+        suggestion:
+          (entry.needsRelease ? 10 : 0) +
+          impacts.indexOf(entry.snapshot?.suggestion ?? "none"),
+        next: entry.nextVersion ?? "",
+        commits: entry.snapshot?.commits.length ?? 0,
+        checked: entry.attemptedAt,
+      }))}
+    ></gw-table>`;
+  }
+
+  #list(page: Domain.ReleasesPage) {
     const needs = page.repos.filter((entry) => entry.needsRelease).length;
+
+    // A repository that has never released may not want to, so it's kept
+    // apart, without a count, rather than flagged as due one
+    const released = page.repos.filter(
+      (entry) => entry.snapshot?.releaseTag !== null,
+    );
+
+    const never = page.repos.filter(
+      (entry) => entry.snapshot?.releaseTag === null,
+    );
 
     return html`<gw-stack gap="l">
       <gw-page-header
@@ -281,25 +313,27 @@ export class UpkeepReleases extends LitElement {
               phTag,
               "No comparisons yet: track repositories for the unreleased job, and they show once it has run.",
             )
-          : html`<gw-table
-              label="Repositories"
-              row-key="id"
-              sort="suggestion"
-              descending
-              search-label="Search repositories"
-              .columns=${columns}
-              .rows=${page.repos.map((entry) => ({
-                id: entry.repo,
-                name: entry.name,
-                release: entry.snapshot?.releaseTag ?? "",
-                suggestion:
-                  (entry.needsRelease ? 10 : 0) +
-                  impacts.indexOf(entry.snapshot?.suggestion ?? "none"),
-                next: entry.nextVersion ?? "",
-                commits: entry.snapshot?.commits.length ?? 0,
-                checked: entry.attemptedAt,
-              }))}
-            ></gw-table>`
+          : html`${
+              released.length === 0
+                ? nothing
+                : this.#table(released, "Repositories")
+            }${
+              never.length === 0
+                ? nothing
+                : html`<gw-section
+                    heading="Never released"
+                    collapsed
+                    storage-key="upkeep.releases.section.never"
+                  >
+                    <gw-stack gap="s">
+                      <p class="muted">
+                        Repositories without a release yet, which may not want
+                        one
+                      </p>
+                      ${this.#table(never, "Never released")}
+                    </gw-stack>
+                  </gw-section>`
+            }`
       }
     </gw-stack>`;
   }

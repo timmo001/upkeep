@@ -1025,7 +1025,10 @@ export const ReleaseEntry = Schema.Struct({
   stale: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
   attemptedAt: Schema.Finite,
-  /** The comparison has changes worth a release. */
+  /**
+   * The comparison has changes worth a release since a release: a repository
+   * that has never released isn't flagged, as it may not want to.
+   */
   needsRelease: Schema.Boolean,
   nextVersion: Schema.NullOr(Schema.String),
   versionError: Schema.NullOr(Schema.String),

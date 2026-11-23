@@ -1696,7 +1696,9 @@ can't read, says so and is never a claim that no release is needed.
 
 The Releases page lists each repository with its last release, what it
 suggests and the next version, and Compare all again reads every one of them
-afresh. Opening one shows its changes worth a release,
+afresh. A repository that has never released may not want to, so it's listed
+apart under Never released and isn't flagged, counted or told about anywhere.
+Opening one shows its changes worth a release,
 the quiet ones folded away, and its commits. Choose sets a change's impact,
 and the overall menu sets the whole comparison's; your choices are kept on
 the server and stay while the evidence they were made on does. A comparison

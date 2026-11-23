@@ -455,7 +455,12 @@ export const entry = (
         ? "The release policy or branch changed; refresh the comparison"
         : null),
     attemptedAt: scan.attemptedAt,
-    needsRelease: snapshot !== null && snapshot.suggestion !== "none",
+    // A repository that has never released may not want to, so only one
+    // with a release to count on from is flagged
+    needsRelease:
+      snapshot !== null &&
+      snapshot.releaseTag !== null &&
+      snapshot.suggestion !== "none",
     nextVersion: Result.isSuccess(version) ? version.success : null,
     versionError: Result.isFailure(version) ? version.failure : null,
     versioning: scan.versioning,
