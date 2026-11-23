@@ -1554,7 +1554,11 @@ runs the checks that names and the ones the pre-push hooks run, without
 pushing. The worker then checks the rebase
 finished cleanly, holds the parent's tip, moved and left `.dot-branch.yml` as
 it was, and pushes with `--force-with-lease` on the tip it started from, so a
-branch pushed meanwhile is never overwritten.
+branch pushed meanwhile is never overwritten. A rebase only goes to the inbox
+when it changed the branch's own commits, by `git range-diff`, such as settling
+a conflict: it's worth reading, titled with the agent's one line on what it
+changed, or else the commits it changed. One that replayed them as they were
+shows in the run's summary only.
 
 A branch waits while its parent isn't in step, and its children wait with it,
 so a branch is only rebased onto a parent that's in step itself; once the

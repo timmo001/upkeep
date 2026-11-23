@@ -270,6 +270,64 @@ const agentSettings = Effect.gen(function* () {
 /** The line an agent ends with when it stopped for a person. */
 const needsYouLine = "Outcome: needs you";
 
+/** How the agent's line saying what it changed in the branch's own work starts. */
+const changeLine = "Change:";
+
+/** One of the branch's own commits that a rebase didn't replay as it was. */
+export interface Reworked {
+  readonly change: "changed" | "dropped" | "added";
+  readonly subject: string;
+}
+
+const changes = { "!": "changed", "<": "dropped", ">": "added" } as const;
+
+/**
+ * The branch's own commits a rebase changed, dropped or added, from `git
+ * range-diff --no-patch` of them before and after. Those it replayed as they
+ * were don't count.
+ */
+export const reworked = (rangeDiff: string): ReadonlyArray<Reworked> =>
+  rangeDiff.split("\n").flatMap((line) => {
+    const match =
+      /^\s*(?:\d+|-):\s+\S+\s+([!<>])\s+(?:\d+|-):\s+\S+\s+(.*)$/.exec(line);
+
+    const op = match?.[1];
+    const subject = match?.[2]?.trim();
+
+    return op === "!" || op === "<" || op === ">"
+      ? subject === undefined || subject === ""
+        ? []
+        : [{ change: changes[op], subject }]
+      : [];
+  });
+
+/**
+ * What a rebase changed in the branch's own work, for the inbox: the agent's
+ * own line when it gave one, otherwise the commits it changed.
+ */
+export const changeSubject = (
+  entry: Managed,
+  said: string | null,
+  commits: ReadonlyArray<Reworked>,
+) => {
+  const line = said
+    ?.split("\n")
+    .map((text) => text.trim())
+    .findLast((text) => text.startsWith(changeLine))
+    ?.slice(changeLine.length)
+    .trim();
+
+  if (line !== undefined && line !== "" && !/^none\b/i.test(line)) return line;
+
+  const parts = commits.map(({ change, subject }) =>
+    change === "changed" ? subject : `${change} ${subject}`,
+  );
+
+  return parts.length === 0
+    ? `Rebased ${entry.branch} onto ${entry.parent}, changing its own commits`
+    : `Rebasing ${entry.branch} onto ${entry.parent} changed ${parts.join("; ")}`;
+};
+
 const prompt = (entry: Managed, target: string, base: string, own: number) =>
   [
     `This worktree is \`${entry.branch}\`, which is kept on top of \`${entry.parent}\`. Rebase it onto \`${entry.parent}\` at ${target} (\`origin/${entry.parent}\` here), following this branch's AGENTS.md for how it's rebased, how to settle conflicts and what to check.`,
@@ -282,6 +340,7 @@ const prompt = (entry: Managed, target: string, base: string, own: number) =>
     "Don't push: the worker pushes once you've finished.",
     `If AGENTS.md says to ask before something the rebase needs, or a conflict needs a decision only a person can make, stop where you are and end with the line \`${needsYouLine}\`.`,
     "End with a short summary of what conflicted and how you settled it, for someone reading it cold.",
+    `If you changed any of the branch's own commits rather than only replaying them, such as settling a conflict or fixing what the rebase broke, make the summary's last line \`${changeLine} <what changed in ${entry.branch}'s own work, in one line like a commit subject>\`.`,
   ].join("\n");
 
 /** Run the agent in its session, for at most its minutes. */
@@ -448,6 +507,23 @@ const rebase = Effect.fnUntraced(function* (
 
   if (why !== null) return left(why);
 
+  // A rebase that only replayed the branch's own commits changed nothing
+  // worth reading; one whose commits can't be compared counts as changed
+  const commits = yield* run(
+    "git",
+    [
+      "range-diff",
+      "--no-color",
+      "--no-patch",
+      `${base}..${start}`,
+      `${target}..HEAD`,
+    ],
+    options,
+  ).pipe(
+    Effect.map(reworked),
+    Effect.orElseSucceed((): ReadonlyArray<Reworked> | null => null),
+  );
+
   const pushedTo = yield* run(
     "git",
     [
@@ -484,12 +560,18 @@ const rebase = Effect.fnUntraced(function* (
     return { kind: "moved" } satisfies Outcome;
   }
 
-  yield* pushed(
-    repo,
-    pushedTo.value,
-    `Rebase ${entry.branch} onto ${entry.parent}`,
-    false,
-  );
+  if (commits === null || commits.length > 0)
+    yield* pushed(
+      repo,
+      pushedTo.value,
+      changeSubject(entry, said, commits ?? []),
+      false,
+    );
+  else
+    yield* RunLog.info(
+      `${entry.branch}: its own commits replayed unchanged, so nothing goes to the inbox`,
+    );
+
   yield* Worktrees.discard(directory);
 
   return { kind: "rebased", behind } satisfies Outcome;
