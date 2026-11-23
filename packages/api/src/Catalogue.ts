@@ -10,7 +10,7 @@ export const releases: Job = {
   name: "Releases",
   description:
     "Check the latest release of each repository and queue the jobs that run on a new one",
-  schedule: "*/30 * * * *",
+  schedule: "10 */6 * * *",
   onRelease: false,
   lane: "quick",
   tracked: true,
@@ -121,7 +121,7 @@ export const sync: Job = {
   name: "Sync",
   description:
     "Keep the copies apps take from groundwork current: carry an app's QML edits back, copy groundwork's changes out, then check and push each one",
-  schedule: "15 * * * *",
+  schedule: "15 */3 * * *",
   onRelease: false,
   lane: "repos",
   tracked: true,
@@ -144,7 +144,7 @@ export const ci: Job = {
   name: "CI",
   description:
     "Read the latest CI on each repository's default branch: run the checks of a red one here and fail with both, so a heal fixes it forward",
-  schedule: "30 * * * *",
+  schedule: "30 */3 * * *",
   onRelease: false,
   lane: "checks",
   tracked: true,
@@ -155,7 +155,7 @@ export const watch: Job = {
   name: "Watch",
   description:
     "Read what landed on each tracked repository's default branch, by anyone, for the inbox: your commits, merged updates and anything else outside Upkeep's own runs",
-  schedule: "*/15 * * * *",
+  schedule: "45 * * * *",
   onRelease: false,
   lane: "quick",
   tracked: false,
@@ -177,7 +177,7 @@ export const skillConsumers: Job = {
   name: "Skill consumers",
   description:
     "Sync the shared skills into the repositories listed in the skills repository's consumers.yml",
-  schedule: "25 * * * *",
+  schedule: "25 */3 * * *",
   onRelease: false,
   lane: "repos",
   tracked: false,

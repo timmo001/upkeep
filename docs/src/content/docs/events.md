@@ -13,7 +13,8 @@ but the queue keeps it for 24 hours.
 
 Without the queue set up, the server runs on its schedules as it always has.
 The schedules stay either way, as a slower catch-up for anything an event
-misses.
+misses: a delivery older than the queue's 24 hours, a push of more than three
+tags, which GitHub sends no events for, or a tick lost to a restart.
 
 ## How it fits together
 
@@ -50,7 +51,7 @@ come back as events too: `watch` already knows their commits, and a `drift`
 run that finds nothing to move ends as skipped.
 
 Runs an event started show `event` as their trigger. `bump` starts seconds
-after the release rather than up to 30 minutes later, so it finds the
+after the release rather than up to 6 hours later, so it finds the
 consumers straight away and starts each one as soon as the packages it needs
 reach npm, checking every 15 seconds for up to 20 minutes. Consumers of the
 release's workflow pins don't wait at all.
