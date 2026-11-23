@@ -50,8 +50,12 @@ Plannotator review. Once `mise run check` passes for a change:
 
 1. Commit the session's own changes through `dot git commit`, leaving other
    sessions' work alone, and push.
-2. When the change has an issue, tick it off there, with a link to the commit.
-3. Report what landed and anything flagged.
+2. When the change touches what the server or dashboard serves, check the
+   server picked it up, forcing its update when it hasn't, as the
+   `upkeep-release` skill says. A push to main is what updates it, not a
+   release.
+3. When the change has an issue, tick it off there, with a link to the commit.
+4. Report what landed and anything flagged.
 
 ## Notifications
 
