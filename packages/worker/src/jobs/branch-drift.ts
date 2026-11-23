@@ -51,14 +51,22 @@ export interface Managed {
   readonly ignore: ReadonlyArray<string>;
 }
 
-/** What became of a branch in a run. Only `in-step` and `rebased` let its children go on. */
+/**
+ * What became of a branch in a run. Only `in-step` and `rebased` let its
+ * children go on. A `needs-you` that `raises` it is new in this run; one that
+ * doesn't was already left for you by an earlier one.
+ */
 export type Outcome =
   | { readonly kind: "in-step" }
   | { readonly kind: "rebased"; readonly behind: number }
   | { readonly kind: "waiting"; readonly on: string }
   | { readonly kind: "busy" }
   | { readonly kind: "moved" }
-  | { readonly kind: "needs-you"; readonly note: string };
+  | {
+      readonly kind: "needs-you";
+      readonly note: string;
+      readonly raises: boolean;
+    };
 
 type Options = { readonly cwd: string; readonly trusted: string };
 
@@ -425,23 +433,20 @@ const rebase = Effect.fnUntraced(function* (
   );
 
   const left = (why: string) =>
-    Effect.gen(function* () {
-      yield* attention;
+    ({
+      kind: "needs-you",
+      note: `${why}; its worktree ${directory} and session ${session} are kept for you`,
+      raises: true,
+    }) satisfies Outcome;
 
-      return {
-        kind: "needs-you",
-        note: `${why}; its worktree ${directory} and session ${session} are kept for you`,
-      } satisfies Outcome;
-    });
-
-  if (stopped !== null) return yield* left(stopped);
+  if (stopped !== null) return left(stopped);
 
   if (said?.includes(needsYouLine) === true)
-    return yield* left("the agent stopped for you");
+    return left("the agent stopped for you");
 
   const why = yield* unfinished(start, target, options);
 
-  if (why !== null) return yield* left(why);
+  if (why !== null) return left(why);
 
   const pushedTo = yield* run(
     "git",
@@ -472,7 +477,7 @@ const rebase = Effect.fnUntraced(function* (
     );
 
     if (now === start)
-      return yield* left("the push failed, and the branch hasn't moved");
+      return left("the push failed, and the branch hasn't moved");
 
     yield* Worktrees.discard(directory);
 
@@ -555,12 +560,14 @@ const keep = Effect.fnUntraced(function* (
     return {
       kind: "needs-you",
       note: `${behind} behind, and still left for you in ${left.directory}`,
+      raises: false,
     } satisfies Outcome;
 
   if (yield* rebasing(entry.branch, options))
     return {
       kind: "needs-you",
       note: `${behind} behind, and a checkout here is part way through rebasing it`,
+      raises: false,
     } satisfies Outcome;
 
   return yield* rebase(repo, entry, behind, place);
@@ -615,17 +622,14 @@ const keepRepository = Effect.fnUntraced(function* (
   const { order, problems } = inOrder(files, new Set(branches));
   const held = new Map([...broken, ...problems]);
 
-  if (held.size > 0) yield* attention;
-
   const outcomes = yield* walk(order, new Set(held.keys()), (entry) =>
     keep(repo, entry, worktrees).pipe(
       Effect.catchCause((cause) =>
-        attention.pipe(
-          Effect.as({
-            kind: "needs-you",
-            note: reason(cause),
-          } satisfies Outcome),
-        ),
+        Effect.succeed({
+          kind: "needs-you",
+          note: reason(cause),
+          raises: true,
+        } satisfies Outcome),
       ),
     ),
   );
@@ -633,7 +637,10 @@ const keepRepository = Effect.fnUntraced(function* (
   const all: ReadonlyArray<readonly [string, Outcome]> = [
     ...[...held].map(
       ([branch, note]) =>
-        [branch, { kind: "needs-you", note } satisfies Outcome] as const,
+        [
+          branch,
+          { kind: "needs-you", note, raises: true } satisfies Outcome,
+        ] as const,
     ),
     ...outcomes,
   ];
@@ -699,6 +706,15 @@ export const branchDrift = Effect.fnUntraced(function* () {
 
   const rebased = of("rebased");
   const yours = of("needs-you");
+
+  // Only what each branch ended as counts, so a branch that failed on one
+  // pass and was rebased on the next doesn't need you
+  if (
+    outcomes.some(
+      ([, outcome]) => outcome.kind === "needs-you" && outcome.raises,
+    )
+  )
+    yield* attention;
 
   yield* summary(
     [

@@ -35,14 +35,14 @@ test("a branch waits while its parent isn't in step", () => {
     walk(order, new Set(), (entry) =>
       Effect.succeed<Outcome>(
         entry.branch === "server"
-          ? { kind: "needs-you", note: "a conflict" }
+          ? { kind: "needs-you", note: "a conflict", raises: true }
           : { kind: "rebased", behind: 1 },
       ),
     ),
   );
 
   expect(Object.fromEntries(outcomes)).toEqual({
-    server: { kind: "needs-you", note: "a conflict" },
+    server: { kind: "needs-you", note: "a conflict", raises: true },
     station: { kind: "rebased", behind: 1 },
     app: { kind: "waiting", on: "server" },
     cloud: { kind: "waiting", on: "server" },
