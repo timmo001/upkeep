@@ -54,6 +54,8 @@ export const handlers: Handlers = {
   plugins: () => machine("plugins"),
   "first-party": () => machine("first-party"),
   containers: () => machine("containers"),
+  gh: () => machine("gh"),
+  packages: () => machine("packages"),
   system: () => machine("system"),
   clean: () => machine("clean"),
 };

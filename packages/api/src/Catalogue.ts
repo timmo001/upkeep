@@ -272,6 +272,8 @@ export const Stage = Schema.Literals([
   "plugins",
   "first-party",
   "containers",
+  "gh",
+  "packages",
   "system",
   "clean",
 ]);
@@ -345,6 +347,23 @@ export const upContainers = machine(
   "0 2 * * *",
 );
 
+// Opt-in, since only some machines' dot has the stage, a server's for now.
+// The rule reads the stage name as a gh command; nothing is spawned here.
+// oxlint-disable-next-line timmo-effect/no-raw-gh
+export const upGh = machine(
+  "gh",
+  "Install missing gh extensions and upgrade the rest",
+  "5 2 * * *",
+  { optIn: true },
+);
+
+export const upPackages = machine(
+  "packages",
+  "Install the listed packages that aren't installed",
+  "10 2 * * *",
+  { optIn: true },
+);
+
 export const upSystem = machine(
   "system",
   "Upgrade system packages and remove what's no longer needed",
@@ -368,6 +387,8 @@ export const machineJobs: ReadonlyArray<Job> = [
   upPlugins,
   upFirstParty,
   upContainers,
+  upGh,
+  upPackages,
   upSystem,
   upClean,
 ];
