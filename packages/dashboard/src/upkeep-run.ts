@@ -1,7 +1,8 @@
 /**
  * `upkeep-run`: one run, what started it, a heal's record when it's a heal,
- * and its log as it grows, with a button to cancel it while it's going, and
- * once it's ended, to run it again or dismiss what it left for a person.
+ * and its log as it grows. Everything you can do with it sits in one row
+ * under its title: cancel it while it's going, and once it's ended run it
+ * again or dismiss what it left for a person, then open a heal's session.
  */
 import { Catalogue, Domain } from "@upkeep/api";
 import type {
@@ -19,13 +20,14 @@ import {
 } from "./icons.ts";
 import {
   agentLabel,
-  agentSession,
   attentionBadge,
   capitalise,
   duration,
   externalLink,
   formatTime,
   jobName,
+  sessionButtons,
+  sessionCommand,
   shared,
   stateBadge,
   time,
@@ -47,6 +49,7 @@ import {
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-divider.ts";
 import "@timmo001/groundwork-ui/define/gw-page-header.ts";
 import "@timmo001/groundwork-ui/define/gw-section.ts";
 import "@timmo001/groundwork-ui/define/gw-list.ts";
@@ -186,12 +189,7 @@ const runLinks = (current: Domain.Run) => {
   `;
 };
 
-const healFacts = (
-  heal: Domain.Heal,
-  worker: string | null,
-  resumers: ReadonlyArray<string>,
-  attention: string | null,
-) => html`
+const healFacts = (heal: Domain.Heal) => html`
   ${fact("Heals", html`<a href=${runHref(heal.of)}>${jobName(heal.job)}</a>`)}
   ${fact("Target", target(heal))}
   ${heal.decision === null ? null : fact("Decision", capitalise(heal.decision))}
@@ -229,26 +227,7 @@ const healFacts = (
           </ul>`,
         )
   }
-  ${
-    heal.session === null
-      ? null
-      : fact(
-          "Session",
-          worker === null || heal.directory === null
-            ? html`<code>opencode2 --session ${heal.session}</code>`
-            : agentSession(
-                {
-                  worker,
-                  session: heal.session,
-                  directory: heal.directory,
-                  title: `${jobName(heal.job)} heal for ${target(heal)}`,
-                },
-                // A shared session opens on any worker that can open one
-                heal.shared ? resumers : [worker],
-                attention,
-              ),
-        )
-  }
+  ${heal.session === null ? null : fact("Session", sessionCommand(heal.session))}
 `;
 
 export class UpkeepRun extends LitElement {
@@ -264,6 +243,10 @@ export class UpkeepRun extends LitElement {
         align-items: baseline;
         gap: var(--gw-space-2) var(--gw-space-4);
         margin: var(--gw-space-4) 0;
+      }
+
+      .run-actions {
+        margin-block-start: var(--gw-space-4);
       }
 
       dt {
@@ -354,6 +337,79 @@ export class UpkeepRun extends LitElement {
   }
 
   /**
+   * Everything you can do with the run, in one row under its title: cancel
+   * it while it's going, or once it's ended dismiss what it left for you and
+   * run it again, then, apart, open a heal's agent session.
+   */
+  #actions(current: Domain.Run) {
+    const heal = current.heal;
+
+    const run = going(current.state)
+      ? [
+          html`<gw-button
+            size="small"
+            appearance="outlined"
+            variant="danger"
+            icon=${phProhibit}
+            @click=${() => registry.set(cancelRun, current.id)}
+            >Cancel</gw-button
+          >`,
+        ]
+      : [
+          current.attention
+            ? html`<gw-button
+                size="small"
+                appearance="outlined"
+                variant="neutral"
+                icon=${phCheck}
+                @click=${() => registry.set(dismissRun, current.id)}
+                >Dismiss</gw-button
+              >`
+            : null,
+          current.release === null && Catalogue.needsRelease(current.job)
+            ? null
+            : html`<gw-button
+                size="small"
+                appearance="outlined"
+                variant="neutral"
+                icon=${phArrowCounterClockwise}
+                @click=${() => registry.set(retryRun, current.id)}
+                >${heal === null ? "Run again" : "Heal again"}</gw-button
+              >`,
+        ].filter((button) => button !== null);
+
+    const session =
+      heal?.session == null ||
+      heal.directory === null ||
+      current.worker === null
+        ? null
+        : sessionButtons(
+            {
+              worker: current.worker,
+              session: heal.session,
+              directory: heal.directory,
+              title: `${jobName(heal.job)} heal for ${target(heal)}`,
+            },
+            // A shared session opens on any worker that can open one
+            heal.shared ? this.#resumers() : [current.worker],
+            current.attention ? current.id : null,
+            "small",
+          );
+
+    if (run.length === 0 && session === null) return null;
+
+    return html`<gw-row class="run-actions" gap="s">
+      ${run}
+      ${
+        run.length > 0 && session !== null
+          ? html`<gw-divider orientation="vertical"></gw-divider>`
+          : null
+      }
+      ${session}
+    </gw-row>`;
+  }
+
+  /**
    * What a queued run waits behind: the runs going in its lane, and how many
    * queued before it there. Each worker runs one run per lane at a time.
    */
@@ -419,46 +475,8 @@ export class UpkeepRun extends LitElement {
             labels="hide"
             >Back</gw-button
           >
-          ${
-            going(current.state)
-              ? html`<gw-button
-                  slot="actions"
-                  size="small"
-                  appearance="outlined"
-                  variant="danger"
-                  icon=${phProhibit}
-                  @click=${() => registry.set(cancelRun, current.id)}
-                  >Cancel</gw-button
-                >`
-              : html`${
-                  current.attention
-                    ? html`<gw-button
-                        slot="actions"
-                        size="small"
-                        appearance="outlined"
-                        variant="neutral"
-                        icon=${phCheck}
-                        @click=${() => registry.set(dismissRun, current.id)}
-                        >Dismiss</gw-button
-                      >`
-                    : null
-                }
-                ${
-                  current.release === null &&
-                  Catalogue.needsRelease(current.job)
-                    ? null
-                    : html`<gw-button
-                        slot="actions"
-                        size="small"
-                        appearance="outlined"
-                        variant="neutral"
-                        icon=${phArrowCounterClockwise}
-                        @click=${() => registry.set(retryRun, current.id)}
-                        >${current.heal === null ? "Run again" : "Heal again"}</gw-button
-                      >`
-                }`
-          }
         </gw-page-header>
+        ${this.#actions(current)}
         <dl>
           ${fact(
             current.heal === null ? "State" : "Result",
@@ -480,7 +498,7 @@ export class UpkeepRun extends LitElement {
           ${fact("Queued", time(current.queuedAt))} ${this.#waiting(current)}
           ${current.worker === null ? null : fact("Worker", current.worker)}
           ${current.startedAt === null ? null : fact("Took", duration(current))}
-          ${current.heal === null ? null : healFacts(current.heal, current.worker, this.#resumers(), current.attention ? current.id : null)}
+          ${current.heal === null ? null : healFacts(current.heal)}
           ${current.agent === null ? null : fact("Agent", agentLabel(current.agent))}
         </dl>
         ${

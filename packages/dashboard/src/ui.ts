@@ -148,6 +148,14 @@ export const shared = css`
     justify-content: end;
   }
 
+  /* A back button centres on the title's line rather than on the icon tile
+     these pages haven't got. Its slot is as tall as the line, so a button
+     taller than the text, for a finger, overhangs it evenly */
+  gw-page-header:not([icon])::part(start) {
+    height: calc(var(--gw-font-size-2xl) * 1.2);
+    min-height: 0;
+  }
+
   .parked {
     color: var(--gw-color-warning);
   }
@@ -461,32 +469,19 @@ export const attentionBadge = html`<gw-badge
   >needs you</gw-badge
 >`;
 
-/**
- * An agent's OpenCode session: the command that resumes it, with a button to
- * copy it, and one to open it in Herdr on each worker in `on`, the one it ran
- * on first. With `ask`, the ID of a run that left work for you, one more has
- * the session ask you in the Plannotator Inbox, resumed in the background where
- * it ran, and dismiss that run once nothing waits on you.
- */
-export const agentSession = (
-  open: {
-    readonly worker: string;
-    readonly session: string;
-    readonly directory: string;
-    readonly title: string;
-  },
-  on: ReadonlyArray<string> = [open.worker],
-  ask: string | null = null,
-) => {
-  const resume = `opencode2 --session ${open.session}`;
+/** An agent's OpenCode session, and where it can be opened. */
+export interface OpenSession {
+  readonly worker: string;
+  readonly session: string;
+  readonly directory: string;
+  readonly title: string;
+}
 
-  const workers = [
-    open.worker,
-    ...on.filter((each) => each !== open.worker).toSorted(),
-  ];
+/** The command that resumes a session, with a button to copy it. */
+const resumeCommand = (session: string) => {
+  const resume = `opencode2 --session ${session}`;
 
-  return html`<span class="session">
-    <code>${resume}</code>
+  return html`<code>${resume}</code>
     <gw-button
       size="xs"
       appearance="plain"
@@ -502,11 +497,35 @@ export const agentSession = (
         });
       }}
       >Copy</gw-button
-    >
-    ${workers.map(
+    >`;
+};
+
+/** An agent's OpenCode session as the command that resumes it, with Copy. */
+export const sessionCommand = (session: string) =>
+  html`<span class="session">${resumeCommand(session)}</span>`;
+
+/**
+ * The buttons that open an agent's session: in Herdr on each worker in `on`,
+ * the one it ran on first, and here. With `ask`, the ID of a run that left
+ * work for you, one more has the session ask you in the Plannotator Inbox,
+ * resumed in the background where it ran, and dismiss that run once nothing
+ * waits on you.
+ */
+export const sessionButtons = (
+  open: OpenSession,
+  on: ReadonlyArray<string> = [open.worker],
+  ask: string | null = null,
+  size: "xs" | "small" = "xs",
+) => {
+  const workers = [
+    open.worker,
+    ...on.filter((each) => each !== open.worker).toSorted(),
+  ];
+
+  return html`${workers.map(
       (worker) =>
         html`<gw-button
-          size="xs"
+          size=${size}
           appearance="outlined"
           variant="neutral"
           icon=${phTerminalWindow}
@@ -517,7 +536,7 @@ export const agentSession = (
     ${
       ask !== null
         ? html`<gw-button
-            size="xs"
+            size=${size}
             appearance="outlined"
             variant="neutral"
             icon=${phChatCircle}
@@ -534,15 +553,27 @@ export const agentSession = (
         : null
     }
     <gw-button
-      size="xs"
+      size=${size}
       appearance="plain"
       variant="neutral"
       icon=${phArrowSquareOut}
       href=${sessionLink(open)}
       >Open here</gw-button
-    >
-  </span>`;
+    >`;
 };
+
+/**
+ * An agent's OpenCode session: the command that resumes it, with Copy, and
+ * the {@link sessionButtons} that open it, for a list of them.
+ */
+export const agentSession = (
+  open: OpenSession,
+  on: ReadonlyArray<string> = [open.worker],
+  ask: string | null = null,
+) =>
+  html`<span class="session">
+    ${resumeCommand(open.session)} ${sessionButtons(open, on, ask)}
+  </span>`;
 
 /**
  * An `upkeep://` link that opens a session on the machine the browser is
