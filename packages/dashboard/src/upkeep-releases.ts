@@ -10,8 +10,15 @@ import type {
   TableRow,
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
+import { ActionTracker } from "./ActionTracker.ts";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
+import {
+  firstMachine,
+  hereOf,
+  machineButton,
+  machinesFor,
+} from "./machines.ts";
 import {
   phArrowClockwise,
   phArrowLeft,
@@ -20,6 +27,7 @@ import {
   phTag,
 } from "./icons.ts";
 import {
+  capitalise,
   chosen,
   empty,
   externalLink,
@@ -30,6 +38,7 @@ import {
 } from "./ui.ts";
 import { type CellSize, cell } from "./upkeep-cell.ts";
 import {
+  here,
   refreshRelease,
   releaseAgent,
   releaseHref,
@@ -56,9 +65,6 @@ const impacts: ReadonlyArray<Domain.Impact> = [
 
 const isImpact = (value: string): value is Domain.Impact | "auto" =>
   value === "auto" || impacts.some((impact) => impact === value);
-
-/** A worker seen in the last ten minutes is taken to be up. */
-const upFor = 10 * 60 * 1000;
 
 const fact = (label: string, value: string | TemplateResult) =>
   html`<dt>${label}</dt>
@@ -138,6 +144,11 @@ export class UpkeepReleases extends LitElement {
   declare repo: string | undefined;
 
   readonly #page = new AtomController(this, () => releasesPage, always);
+
+  readonly #here = new AtomController(this, () => here);
+
+  /** What each repository's release agent is doing, under its buttons. */
+  readonly #tracker = new ActionTracker(this);
 
   constructor() {
     super();
@@ -505,57 +516,76 @@ export class UpkeepReleases extends LitElement {
     snapshot: Domain.ReleaseSnapshot | null,
     workers: Domain.ReleasesPage["workers"],
   ) {
-    const now = Date.now();
-
-    const launchers = workers.filter(
-      (worker) => worker.launch && now - worker.at < upFor,
-    );
+    const launchers = machinesFor(workers, "launch");
+    const key = entry.repo;
 
     return html`<gw-row gap="s">
-      <gw-button
-        size="small"
-        appearance="outlined"
-        variant="neutral"
-        icon=${phArrowClockwise}
-        @click=${() => registry.set(refreshRelease, entry.repo)}
-        >Compare again</gw-button
-      >
-      ${
-        snapshot === null
-          ? nothing
-          : this.#impactMenu(
-              snapshot.reviewed
-                ? `Overall: ${snapshot.suggestion}, chosen`
-                : "Choose the overall impact",
-              entry,
-              snapshot,
-              ["overall"],
-              snapshot.suggestion,
-              snapshot.reviewed,
-            )
-      }
-      ${
-        snapshot !== null && launchers.length > 0
-          ? html`<gw-menu-button
-              size="small"
-              appearance="accent"
-              icon=${phRobot}
-              label="Release in an agent"
-              heading="Release on"
-              .items=${launchers.map((worker) => ({
-                value: worker.worker,
-                label: worker.worker,
-              }))}
-              @select=${(event: Event) =>
-                registry.set(releaseAgent, {
-                  repo: entry.repo,
-                  snapshot: snapshot.id,
-                  worker: chosen(event),
-                })}
-            ></gw-menu-button>`
-          : nothing
-      }
-    </gw-row>`;
+        <gw-button
+          size="small"
+          appearance="outlined"
+          variant="neutral"
+          icon=${phArrowClockwise}
+          ?loading=${this.#tracker.busy(key, "compare")}
+          @click=${() =>
+            this.#tracker.track(
+              key,
+              "compare",
+              {
+                sending: "Asking for a new comparison…",
+                waiting: "Waiting for a worker to compare it…",
+                running: "Comparing it with the last release…",
+                done: "Compared again",
+                failed: "Couldn't compare it",
+              },
+              refreshRelease,
+              entry.repo,
+            )}
+          >Compare again</gw-button
+        >
+        ${
+          snapshot === null
+            ? nothing
+            : this.#impactMenu(
+                snapshot.reviewed
+                  ? `Overall: ${snapshot.suggestion}, chosen`
+                  : "Choose the overall impact",
+                entry,
+                snapshot,
+                ["overall"],
+                snapshot.suggestion,
+                snapshot.reviewed,
+              )
+        }
+        ${
+          snapshot !== null && launchers.length > 0
+            ? machineButton({
+                machines: launchers,
+                first:
+                  firstMachine(launchers, hereOf(this.#here.value)) ??
+                  launchers[0] ??
+                  "",
+                label: (worker) => `Release in an agent on ${worker}`,
+                icon: phRobot,
+                busy: this.#tracker.busy(key, "release"),
+                launch: (worker) =>
+                  this.#tracker.track(
+                    key,
+                    "release",
+                    {
+                      sending: `Asking ${worker} for an agent…`,
+                      waiting: `Waiting for ${worker} to pick it up…`,
+                      running: `${capitalise(worker)} is opening the agent in Herdr…`,
+                      done: `Opened the release agent in Herdr on ${worker}`,
+                      failed: `Couldn't open the agent on ${worker}`,
+                    },
+                    releaseAgent,
+                    { repo: entry.repo, snapshot: snapshot.id, worker },
+                  ),
+              })
+            : nothing
+        }
+      </gw-row>
+      ${this.#tracker.status(key)}`;
   }
 
   #detail(page: Domain.ReleasesPage, repo: string) {

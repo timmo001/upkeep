@@ -15,7 +15,10 @@ import type {
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
+import { ActionTracker, saying } from "./ActionTracker.ts";
 import { always, AtomController, registry } from "./AtomController.ts";
+import { hereOf } from "./machines.ts";
+import { sessionActions } from "./sessions.ts";
 import {
   phArrowCounterClockwise,
   phCheck,
@@ -28,11 +31,11 @@ import {
   phXCircle,
 } from "./icons.ts";
 import {
-  agentSession,
   capitalise,
   drawn,
   empty,
   externalLink,
+  sessionCommand,
   shared,
   time,
   view,
@@ -42,12 +45,14 @@ import { cell } from "./upkeep-cell.ts";
 import {
   approveSkillChange,
   dropSkillChange,
+  here,
   openSkillChange,
   requestSkillChange,
   reviseSkillChange,
   skillsPage,
 } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
+import "@timmo001/groundwork-ui/define/gw-divider.ts";
 import "@timmo001/groundwork-ui/define/gw-chip.ts";
 import "@timmo001/groundwork-ui/define/gw-code.ts";
 import "@timmo001/groundwork-ui/define/gw-expansion.ts";
@@ -140,6 +145,11 @@ export class UpkeepSkills extends LitElement {
   ];
 
   readonly #page = new AtomController(this, () => skillsPage, always);
+
+  readonly #here = new AtomController(this, () => here);
+
+  /** What each held change's actions are doing, under its buttons. */
+  readonly #tracker = new ActionTracker(this);
 
   #search = "";
 
@@ -267,15 +277,7 @@ export class UpkeepSkills extends LitElement {
         ${
           change.session === null
             ? nothing
-            : fact(
-                "Session",
-                agentSession({
-                  worker: change.worker,
-                  session: change.session,
-                  directory: change.directory,
-                  title: change.title,
-                }),
-              )
+            : fact("Session", sessionCommand(change.session))
         }
         ${fact(
           "Worker",
@@ -301,55 +303,128 @@ export class UpkeepSkills extends LitElement {
               .content=${change.patch}
             ></gw-code>`
       }
-      ${
-        open(change)
-          ? html`<gw-row gap="s">
-              ${
-                change.state === "waiting"
-                  ? html`<gw-button
-                      size="small"
-                      icon=${phCheck}
-                      @click=${() => registry.set(approveSkillChange, change.id)}
-                      >Approve</gw-button
-                    >`
-                  : nothing
-              }
-              ${
-                change.state === "waiting" || change.state === "stale"
-                  ? html`<gw-button
-                      size="small"
-                      appearance="outlined"
-                      variant="neutral"
-                      icon=${phPencilSimple}
-                      @click=${(event: Event) =>
-                        this.#ask(event, { kind: "revise", change })}
-                      >Request changes</gw-button
-                    >`
-                  : nothing
-              }
-              ${
-                up && worker.launch
-                  ? html`<gw-button
-                      size="small"
-                      appearance="outlined"
-                      variant="neutral"
-                      icon=${phTerminalWindow}
-                      @click=${() => registry.set(openSkillChange, change.id)}
-                      >Open in Herdr</gw-button
-                    >`
-                  : nothing
-              }
-              <gw-button
+      ${this.#changeActions(change, up && worker.launch)}`;
+  }
+
+  /**
+   * What you can do with a held change, in one row: approve it, ask for
+   * changes, start a new agent on it or drop it, then, apart, resume the
+   * agent that made it. How the last one pressed is going shows under them.
+   */
+  #changeActions(change: Domain.SkillChange, launch: boolean) {
+    const key = change.id;
+    const busy = (button: string) => this.#tracker.busy(key, button);
+
+    const held = open(change)
+      ? [
+          change.state === "waiting"
+            ? html`<gw-button
+                size="small"
+                icon=${phCheck}
+                ?loading=${busy("approve")}
+                @click=${() =>
+                  this.#tracker.track(
+                    key,
+                    "approve",
+                    {
+                      sending: "Approving it…",
+                      waiting: "Approved, waiting for a worker to land it…",
+                      running: "Landing it…",
+                      done: "Landed",
+                      failed: "Couldn't land it",
+                    },
+                    approveSkillChange,
+                    change.id,
+                  )}
+                >Approve</gw-button
+              >`
+            : null,
+          change.state === "waiting" || change.state === "stale"
+            ? html`<gw-button
                 size="small"
                 appearance="outlined"
-                variant="danger"
-                icon=${phXCircle}
-                @click=${() => registry.set(dropSkillChange, change.id)}
-                >Drop</gw-button
-              >
-            </gw-row>`
-          : nothing
-      }`;
+                variant="neutral"
+                icon=${phPencilSimple}
+                @click=${(event: Event) =>
+                  this.#ask(event, { kind: "revise", change })}
+                >Request changes</gw-button
+              >`
+            : null,
+          launch
+            ? html`<gw-button
+                size="small"
+                appearance="outlined"
+                variant="neutral"
+                icon=${phTerminalWindow}
+                ?loading=${busy("open")}
+                @click=${() =>
+                  this.#tracker.track(
+                    key,
+                    "open",
+                    {
+                      sending: `Asking ${change.worker} for a new agent…`,
+                      waiting: `Waiting for ${change.worker} to pick it up…`,
+                      running: `${capitalise(change.worker)} is opening a new agent in Herdr…`,
+                      done: `Opened a new agent in Herdr on ${change.worker}`,
+                      failed: `Couldn't open a new agent on ${change.worker}`,
+                    },
+                    openSkillChange,
+                    change.id,
+                  )}
+                >New agent in Herdr on ${change.worker}</gw-button
+              >`
+            : null,
+          html`<gw-button
+            size="small"
+            appearance="outlined"
+            variant="danger"
+            icon=${phXCircle}
+            ?loading=${busy("drop")}
+            @click=${() =>
+              this.#tracker.track(
+                key,
+                "drop",
+                {
+                  ...saying("Dropping it…"),
+                  done: "Dropped",
+                  failed: "Couldn't drop it",
+                },
+                dropSkillChange,
+                change.id,
+              )}
+            >Drop</gw-button
+          >`,
+        ].filter((button) => button !== null)
+      : [];
+
+    const session =
+      change.session === null
+        ? null
+        : sessionActions({
+            open: {
+              worker: change.worker,
+              session: change.session,
+              directory: change.directory,
+              title: change.title,
+            },
+            machines: [change.worker],
+            here: hereOf(this.#here.value),
+            tracker: this.#tracker,
+            key,
+          });
+
+    if (held.length === 0 && session === null) return nothing;
+
+    return html`<gw-row gap="s">
+        ${held}
+        ${
+          held.length > 0 && session !== null
+            ? html`<gw-divider orientation="vertical"></gw-divider>`
+            : nothing
+        }
+        ${session ?? nothing}
+      </gw-row>
+      ${this.#tracker.status(key)}`;
   }
 
   #skill(repo: string, skill: Domain.SkillInfo) {

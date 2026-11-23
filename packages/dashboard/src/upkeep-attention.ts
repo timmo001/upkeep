@@ -27,6 +27,7 @@ import { css, html, LitElement, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural } from "./entries.ts";
+import { firstMachine, hereOf, machinesFor, pickMachine } from "./machines.ts";
 import {
   phArchive,
   phArrowClockwise,
@@ -77,6 +78,7 @@ import {
   commentAttention,
   createGroup,
   deleteGroup,
+  here,
   hideAttention,
   jobs,
   linkAttention,
@@ -127,8 +129,6 @@ const sectionKey = (id: string) => `upkeep.attention.section.${id}`;
 
 /** Where Since you last looked keeps whether its full list shows. */
 const sinceKey = "upkeep.attention.since";
-
-const lastWorkerKey = "upkeep.attention.worker";
 
 const decodeCollapsed = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(Schema.String)),
@@ -635,6 +635,11 @@ export class UpkeepAttention extends LitElement {
   /** Workers that can open an agent, and the one used last here. */
   readonly #agents = new AtomController(this, () => agents, always);
 
+  readonly #here = new AtomController(this, () => here);
+
+  /** The machine switched to on this visit, over the one offered first. */
+  #worker: string | undefined;
+
   /** The tracked repositories, offered as places to start an agent. */
   readonly #repos = new AtomController(this, () => repos);
 
@@ -757,14 +762,13 @@ export class UpkeepAttention extends LitElement {
     const result = this.#agents.value;
 
     const workers = AsyncResult.isSuccess(result)
-      ? result.value
-          .filter((each) => each.launch)
-          .map((each) => each.worker)
-          .toSorted((a, b) => a.localeCompare(b))
+      ? machinesFor(result.value, "launch")
       : [];
 
-    const stored = localStorage.getItem(lastWorkerKey);
-    const worker = workers.find((each) => each === stored) ?? workers[0];
+    // One switched to on this visit wins, then this machine and the rest
+    const worker =
+      workers.find((each) => each === this.#worker) ??
+      firstMachine(workers, hereOf(this.#here.value));
 
     if (worker === undefined) return nothing;
 
@@ -820,7 +824,8 @@ export class UpkeepAttention extends LitElement {
         const value = chosen(event);
 
         if (value.startsWith("worker:")) {
-          localStorage.setItem(lastWorkerKey, value.slice("worker:".length));
+          this.#worker = value.slice("worker:".length);
+          pickMachine(this.#worker);
           this.requestUpdate();
 
           return;

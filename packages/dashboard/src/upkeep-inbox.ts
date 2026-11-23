@@ -8,23 +8,24 @@
 import { Domain } from "@upkeep/api";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, nothing } from "lit";
+import { ActionTracker } from "./ActionTracker.ts";
 import { always, AtomController, registry } from "./AtomController.ts";
 import { plural, summarise, titlesOf, type Titles } from "./entries.ts";
+import { hereOf } from "./machines.ts";
+import { sessionActions } from "./sessions.ts";
 import {
   phArrowRight,
-  phChatCircle,
-  phCheck,
   phCheckCircle,
   phChecks,
   phClockCounterClockwise,
   phPlayPause,
   phX,
 } from "./icons.ts";
-import { agentSession, empty, jobName, shared, time, view } from "./ui.ts";
+import { empty, jobName, sessionCommand, shared, time, view } from "./ui.ts";
 import { type Filters, matches, noFilters } from "./upkeep-filters.ts";
 import {
-  askInbox,
   dismissEntry,
+  here,
   inbox,
   jobHref,
   jobs,
@@ -56,6 +57,16 @@ export class UpkeepInbox extends LitElement {
         margin-top: var(--gw-space-2);
       }
 
+      .session-actions {
+        display: grid;
+        gap: var(--gw-space-2);
+        margin-block: var(--gw-space-2);
+      }
+
+      .session-actions .action-status {
+        margin: 0;
+      }
+
       .when {
         color: var(--gw-color-text-secondary);
         font-size: var(--gw-font-size-s);
@@ -73,6 +84,11 @@ export class UpkeepInbox extends LitElement {
   readonly #jobs = new AtomController(this, () => jobs);
 
   readonly #repos = new AtomController(this, () => repos);
+
+  readonly #here = new AtomController(this, () => here);
+
+  /** What each entry's session actions are doing, under its buttons. */
+  readonly #tracker = new ActionTracker(this);
 
   #filters: Filters = noFilters;
 
@@ -97,12 +113,26 @@ export class UpkeepInbox extends LitElement {
     const job = entry.job;
 
     return html`<gw-alert tone="warning" heading=${entry.title}>
-      ${entry.detail ?? ""}
       ${
+        // What you can do sits at the top, before what the entry says
         entry.session === null
           ? nothing
-          : html`<div>${agentSession(entry.session)}</div>`
+          : html`<div class="session-actions">
+              <gw-row gap="s">
+                ${sessionActions({
+                  open: entry.session,
+                  machines: [entry.session.worker],
+                  here: hereOf(this.#here.value),
+                  ask: entry.ask,
+                  tracker: this.#tracker,
+                  key: entry.id,
+                })}
+              </gw-row>
+              ${this.#tracker.status(entry.id)}
+              ${sessionCommand(entry.session.session)}
+            </div>`
       }
+      ${entry.detail ?? ""}
       <div class="when">
         ${entry.count > 1 ? `${entry.count} times, last ` : ""}${time(entry.lastAt)}
       </div>
@@ -138,27 +168,6 @@ export class UpkeepInbox extends LitElement {
               variant="neutral"
               icon=${phArrowRight}
               ><a href=${runHref(entry.run)}>Open the run</a></gw-button
-            >`
-      }
-      ${
-        entry.ask === null || entry.session === null
-          ? nothing
-          : html`<gw-button
-              slot="actions"
-              size="small"
-              appearance="outlined"
-              variant="neutral"
-              icon=${phChatCircle}
-              @click=${(event: Event) => {
-                const button = event.currentTarget;
-
-                if (entry.ask !== null && entry.session !== null)
-                  registry.set(askInbox, { ...entry.session, run: entry.ask });
-
-                if (button instanceof HTMLElement)
-                  button.setAttribute("icon", phCheck);
-              }}
-              >Ask me in the Inbox</gw-button
             >`
       }
       <gw-button

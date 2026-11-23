@@ -15,7 +15,6 @@ import { registry } from "./AtomController.ts";
 import {
   phArrowClockwise,
   phArrowSquareOut,
-  phChatCircle,
   phCheck,
   phCheckCircle,
   phChecks,
@@ -31,11 +30,10 @@ import {
   phPushPin,
   phRobot,
   phSignOut,
-  phTerminalWindow,
   phWarningCircle,
   phXCircle,
 } from "./icons.ts";
-import { askInbox, openSession, token } from "./upkeep.ts";
+import { token } from "./upkeep.ts";
 import "@timmo001/groundwork-ui/define/gw-alert.ts";
 import "@timmo001/groundwork-ui/define/gw-badge.ts";
 import "@timmo001/groundwork-ui/define/gw-button.ts";
@@ -170,6 +168,29 @@ export const shared = css`
   .session code {
     user-select: all;
     overflow-wrap: anywhere;
+  }
+
+  /* What an action is doing or did, under its buttons */
+  .action-status {
+    display: flex;
+    gap: var(--gw-space-2);
+    align-items: center;
+    margin: var(--gw-space-2) 0 0;
+    font-size: var(--gw-font-size-s);
+    color: var(--gw-color-text-secondary);
+  }
+
+  .action-status > .icon {
+    flex: none;
+    color: var(--gw-color-success);
+  }
+
+  .action-status.failed > .icon {
+    color: var(--gw-color-danger);
+  }
+
+  .action-status.failed {
+    color: var(--gw-color-text-primary);
   }
 `;
 
@@ -469,19 +490,12 @@ export const attentionBadge = html`<gw-badge
   >needs you</gw-badge
 >`;
 
-/** An agent's OpenCode session, and where it can be opened. */
-export interface OpenSession {
-  readonly worker: string;
-  readonly session: string;
-  readonly directory: string;
-  readonly title: string;
-}
-
-/** The command that resumes a session, with a button to copy it. */
-const resumeCommand = (session: string) => {
+/** An agent's OpenCode session as the command that resumes it, with Copy. */
+export const sessionCommand = (session: string) => {
   const resume = `opencode2 --session ${session}`;
 
-  return html`<code>${resume}</code>
+  return html`<span class="session"
+    ><code>${resume}</code>
     <gw-button
       size="xs"
       appearance="plain"
@@ -497,94 +511,6 @@ const resumeCommand = (session: string) => {
         });
       }}
       >Copy</gw-button
-    >`;
+    ></span
+  >`;
 };
-
-/** An agent's OpenCode session as the command that resumes it, with Copy. */
-export const sessionCommand = (session: string) =>
-  html`<span class="session">${resumeCommand(session)}</span>`;
-
-/**
- * The buttons that open an agent's session: in Herdr on each worker in `on`,
- * the one it ran on first, and here. With `ask`, the ID of a run that left
- * work for you, one more has the session ask you in the Plannotator Inbox,
- * resumed in the background where it ran, and dismiss that run once nothing
- * waits on you.
- */
-export const sessionButtons = (
-  open: OpenSession,
-  on: ReadonlyArray<string> = [open.worker],
-  ask: string | null = null,
-  size: "xs" | "small" = "xs",
-) => {
-  const workers = [
-    open.worker,
-    ...on.filter((each) => each !== open.worker).toSorted(),
-  ];
-
-  return html`${workers.map(
-      (worker) =>
-        html`<gw-button
-          size=${size}
-          appearance="outlined"
-          variant="neutral"
-          icon=${phTerminalWindow}
-          @click=${() => registry.set(openSession, { ...open, worker })}
-          >Resume in Herdr on ${worker}</gw-button
-        >`,
-    )}
-    ${
-      ask !== null
-        ? html`<gw-button
-            size=${size}
-            appearance="outlined"
-            variant="neutral"
-            icon=${phChatCircle}
-            @click=${(event: Event) => {
-              const button = event.currentTarget;
-
-              registry.set(askInbox, { ...open, run: ask });
-
-              if (button instanceof HTMLElement)
-                button.setAttribute("icon", phCheck);
-            }}
-            >Ask me in the Inbox</gw-button
-          >`
-        : null
-    }
-    <gw-button
-      size=${size}
-      appearance="plain"
-      variant="neutral"
-      icon=${phArrowSquareOut}
-      href=${sessionLink(open)}
-      >Open here</gw-button
-    >`;
-};
-
-/**
- * An agent's OpenCode session: the command that resumes it, with Copy, and
- * the {@link sessionButtons} that open it, for a list of them.
- */
-export const agentSession = (
-  open: OpenSession,
-  on: ReadonlyArray<string> = [open.worker],
-  ask: string | null = null,
-) =>
-  html`<span class="session">
-    ${resumeCommand(open.session)} ${sessionButtons(open, on, ask)}
-  </span>`;
-
-/**
- * An `upkeep://` link that opens a session on the machine the browser is
- * on, through `upkeep open`, where the `upkeep-git` package registered it.
- */
-export const sessionLink = (open: {
-  readonly session: string;
-  readonly directory: string;
-  readonly title: string;
-}) =>
-  `upkeep://open/${encodeURIComponent(open.session)}?${new URLSearchParams({
-    directory: open.directory,
-    title: open.title,
-  }).toString()}`;

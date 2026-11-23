@@ -105,6 +105,14 @@ export const agents = UpkeepApi.query("jobs", "agents", {
   reactivityKeys: workersKey,
 });
 
+/**
+ * The worker on the machine the dashboard is open on, as the server can tell
+ * from where the page and the workers call it from, for launching there.
+ */
+export const here = UpkeepApi.query("jobs", "here", {
+  reactivityKeys: workersKey,
+});
+
 /** The server's version, shown in the header. */
 export const serverVersion = UpkeepApi.query("system", "version", {});
 

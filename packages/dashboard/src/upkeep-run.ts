@@ -11,7 +11,8 @@ import type {
 } from "@timmo001/groundwork-ui/gw-table.ts";
 import { AsyncResult } from "effect/reactivity";
 import { css, html, LitElement, render, type TemplateResult } from "lit";
-import { always, AtomController, registry } from "./AtomController.ts";
+import { ActionTracker, saying } from "./ActionTracker.ts";
+import { always, AtomController } from "./AtomController.ts";
 import {
   phArrowCounterClockwise,
   phArrowLeft,
@@ -26,7 +27,6 @@ import {
   externalLink,
   formatTime,
   jobName,
-  sessionButtons,
   sessionCommand,
   shared,
   stateBadge,
@@ -34,11 +34,14 @@ import {
   view,
   written,
 } from "./ui.ts";
+import { hereOf, machinesFor } from "./machines.ts";
+import { sessionActions } from "./sessions.ts";
 import { type CellContent, type CellSize, cell } from "./upkeep-cell.ts";
 import {
   agents,
   cancelRun,
   dismissRun,
+  here,
   jobHref,
   jobs,
   retryRun,
@@ -245,8 +248,18 @@ export class UpkeepRun extends LitElement {
         margin: var(--gw-space-4) 0;
       }
 
+      /* Under the title, starting where its text does, past the back
+         button, so the title and what you can do with the run read as one */
       .run-actions {
-        margin-block-start: var(--gw-space-4);
+        margin-block-start: var(--gw-space-3);
+      }
+
+      @media (min-width: 40rem) {
+        .run-actions {
+          margin-inline-start: calc(
+            2.5rem * var(--gw-control-scale, 1) + var(--gw-space-3)
+          );
+        }
       }
 
       dt {
@@ -327,22 +340,22 @@ export class UpkeepRun extends LitElement {
 
   readonly #agents = new AtomController(this, () => agents, always);
 
-  /** The workers that can open an agent's session for you. */
-  #resumers() {
-    return AsyncResult.isSuccess(this.#agents.value)
-      ? this.#agents.value.value
-          .filter((each) => each.resume)
-          .map((each) => each.worker)
-      : [];
-  }
+  readonly #here = new AtomController(this, () => here);
+
+  /** What each of the run's actions is doing, said under them. */
+  readonly #tracker = new ActionTracker(this);
 
   /**
    * Everything you can do with the run, in one row under its title: cancel
    * it while it's going, or once it's ended dismiss what it left for you and
-   * run it again, then, apart, open a heal's agent session.
+   * run it again, then, apart, open a heal's agent session. How the last one
+   * pressed is going shows under the row.
    */
   #actions(current: Domain.Run) {
     const heal = current.heal;
+    const key = "run";
+    const busy = (button: string) => this.#tracker.busy(key, button);
+    const again = heal === null ? "Run again" : "Heal again";
 
     const run = going(current.state)
       ? [
@@ -351,7 +364,19 @@ export class UpkeepRun extends LitElement {
             appearance="outlined"
             variant="danger"
             icon=${phProhibit}
-            @click=${() => registry.set(cancelRun, current.id)}
+            ?loading=${busy("cancel")}
+            @click=${() =>
+              this.#tracker.track(
+                key,
+                "cancel",
+                {
+                  ...saying("Cancelling it…"),
+                  done: "Cancelled",
+                  failed: "Couldn't cancel it",
+                },
+                cancelRun,
+                current.id,
+              )}
             >Cancel</gw-button
           >`,
         ]
@@ -362,7 +387,19 @@ export class UpkeepRun extends LitElement {
                 appearance="outlined"
                 variant="neutral"
                 icon=${phCheck}
-                @click=${() => registry.set(dismissRun, current.id)}
+                ?loading=${busy("dismiss")}
+                @click=${() =>
+                  this.#tracker.track(
+                    key,
+                    "dismiss",
+                    {
+                      ...saying("Dismissing it…"),
+                      done: "Dismissed, so it no longer shows as needing you",
+                      failed: "Couldn't dismiss it",
+                    },
+                    dismissRun,
+                    current.id,
+                  )}
                 >Dismiss</gw-button
               >`
             : null,
@@ -373,40 +410,63 @@ export class UpkeepRun extends LitElement {
                 appearance="outlined"
                 variant="neutral"
                 icon=${phArrowCounterClockwise}
-                @click=${() => registry.set(retryRun, current.id)}
-                >${heal === null ? "Run again" : "Heal again"}</gw-button
+                ?loading=${busy("again")}
+                @click=${() =>
+                  this.#tracker.track(
+                    key,
+                    "again",
+                    {
+                      sending: "Queueing it again…",
+                      waiting: "Queued again, waiting for a worker…",
+                      running: "Running again…",
+                      done: "The new run passed",
+                      failed: "The new run didn't pass",
+                    },
+                    retryRun,
+                    current.id,
+                  )}
+                >${again}</gw-button
               >`,
         ].filter((button) => button !== null);
+
+    const machines = AsyncResult.isSuccess(this.#agents.value)
+      ? machinesFor(this.#agents.value.value, "resume")
+      : [];
 
     const session =
       heal?.session == null ||
       heal.directory === null ||
       current.worker === null
         ? null
-        : sessionButtons(
-            {
+        : sessionActions({
+            open: {
               worker: current.worker,
               session: heal.session,
               directory: heal.directory,
               title: `${jobName(heal.job)} heal for ${target(heal)}`,
             },
             // A shared session opens on any worker that can open one
-            heal.shared ? this.#resumers() : [current.worker],
-            current.attention ? current.id : null,
-            "small",
-          );
+            machines: heal.shared ? machines : [current.worker],
+            here: hereOf(this.#here.value),
+            ask: current.attention ? current.id : null,
+            tracker: this.#tracker,
+            key,
+          });
 
     if (run.length === 0 && session === null) return null;
 
-    return html`<gw-row class="run-actions" gap="s">
-      ${run}
-      ${
-        run.length > 0 && session !== null
-          ? html`<gw-divider orientation="vertical"></gw-divider>`
-          : null
-      }
-      ${session}
-    </gw-row>`;
+    return html`<div class="run-actions">
+      <gw-row gap="s">
+        ${run}
+        ${
+          run.length > 0 && session !== null
+            ? html`<gw-divider orientation="vertical"></gw-divider>`
+            : null
+        }
+        ${session}
+      </gw-row>
+      ${this.#tracker.status(key)}
+    </div>`;
   }
 
   /**
