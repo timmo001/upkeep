@@ -386,10 +386,12 @@ updated, and picks up work again once it is. A worker on a machine with
 the others before a release that raises the protocol.
 
 A worker keeps its status in `$XDG_STATE_HOME/upkeep/worker-status.json`, or
-`$UPKEEP_WORKER_STATUS`: a `health`, a one-line `summary` and when it was
-`updated`. The summary says what's running, how the last run ended, which
-jobs are parked and how many heals in the last day asked for a person, so a
-service monitor can show more than that the process is up. It's `warning`
+`$UPKEEP_WORKER_STATUS`: a `health`, a one-line `summary`, whether it's `busy`
+and when it was `updated`. The summary says what's running, how the last run
+ended, which jobs are parked and how many heals in the last day asked for a
+person, so a service monitor can show more than that the process is up.
+`busy` is true while any run is going, so something that turns the machine
+off, such as dot's `services busy`, can wait for it. It's `warning`
 while the OpenCode command its heals need, `opencode2` by default, isn't on
 its `PATH`, and `degraded` while the server can't be reached.
 

@@ -2,7 +2,8 @@
  * The worker's own status, written to a JSON file whenever it changes, so a
  * service monitor such as dot's services panel can show what the worker is
  * doing rather than only that its process is up. The file holds `health`,
- * `summary` and `updated`, the shape dot reads from a service's status file.
+ * `summary`, `busy` and `updated`, the shape dot reads from a service's status
+ * file.
  */
 import { Clock, Config, Effect, FileSystem, Path, Semaphore } from "effect";
 import * as RateLimits from "./RateLimits";
@@ -42,7 +43,10 @@ export const initial: State = {
   outage: [],
 };
 
-/** The status a monitor reads: its health and one line saying why. */
+/**
+ * The status a monitor reads: its health, one line saying why, and whether a
+ * run is going, so the machine isn't turned off under it.
+ */
 export const report = (state: State) => {
   const parts = [
     state.reachable
@@ -82,7 +86,11 @@ export const report = (state: State) => {
       ? "warning"
       : "ok";
 
-  return { health, summary: parts.join(" · ") };
+  return {
+    health,
+    summary: parts.join(" · "),
+    busy: state.running.length > 0,
+  };
 };
 
 /**
