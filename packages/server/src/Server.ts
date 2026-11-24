@@ -1447,31 +1447,6 @@ const InboxHandlers = HttpApiBuilder.group(
   }),
 );
 
-/**
- * Workers from before machine jobs were named by their stage ask for
- * `up-<stage>`: read those as the stage, and hand their runs back under the
- * old name, so a worker that missed the release still gets `first-party`, the
- * job that updates it. Goes in a later release, once every worker has updated.
- */
-export const legacyMachineJobs = (asked: ReadonlyArray<string>) => {
-  const names = new Map(
-    asked.map((id) => {
-      const stage = id.startsWith("up-") ? id.slice("up-".length) : null;
-
-      return stage !== null &&
-        Catalogue.machineJobs.some((job) => job.id === stage)
-        ? [stage, id]
-        : [id, id];
-    }),
-  );
-
-  return {
-    jobs: [...names.keys()],
-    named: (run: Domain.Run): Domain.Run =>
-      Struct.evolve(run, { job: (job) => names.get(job) ?? job }),
-  };
-};
-
 const WorkHandlers = HttpApiBuilder.group(
   Api.Api,
   "work",
@@ -1506,10 +1481,8 @@ const WorkHandlers = HttpApiBuilder.group(
             .pipe(Effect.orDie);
         }
 
-        const legacy = legacyMachineJobs(payload.jobs);
-
         const take = Effect.uninterruptible(
-          store.claim(legacy.jobs, worker.name).pipe(Effect.orDie),
+          store.claim(payload.jobs, worker.name).pipe(Effect.orDie),
         );
 
         // Hearing of changes starts before the first look, so a run queued
@@ -1537,7 +1510,7 @@ const WorkHandlers = HttpApiBuilder.group(
           );
         }
 
-        return { run: Option.getOrNull(Option.map(run, legacy.named)) };
+        return { run: Option.getOrNull(run) };
       }),
       status: () =>
         status().pipe(Effect.provideService(Store, store), Effect.orDie),
