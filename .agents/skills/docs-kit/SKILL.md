@@ -1,6 +1,6 @@
 ---
 name: docs-kit
-description: Use @timmo001/docs-kit to set up or change a timmo001 documentation site. Apply when creating a Blume docs site, editing its blume.config.ts, components.ts or theme.css, changing the home banner or header GitHub link, or generating share cards, social previews, logo PNGs or Apple touch icons from a site's SVG logo.
+description: Use @timmo001/docs-kit to set up or change a timmo001 documentation site. Apply when creating a Blume docs site, editing its blume.config.ts, components.ts or theme.css, deploying it with Alchemy, changing the home banner or header GitHub link, or generating share cards, social previews, logo PNGs or Apple touch icons from a site's SVG logo.
 compatibility: Requires Bun or Node with @timmo001/docs-kit. The blume entry point requires the Blume version in the package's peerDependencies; brand images use sharp.
 ---
 
@@ -48,6 +48,10 @@ on `main`, follow the installed release.
 5. Generate brand images with `writeBrandImages` from a site script rather than
    a copied generator. Commit the PNGs it writes. Remind the user that GitHub's
    social preview needs a manual upload.
+6. Deploy the built site from an Alchemy stack in `alchemy.run.ts`, spreading
+   `blumeWorker` from `@timmo001/docs-kit/blume/worker` into a
+   `Cloudflare.Worker` with the site's name and domain, as the README shows.
+   Ask before each deploy, and adopt an existing Worker once with `--adopt`.
 
 ## Change the package
 
