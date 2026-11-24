@@ -15,7 +15,7 @@
   "dependencies": {
     "@effect/ai-cloudflare": "4.1.5",
     "@effect/ai-typesafe": "4.1.5",
-    "@timmo001/effect-gh": "0.13.2",
+    "@timmo001/effect-gh": "0.14.0",
     "@upkeep/api": "workspace:*",
     "effect": "4.1.5",
     "jsonata": "2.2.2",
