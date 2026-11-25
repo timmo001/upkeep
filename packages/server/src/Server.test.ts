@@ -2,15 +2,17 @@
  * GitHub events through the server's pull: a release event queues its bump
  * once, a repeated delivery is dropped, and the batch is acked. Also the
  * status, the heal a batch of runs shares once it has ended, which workers
- * the machine jobs queue on.
+ * the machine jobs queue on, and when one failing on a worker needs you.
  */
 import { BunServices } from "@effect/platform-bun";
 import { Catalogue, type Domain } from "@upkeep/api";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option } from "effect";
+import { TestClock } from "effect/testing";
 import { Events } from "./Events";
 import {
   cronCache,
+  followMachine,
   healEnded,
   pullEvents,
   queueMachineRuns,
@@ -160,6 +162,58 @@ test("machine jobs queue only on the workers that run their stage, on each one's
       ).toEqual(["desktop"]);
     }).pipe(
       Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(BunServices.layer),
+    ),
+  ));
+
+test("a machine job still failing on a worker hours later needs you, until a run there passes", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+
+      yield* store.setAgents("station", setup);
+
+      const end = Effect.fnUntraced(function* (
+        hour: number,
+        outcome: Domain.Outcome,
+      ) {
+        yield* TestClock.setTime(hour * 3_600_000);
+
+        const queued = yield* store.queueRun({
+          job: "first-party",
+          trigger: "schedule",
+          release: null,
+          command: { kind: "machine", worker: "station" },
+        });
+
+        yield* store.claim(["first-party"], "station");
+
+        const run = yield* store.finish(
+          queued.id,
+          "station",
+          outcome,
+          outcome === "failed" ? "unable to lock database" : null,
+        );
+
+        yield* followMachine(run);
+
+        return (yield* status()).needs.map((item) => item.title);
+      });
+
+      const stuck = "dot up first-party keeps failing on station";
+
+      // Once is a blip, and twice within the hours could be one too
+      expect(yield* end(0, "failed")).toEqual([]);
+      expect(yield* end(1, "failed")).toEqual([]);
+      expect(yield* end(3, "failed")).toEqual([stuck]);
+      expect(yield* end(4, "failed")).toEqual([stuck]);
+      expect(yield* end(5, "succeeded")).toEqual([]);
+
+      // A new streak counts from its own first failure
+      expect(yield* end(6, "failed")).toEqual([]);
+    }).pipe(
+      Effect.provide(Store.layerFile(":memory:")),
+      Effect.provide(TestClock.layer()),
       Effect.provide(BunServices.layer),
     ),
   ));

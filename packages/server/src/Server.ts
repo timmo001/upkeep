@@ -43,6 +43,7 @@ import * as Backups from "./Backups";
 import { Events } from "./Events";
 import { GitHubApp } from "./GitHubApp";
 import { Restart } from "./Restart";
+import * as RunStates from "./RunStates";
 import { Store, type NewRun } from "./Store";
 import { Tokens } from "./Tokens";
 import { Triage } from "./Triage";
@@ -384,6 +385,57 @@ const covers = (healing: Domain.Target, target: Domain.Target) => {
     repos.has(repo.toLowerCase()),
   );
 };
+
+/** How long a machine job can keep failing on a worker before it needs you. */
+const machineStuckAfter = Duration.hours(3);
+
+/** The entry for a machine job that keeps failing on one worker. */
+const machineStuckKey = (job: string, worker: string) =>
+  `needs:machine:${job}:${worker}`;
+
+/**
+ * Follow a machine run that ended, which no heal looks at: a job still
+ * failing on its worker hours after it started, at least twice, such as on a
+ * lock something else holds, needs you, and a run there passing settles it.
+ */
+export const followMachine = Effect.fn("followMachine")(function* (
+  run: Domain.Run,
+) {
+  if (run.command?.kind !== "machine") return;
+
+  const store = yield* Store;
+  const { worker } = run.command;
+  const key = machineStuckKey(run.job, worker);
+
+  if (RunStates.passing.includes(run.state)) return yield* store.settle(key);
+
+  if (run.state !== "failed") return;
+
+  const now = yield* Clock.currentTimeMillis;
+  const { count, since } = yield* store.machineStreak(run.job, worker);
+
+  if (
+    count < 2 ||
+    since === null ||
+    now - since < Duration.toMillis(machineStuckAfter)
+  )
+    return;
+
+  const name = Option.match(findJob(run.job), {
+    onNone: () => run.job,
+    onSome: (job) => job.name,
+  });
+
+  const hours = Math.round((now - since) / Duration.toMillis("1 hour"));
+
+  yield* store.needs({
+    key,
+    title: `${name} keeps failing on ${worker}`,
+    detail: `Failed ${count} times in a row over ${hours} hours. Latest: ${run.error ?? "no error given"}`,
+    job: run.job,
+    run: run.id,
+  });
+});
 
 /**
  * Queue the heals of a failed, lost or handed-off run: one for Upkeep itself,
@@ -1604,6 +1656,11 @@ const WorkHandlers = HttpApiBuilder.group(
           Effect.provideService(Triage, triage),
           Effect.catchCause(Effect.logError),
         );
+
+        yield* followMachine(ended).pipe(
+          Effect.provideService(Store, store),
+          Effect.catchCause(Effect.logError),
+        );
       }),
       report: Effect.fn(function* ({ params, payload }) {
         const worker = yield* Api.CurrentWorker;
@@ -2753,6 +2810,7 @@ export const lostRuns = Layer.effectDiscard(
         );
 
         yield* healEnded(run, []).pipe(Effect.catchCause(Effect.logError));
+        yield* followMachine(run).pipe(Effect.catchCause(Effect.logError));
       }
     }).pipe(
       Effect.provideService(Store, store),

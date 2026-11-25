@@ -1956,6 +1956,17 @@ export class Store extends Context.Service<
       ReadonlyMap<string, ReadonlyArray<Domain.Run>>,
       StoreError
     >;
+    /**
+     * The failures of a machine job on one worker since its last run there
+     * that passed: how many, and when the first was queued.
+     */
+    machineStreak(
+      job: string,
+      worker: string,
+    ): Effect.Effect<
+      { readonly count: number; readonly since: number | null },
+      StoreError
+    >;
     /** When each job last had a run queued by its schedule, by job. */
     lastScheduled(): Effect.Effect<ReadonlyMap<string, number>, StoreError>;
     /**
@@ -3073,6 +3084,29 @@ export class Store extends Context.Service<
         byJob.set(row.job, [...(byJob.get(row.job) ?? []), row]);
 
       return byJob;
+    }, Effect.mapError(storeError));
+
+    const machineStreak = Effect.fn("Store.machineStreak")(function* (
+      job: string,
+      worker: string,
+    ) {
+      const own = sql`
+        job = ${job} AND json_extract(command, '$.worker') = ${worker}
+      `;
+
+      const rows = yield* sql<{ count: number; since: number | null }>`
+        SELECT count(*) AS count, min(queued_at) AS since FROM runs
+        WHERE ${own}
+          AND state IN ('failed', 'needs-you')
+          AND NOT EXISTS (
+            SELECT 1 FROM runs AS later
+            WHERE ${own}
+              AND ${sql.in("state", RunStates.passing)}
+              AND later.queued_at > runs.queued_at
+          )
+      `;
+
+      return { count: rows[0]?.count ?? 0, since: rows[0]?.since ?? null };
     }, Effect.mapError(storeError));
 
     const lastScheduled = Effect.fn("Store.lastScheduled")(function* () {
@@ -6392,6 +6426,7 @@ export class Store extends Context.Service<
       run,
       latestRuns,
       machineRuns,
+      machineStreak,
       lastScheduled,
       claim: announce(
         touchesIf(

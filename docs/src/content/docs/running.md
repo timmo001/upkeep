@@ -987,6 +987,10 @@ user service that starts before the session's `PATH` is set, and logs which
 `dot` and `opencode2` it found. A `dot` that isn't the dotfiles CLI, such as
 Graphviz's, fails the stage and names the binary found. A
 failed stage fails its run, which shows on the dashboard and is never healed.
+A stage still failing on a worker 3 hours after its first failure there, at
+least twice, such as on a lock something else on the machine holds, needs you:
+one inbox entry per job and worker, such as `dot up first-party keeps failing
+on station`, with the latest error. A run of it there that passes settles it.
 The Jobs table shows each worker's latest run of each one.
 
 `first-party` runs `dot up first-party`, which upgrades the packages from
