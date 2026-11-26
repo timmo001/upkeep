@@ -23,7 +23,7 @@
     "@timmo001/groundwork-tokens": "0.51.1",
     "@timmo001/groundwork-ui": "0.51.1",
     "@upkeep/api": "workspace:*",
-    "cronstrue": "3.50.0",
+    "cronstrue": "3.51.0",
     "effect": "4.1.6",
     "lit": "3.3.3"
   },
