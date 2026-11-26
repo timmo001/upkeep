@@ -13,13 +13,13 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.5",
-    "@effect/sql-sqlite-bun": "4.1.5",
+    "@effect/platform-bun": "4.1.6",
+    "@effect/sql-sqlite-bun": "4.1.6",
     "@timmo001/effect-triage": "0.27.0",
     "@timmo001/groundwork-pwa": "0.51.1",
     "@upkeep/api": "workspace:*",
     "@upkeep/dashboard": "workspace:*",
-    "effect": "4.1.5"
+    "effect": "4.1.6"
   },
   "devDependencies": {
     "@effect/tsgo": "0.73.4",
