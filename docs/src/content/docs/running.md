@@ -1702,9 +1702,16 @@ without a checkout: each file, the dependencies and metadata behind a
 
 A policy gives each change an impact, from `none` for docs, tests and tooling,
 including agent and editor config such as `.claude/`, `opencode.json` and git
-hooks such as `hk.pkl`, to `patch` for anything that ships. `application` covers most repositories;
+hooks such as `hk.pkl`, and container files such as Dockerfiles and Compose
+files, to `patch` for anything that ships. `application` covers most repositories;
 `oxlint-rules` and `system-bridge` know those projects' shipped content,
 including the upstream changes behind `oxlint-rules`' vendored submodule. A
+file only dependency updates touched since the release is `none` too, such as
+a bundle rebuilt for a new dependency or a workflow's pinned action, whatever
+the overrides say. A dependency update is Renovate's or Dependabot's, one whose
+subject moves something to a version or digest, such as `Update effect to
+4.1.2`, lockfile maintenance, or a group's `Update Effect` that Upkeep's App
+co-authored. Only an override that names commit `subjects` can count one. A
 repository's `overrides` come first, the first match winning, and
 `sourceMinorThreshold` suggests a minor release once that many lines of
 shipped source changed, leaving out `sourceExcludes`. The highest impact is

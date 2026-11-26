@@ -10,7 +10,7 @@ import { evidenceId, highestImpact } from "@upkeep/api/releases";
 import type { ReleaseRepo, ReleaseRule } from "../settings";
 
 /** Bump when a policy classifies differently, so old comparisons go stale. */
-export const policyVersion = 16;
+export const policyVersion = 17;
 
 export type Policy = NonNullable<ReleaseRepo["policy"]>;
 
@@ -68,12 +68,25 @@ const quietPaths = [
   "**/tooling.yml",
   "**/sync.json",
   "**/sync.lock.json",
+  "**/Dockerfile*",
+  "**/*.Dockerfile",
+  "**/*.dockerfile",
+  "**/Containerfile*",
+  "**/.dockerignore",
+  "**/.containerignore",
+  "**/compose.yml",
+  "**/compose.yaml",
+  "**/compose.*.yml",
+  "**/compose.*.yaml",
+  "**/docker-compose*.yml",
+  "**/docker-compose*.yaml",
+  "**/.devcontainer/**",
 ];
 
 const quiet: ReleaseRule = {
   paths: quietPaths,
   impact: "none",
-  reason: "Documentation and development tooling are quiet",
+  reason: "Documentation, development tooling and container files are quiet",
 };
 
 const omarchyPluginPaths = ["**/omarchy-plugin", "**/omarchy-plugin/**"];
@@ -104,6 +117,43 @@ export const systemBridgeBuildDependencies: ReadonlyArray<string> = [
 
 const glob = (pattern: string, path: string) =>
   new Bun.Glob(pattern).match(path);
+
+/** A commit as {@link dependencyUpdate} reads it. */
+export interface Commit {
+  readonly author: string;
+  readonly subject: string;
+  /** Who its `Co-authored-by` trailers name. */
+  readonly coAuthors: ReadonlyArray<string>;
+}
+
+const updateBots = /^(renovate|dependabot)\[bot\]$/;
+
+/**
+ * Subjects only a dependency update has: a move to a version or digest, as
+ * Upkeep and Renovate write them (`[Pin-only] ` and all), lockfile
+ * maintenance, a pin, a replacement to a version, Dependabot's bumps and
+ * conventional `deps` commits.
+ */
+const updateSubjects = [
+  /^(\[[^\]]+\] )?Update .+ (to (v\d|\d+\.\d)|digest to [0-9a-f]{7,}\b)/,
+  /^Lock file maintenance\b/,
+  /^Pin (dependencies\b|.+ to (v?\d|[0-9a-f]{7,}\b))/,
+  /^Replace .+ with \S+ \S*\d/,
+  /^Bump .+ from \S+ to \S/,
+  /^(chore|fix|build)\(deps(-dev)?\):/,
+];
+
+/**
+ * Whether a commit is a dependency update: Renovate's or Dependabot's, or one
+ * whose subject says so. A group's commit, such as `Update Effect`, names no
+ * version, so it counts when an App's bot is its co-author, as Upkeep's own
+ * are.
+ */
+export const dependencyUpdate = (commit: Commit) =>
+  updateBots.test(commit.author) ||
+  updateSubjects.some((pattern) => pattern.test(commit.subject)) ||
+  (commit.subject.startsWith("Update ") &&
+    commit.coAuthors.some((who) => /^\S+\[bot\] </.test(who)));
 
 /**
  * Whether a path is tooling or a product published on its own, which counts
@@ -385,15 +435,34 @@ export const policyId = (settings: Settings) =>
  * Give every change its impact: the first override that matches, or else
  * the policy's first rule, taking the higher of a renamed file's two paths.
  * A checksum or a submodule pin is quiet on its own; its upstream changes
- * carry the impact. Quiet and incomplete changes are kept for the page.
- * Over the size threshold, shipped source changes suggest a minor release.
+ * carry the impact. A path only dependency updates touched is quiet too,
+ * generated files and workflow pins included, unless an override that names
+ * commit subjects says otherwise. Quiet and incomplete changes are kept for
+ * the page. Over the size threshold, shipped source changes suggest a minor
+ * release.
  */
 export const classify = (
   facts: ReadonlyArray<Fact>,
   settings: Settings,
+  updatesOnly: ReadonlySet<string> = new Set(),
 ): Array<Domain.ReleaseFinding> => {
   const findings = facts.map((fact): Domain.ReleaseFinding => {
     const override = settings.overrides.find((rule) => matches(rule, fact));
+
+    if (
+      override?.subjects === undefined &&
+      fact.submodule === null &&
+      [fact.path, fact.previousPath].every(
+        (path) => path === null || updatesOnly.has(path),
+      )
+    )
+      return {
+        ...fact,
+        automaticImpact: "none",
+        impact: "none",
+        reason: "Only dependency updates changed this since the release",
+        reviewed: false,
+      };
 
     const endpoints = [
       fact.path,

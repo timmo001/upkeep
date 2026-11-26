@@ -441,7 +441,7 @@ const compare = Effect.fnUntraced(function* (
     path.join(root, "upstreams", repo),
   );
 
-  const findings = classify(changes.facts, settings);
+  const findings = classify(changes.facts, settings, changes.updatesOnly);
 
   const errors = [
     ...changes.errors,

@@ -2,9 +2,10 @@
  * Reading what changed between a repository's last stable release and its
  * branch, from Git objects alone: each net file change, the dependencies and
  * metadata behind a manifest or Bun lockfile change, Go requirements, and
- * the upstream changes behind a submodule pin a policy knows. Commit subjects
- * are traced to the content still in each change when an override asks for
- * them. Ported from `dot git releases`, hashing evidence the same way.
+ * the upstream changes behind a submodule pin a policy knows, and the paths
+ * only dependency updates touched. Commit subjects are traced to the content
+ * still in each change when an override asks for them. Ported from
+ * `dot git releases`, hashing evidence the same way.
  */
 import { Domain } from "@upkeep/api";
 import { canonical, evidenceId } from "@upkeep/api/releases";
@@ -20,6 +21,7 @@ import {
 import { run } from "../Command";
 import { reason } from "../Failure";
 import {
+  dependencyUpdate,
   matches,
   separatelyPublished,
   systemBridgeBuildDependencies,
@@ -478,6 +480,8 @@ export interface Changes {
   readonly files: ReadonlyArray<Fact>;
   /** Every commit, with a known submodule's upstream commits. */
   readonly commits: ReadonlyArray<Domain.ReleaseCommit>;
+  /** The paths only dependency updates touched. */
+  readonly updatesOnly: ReadonlySet<string>;
   readonly errors: ReadonlyArray<string>;
 }
 
@@ -682,6 +686,56 @@ const range = Effect.fnUntraced(function* (
     },
     catch: (error) => new ReleaseError({ message: reason(Cause.fail(error)) }),
   });
+});
+
+/**
+ * The paths only dependency updates touched, from `git log -z --name-only`
+ * with each commit's author, subject and co-authors in its header. A path
+ * any other commit touched is left out. A merge lists no paths, so its
+ * branch's commits decide.
+ */
+export const parseUpdatesOnly = (output: string) => {
+  const touched = new Map<string, boolean>();
+
+  for (const record of output.split("\x1e").slice(1)) {
+    const [header = "", ...paths] = record.split("\0");
+    const [author = "", subject = "", ...coAuthors] = header.split("\x1f");
+    const update = dependencyUpdate({ author, subject, coAuthors });
+
+    for (const raw of paths) {
+      const path = raw.replace(/^\n/, "");
+
+      if (path !== "") touched.set(path, (touched.get(path) ?? true) && update);
+    }
+  }
+
+  return new Set(
+    touched
+      .entries()
+      .filter(([, update]) => update)
+      .map(([path]) => path),
+  );
+};
+
+/** Each path's commits since the release, for {@link parseUpdatesOnly}. */
+const updatesOnly = Effect.fnUntraced(function* (
+  cwd: string,
+  before: string | null,
+  after: string,
+) {
+  const base = yield* baseline(cwd, before, after);
+
+  const log = yield* git(cwd, [
+    "log",
+    "-z",
+    "--name-only",
+    "--no-renames",
+    "--format=%x1e%an%x1f%s%x1f%(trailers:key=Co-authored-by,valueonly,separator=%x1f)",
+    base.revisions,
+    "--",
+  ]);
+
+  return parseUpdatesOnly(log);
 });
 
 const blob = (cwd: string, value: string | null) =>
@@ -1341,6 +1395,7 @@ export const collect = Effect.fnUntraced(function* (
       ),
     ],
     commits,
+    updatesOnly: yield* updatesOnly(cwd, before, after),
     errors,
   } satisfies Changes;
 });

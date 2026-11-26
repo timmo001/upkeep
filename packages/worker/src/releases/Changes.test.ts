@@ -1,10 +1,12 @@
 /**
  * A change's ID hashes what changed the way `dot git releases` did, so the
  * impact choices made there apply to the same changes here. A Bun lockfile's
- * packages resolve the way Bun nests them, so each gets its role.
+ * packages resolve the way Bun nests them, so each gets its role. A path
+ * counts as dependency updates only when every commit that touched it was
+ * one, told apart from ordinary commits that also start with "Update".
  */
 import { expect, test } from "bun:test";
-import { bunLockChanges, releaseFact } from "./Changes";
+import { bunLockChanges, parseUpdatesOnly, releaseFact } from "./Changes";
 
 test("a fact's ID matches the one dot made for it", () => {
   const fact = releaseFact({
@@ -26,6 +28,42 @@ test("a fact's ID matches the one dot made for it", () => {
   expect(fact.id).toBe(
     "5449dca4557d89ac13e88fdc971a1634fc27dcabf651bef301e26d64292455b3",
   );
+});
+
+test("only paths every touching commit updated a dependency in are quiet", () => {
+  const bot = "upkeep[bot] <1+upkeep[bot]@users.noreply.github.com>";
+
+  // As `git log -z --name-only` prints it: a header, NUL and newline, then
+  // NUL-separated paths
+  const commit = (
+    author: string,
+    subject: string,
+    coAuthor: string,
+    paths: ReadonlyArray<string>,
+  ) => `\x1e${author}\x1f${subject}\x1f${coAuthor}\0\n${paths.join("\0")}\0`;
+
+  const updates = parseUpdatesOnly(
+    [
+      commit("Me", "Update Effect", bot, ["dist/index.js", "bun.lock"]),
+      commit("Me", "Update oxlint to 1.91.0", "", ["package.json"]),
+      commit("Me", "Update checks digest to c0562b3", "", ["ci.yml"]),
+      commit("renovate[bot]", "Update github actions (#882)", "", ["a.yml"]),
+      commit("Me", "Lock file maintenance (#900)", bot, ["bun.lock"]),
+      commit("Me", "Update OpenCode 2", bot, ["page.ts"]),
+      commit("Me", "Update views", "", ["views.ts"]),
+      commit("Me", "Update docs to 2 columns", "", ["docs.ts"]),
+      commit("Me", "Rebuild action bundles (#899)", bot, ["dist/other.js"]),
+      commit("Me", "Run the AUR job when it's skipped", "", ["ci.yml"]),
+    ].join(""),
+  );
+
+  expect([...updates].toSorted()).toEqual([
+    "a.yml",
+    "bun.lock",
+    "dist/index.js",
+    "package.json",
+    "page.ts",
+  ]);
 });
 
 test("a lockfile's packages resolve past scopes and from workspaces", () => {
