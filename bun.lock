@@ -174,7 +174,7 @@
         "@timmo001/effect-gh": "0.14.1",
         "@upkeep/api": "workspace:*",
         "effect": "4.1.7",
-        "jsonata": "2.2.2",
+        "jsonata": "2.3.0",
         "minimatch": "11.0.9",
         "semver": "7.8.6",
       },
@@ -1933,7 +1933,7 @@
 
     "json5": ["json5@2.2.3", "", { "bin": { "json5": "lib/cli.js" } }, "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="],
 
-    "jsonata": ["jsonata@2.2.2", "", {}, "sha512-XDFH2PuaAXv0AXJEWwElXbqADmKFGKMLMkFb+qOz0EhjQW2EIJ6pgtordLU+4u3IVERyBfqy6bi6kZKEncvRqA=="],
+    "jsonata": ["jsonata@2.3.0", "", {}, "sha512-M2oCpvM32+f70iXmunUmrkASEfSuLkcr/CIZ2VTUOw4+ONSD7Pm9ecw8rocRlX2f/ev/sGgPLjInCZFop7Lhng=="],
 
     "jsonc-parser": ["jsonc-parser@3.3.1", "", {}, "sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ=="],
 
