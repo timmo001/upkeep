@@ -757,7 +757,7 @@ it in the Inbox, whether it asked there by itself or through **Ask me in the
 Inbox**. Once a minute, each worker reads the Inbox threads of the heals left
 for you whose worktree is on its machine, with
 `plannotator inbox call --session <session> read_thread`. When you've replied
-since, it resumes the session in the background in that worktree, with
+since, even in a thread you've since archived, it resumes the session in the background in that worktree, with
 `opencode run --auto` and the heal's `sessionMinutes`, telling the agent to
 read your reply, carry on, answer you in the same thread and dismiss the run
 once nothing waits on you. Each reply resumes the session once.

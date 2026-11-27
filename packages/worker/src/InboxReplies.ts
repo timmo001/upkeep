@@ -102,7 +102,9 @@ const unreadReply = Effect.fnUntraced(function* (
       "--session",
       session,
       "read_thread",
-      JSON.stringify({ project_path: directory }),
+      // An archived thread still counts: you may archive one to clear your
+      // list while the agent hasn't read your answer
+      JSON.stringify({ project_path: directory, include_resolved: true }),
     ],
     { cwd: directory, trusted: "" },
   ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Threads)));
