@@ -748,9 +748,19 @@ When the heal left something for you, the page also has **Ask me in the
 Inbox**. It resumes the session in the background on the worker that ran it,
 with `opencode run --auto`, telling the agent to load the `plannotator` skill
 and put where the work stands and what it needs from you in the Plannotator
-Inbox, then end its turn. Your answer there goes back to the session. The
-agent gets ten minutes to send it. It's also told the heal's run ID, and
-dismisses the run once the work is done and nothing waits on you.
+Inbox, then end its turn. The agent gets ten minutes to send it. It's also
+told the heal's run ID, and dismisses the run once the work is done and
+nothing waits on you.
+
+A heal's agent runs headless, so its session has ended by the time you answer
+it in the Inbox, whether it asked there by itself or through **Ask me in the
+Inbox**. Once a minute, each worker reads the Inbox threads of the heals left
+for you whose worktree is on its machine, with
+`plannotator inbox call --session <session> read_thread`. When you've replied
+since, it resumes the session in the background in that worktree, with
+`opencode run --auto` and the heal's `sessionMinutes`, telling the agent to
+read your reply, carry on, answer you in the same thread and dismiss the run
+once nothing waits on you. Each reply resumes the session once.
 
 Every session the dashboard shows, a heal's or a skill change's, also has **Open here**, an `upkeep://open/<session>` link that opens
 it on the machine the browser is on. The `upkeep-git` package registers the

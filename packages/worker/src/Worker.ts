@@ -38,6 +38,7 @@ import type { Lookups } from "./deps/Datasources";
 import { logResolved, which } from "./Environment";
 import { pretty, reason } from "./Failure";
 import * as GitHubApp from "./GitHubApp";
+import * as InboxReplies from "./InboxReplies";
 import * as Lane from "./Lane";
 import * as Notify from "./Notify";
 import * as Outages from "./Outages";
@@ -802,8 +803,8 @@ export const work = Effect.fn("Worker.work")(function* (
   const copies = (name: Domain.Lane) => (name === "heal" ? healSessions : 1);
 
   // Telling you what's new that needs you runs beside the lanes, once a minute,
-  // and so do following the desktop's Omarchy theme and the permission
-  // prompts its agents wait on. Telling you is held in the quiet hours, so
+  // and so do following the desktop's Omarchy theme, the permission prompts
+  // its agents wait on and your Inbox replies to heals left for you. Telling you is held in the quiet hours, so
   // what came up overnight is told when they end.
   const notify = (yield* Notify.make).pipe(
     Effect.when(Effect.map(quiet, (resting) => !resting)),
@@ -835,10 +836,16 @@ export const work = Effect.fn("Worker.work")(function* (
 
   return yield* Effect.raceFirst(
     Effect.raceFirst(working, cutOff),
-    Effect.all([notify, Theme.follow, Prompts.follow, Schedules.follow], {
-      concurrency: "unbounded",
-      discard: true,
-    }),
+    Effect.all(
+      [
+        notify,
+        Theme.follow,
+        Prompts.follow,
+        Schedules.follow,
+        InboxReplies.follow,
+      ],
+      { concurrency: "unbounded", discard: true },
+    ),
   );
 }, Effect.scoped);
 

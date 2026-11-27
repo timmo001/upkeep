@@ -820,7 +820,7 @@ const askInboxPrompt = (run: string | undefined) =>
     "If it has, ask nothing: say so in that thread or a new one, and skip to dismissing below.",
     "Load the `plannotator` skill first, and any other skill it points you to for asking questions.",
     "Then send one message with the `plannotator_inbox` tool: where the work stands, what you tried, and each decision only they can make as a `:::question` block with your recommendation.",
-    "End your turn once it's sent. Their answer comes back to this session, and you carry on from there.",
+    "End your turn once it's sent. Once they answer, Upkeep resumes this session for you to read their reply and carry on from there.",
     ...(run === undefined
       ? []
       : [
