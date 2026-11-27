@@ -13,11 +13,11 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@effect/ai-cloudflare": "4.1.6",
-    "@effect/ai-typesafe": "4.1.6",
+    "@effect/ai-cloudflare": "4.1.7",
+    "@effect/ai-typesafe": "4.1.7",
     "@timmo001/effect-gh": "0.14.1",
     "@upkeep/api": "workspace:*",
-    "effect": "4.1.6",
+    "effect": "4.1.7",
     "jsonata": "2.2.2",
     "minimatch": "11.0.9",
     "semver": "7.8.6"
