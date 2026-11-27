@@ -1,0 +1,19 @@
+---
+# The tools Upkeep wraps, and the release of each last reviewed, for the
+# drift job to check against their latest releases.
+tools:
+  - repo: backnotprop/plannotator
+    reviewed: v0.29.5
+    review: >-
+      The worker resumes heal sessions you answer in the Plannotator Inbox
+      (packages/worker/src/InboxReplies.ts), reading each session's threads
+      with `plannotator inbox call --session <id> read_thread` and its
+      `threads[].unread`, `last_person_message_id` and `include_resolved`.
+      Check that still works, and that the ask-inbox prompt in
+      packages/worker/src/jobs/launch.ts still matches how the Inbox tool
+      behaves. Check whether the release lets the Inbox resume an ended
+      OpenCode session by itself, as backnotprop/plannotator#3937 and
+      backnotprop/plannotator#3938 propose. Once it does, running both would
+      start a session twice, so ask in the Plannotator Inbox whether to keep
+      Upkeep's resume or switch to Plannotator's, and change nothing until
+      it's answered.
