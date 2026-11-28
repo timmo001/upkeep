@@ -3,7 +3,7 @@
 # drift job to check against their latest releases.
 tools:
   - repo: backnotprop/plannotator
-    reviewed: v0.29.5
+    reviewed: v0.29.6
     review: >-
       The worker resumes heal sessions you answer in the Plannotator Inbox
       (packages/worker/src/InboxReplies.ts), reading each session's threads
